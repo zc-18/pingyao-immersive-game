@@ -1,0 +1,55 @@
+<template>
+	<view class="empty-owl">
+		<image class="empty-owl__img" src="/static/img/npc_owl_full.png" mode="aspectFit" />
+		<text class="empty-owl__text">{{ text || '此处空空如也，去别处看看？' }}</text>
+		<view v-if="ctaText" class="empty-owl__cta" @tap="$emit('action')">
+			<text>{{ ctaText }}</text>
+		</view>
+	</view>
+</template>
+
+<script setup>
+defineProps({
+	text:    { type: String, default: '' },
+	ctaText: { type: String, default: '' }
+})
+
+defineEmits(['action'])
+</script>
+
+<style lang="scss" scoped>
+.empty-owl {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 18rpx;
+	padding: 60rpx 40rpx;
+}
+
+.empty-owl__img {
+	width: 200rpx;
+	height: 240rpx;
+	filter: drop-shadow(0 8rpx 24rpx rgba(0, 0, 0, 0.4)) grayscale(0.2);
+	animation: floatY 3.4s ease-in-out infinite;
+}
+
+.empty-owl__text {
+	font-size: 22rpx;
+	color: rgba(212, 165, 116, 0.8);
+	letter-spacing: 2rpx;
+	text-align: center;
+	max-width: 480rpx;
+	line-height: 1.7;
+}
+
+.empty-owl__cta {
+	margin-top: 12rpx;
+	padding: 14rpx 32rpx;
+	border-radius: 999rpx;
+	background: rgba(212, 165, 116, 0.14);
+	border: 1rpx solid rgba(212, 165, 116, 0.45);
+	color: $py-gold;
+	font-size: 22rpx;
+	letter-spacing: 4rpx;
+}
+</style>

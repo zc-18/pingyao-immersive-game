@@ -1,0 +1,16 @@
+# HBuilderX 构建产物与缓存（17MB+，可随时重新构建）
+unpackage/
+.hbuilderx/
+
+# 依赖
+node_modules/
+
+# Claude Code 本地配置（个人，不入库）
+.claude/settings.local.json
+CLAUDE.local.md
+
+# 系统 / 编辑器临时文件
+.DS_Store
+Thumbs.db
+*.log
+*~

@@ -1,0 +1,120 @@
+{
+	"pages": [
+		{
+			"path": "pages_game/splash/splash",
+			"style": {
+				"navigationStyle": "custom",
+				"disableScroll": true,
+				"backgroundColor": "#F5F0E8"
+			}
+		},
+		{
+			"path": "pages/index/index",
+			"style": {
+				"navigationStyle": "custom",
+				"backgroundColor": "#F5F0E8"
+			}
+		},
+		{
+			"path": "pages/map/map",
+			"style": {
+				"navigationStyle": "custom",
+				"backgroundColor": "#F5F0E8"
+			}
+		},
+		{
+			"path": "pages/shop/shop",
+			"style": {
+				"navigationStyle": "custom",
+				"backgroundColor": "#F5F0E8"
+			}
+		},
+		{
+			"path": "pages/user/user",
+			"style": {
+				"navigationStyle": "custom",
+				"backgroundColor": "#F5F0E8"
+			}
+		},
+		{
+			"path": "pages_game/role-select/role-select",
+			"style": {
+				"navigationStyle": "custom",
+				"backgroundColor": "#F5F0E8"
+			}
+		},
+		{
+			"path": "pages_game/street/street",
+			"style": {
+				"navigationStyle": "custom",
+				"disableScroll": true,
+				"backgroundColor": "#F5F0E8",
+				"pageOrientation": "landscape"
+			}
+		},
+		{
+			"path": "pages_game/dialog/dialog",
+			"style": {
+				"navigationStyle": "custom",
+				"backgroundColor": "#F5F0E8"
+			}
+		},
+		{
+			"path": "pages_shop/redeem/redeem",
+			"style": {
+				"navigationStyle": "custom",
+				"backgroundColor": "#F5F0E8"
+			}
+		},
+		{
+			"path": "pages_game/3d-test/3d-test",
+			"style": {
+				"navigationStyle": "custom",
+				"disableScroll": true,
+				"backgroundColor": "#2C1810",
+				"pageOrientation": "landscape"
+			}
+		}
+	],
+	"globalStyle": {
+		"navigationStyle": "custom",
+		"backgroundColor": "#F5F0E8",
+		"backgroundTextStyle": "dark",
+		"pageOrientation": "portrait"
+	},
+	"tabBar": {
+		"color": "#6E5541",
+		"selectedColor": "#8B4513",
+		"backgroundColor": "#F5F0E8",
+		"borderStyle": "black",
+		"list": [
+			{
+				"pagePath": "pages/index/index",
+				"text": "古城",
+				"iconPath": "static/tabbar/home.png",
+				"selectedIconPath": "static/tabbar/home-active.png"
+			},
+			{
+				"pagePath": "pages/map/map",
+				"text": "地图",
+				"iconPath": "static/tabbar/map.png",
+				"selectedIconPath": "static/tabbar/map-active.png"
+			},
+			{
+				"pagePath": "pages/shop/shop",
+				"text": "商城",
+				"iconPath": "static/tabbar/shop.png",
+				"selectedIconPath": "static/tabbar/shop-active.png"
+			},
+			{
+				"pagePath": "pages/user/user",
+				"text": "我的",
+				"iconPath": "static/tabbar/user.png",
+				"selectedIconPath": "static/tabbar/user-active.png"
+			}
+		]
+	},
+	"easycom": {
+		"autoscan": true
+	}
+}

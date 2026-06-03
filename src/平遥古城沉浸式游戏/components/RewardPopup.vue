@@ -1,0 +1,437 @@
+<template>
+	<view v-if="visible" class="reward-stage" @tap="handleOverlayTap">
+		<view class="reward-stage__veil"></view>
+
+		<!-- 金粉粒子 -->
+		<view class="reward-stage__particles">
+			<view v-for="i in 20" :key="i" class="reward-stage__particle" :style="particleStyle(i)"></view>
+		</view>
+
+		<view class="reward-stage__voucher" @tap.stop>
+			<!-- 卷轴上下轴 -->
+			<view class="reward-stage__roll reward-stage__roll--top"></view>
+			<view class="reward-stage__roll reward-stage__roll--bot"></view>
+
+			<view class="reward-stage__paper">
+				<view class="reward-stage__fiber"></view>
+
+				<!-- 中央拍下的红章 -->
+				<view class="reward-stage__seal">
+					<text>领</text>
+				</view>
+
+				<view class="reward-stage__head">
+					<text class="reward-stage__eyebrow">— 旅 程 已 点 亮 —</text>
+					<text class="reward-stage__title">{{ title }}</text>
+				</view>
+
+				<!-- 奖励列表 -->
+				<view class="reward-stage__list">
+					<view v-if="rewards.exp" class="reward-stage__item">
+						<view class="reward-stage__item-stamp reward-stage__item-stamp--exp"><text>经</text></view>
+						<text class="reward-stage__item-label">经 验</text>
+						<text class="reward-stage__item-value">+{{ rewards.exp }}</text>
+					</view>
+					<view v-if="rewards.silver" class="reward-stage__item">
+						<view class="reward-stage__item-stamp reward-stage__item-stamp--silver"><text>银</text></view>
+						<text class="reward-stage__item-label">银 两</text>
+						<text class="reward-stage__item-value">+{{ rewards.silver }}</text>
+					</view>
+					<view v-if="rewards.silverKey" class="reward-stage__item">
+						<view class="reward-stage__item-stamp reward-stage__item-stamp--key"><text>钥</text></view>
+						<text class="reward-stage__item-label">银 钥</text>
+						<text class="reward-stage__item-value">+{{ rewards.silverKey }}</text>
+					</view>
+					<view v-if="rewards.score" class="reward-stage__item">
+						<view class="reward-stage__item-stamp reward-stage__item-stamp--score"><text>印</text></view>
+						<text class="reward-stage__item-label">积 分</text>
+						<text class="reward-stage__item-value">+{{ rewards.score }}</text>
+					</view>
+				</view>
+
+				<!-- 角色加成 -->
+				<view v-if="roleBonus" class="reward-stage__bonus">
+					<text class="reward-stage__bonus-label">— 身 份 加 成 —</text>
+					<text class="reward-stage__bonus-text">{{ roleBonus }}</text>
+				</view>
+
+				<!-- 晋小鸦结语 -->
+				<view class="reward-stage__npc">
+					<image class="reward-stage__npc-img" src="/static/img/npc_owl_full.png" mode="aspectFit" />
+					<view class="reward-stage__npc-bubble">
+						<text class="reward-stage__npc-line">{{ npcMessage }}</text>
+					</view>
+				</view>
+
+				<!-- 收下铜印 -->
+				<view class="reward-stage__claim" @tap="handleClaim">
+					<view class="reward-stage__claim-stamp">
+						<text>收</text>
+					</view>
+					<text class="reward-stage__claim-text">收 下 入 册</text>
+					<text class="reward-stage__claim-arrow">›</text>
+				</view>
+			</view>
+		</view>
+	</view>
+</template>
+
+<script setup>
+const props = defineProps({
+	visible: { type: Boolean, default: false },
+	title: { type: String, default: '任务完成' },
+	rewards: {
+		type: Object,
+		default: () => ({ exp: 0, silver: 0, silverKey: 0, score: 0 })
+	},
+	roleBonus: { type: String, default: '' },
+	npcMessage: { type: String, default: '干得漂亮，再往前走两步。' }
+})
+
+const emit = defineEmits(['claim', 'close'])
+
+function handleClaim() {
+	// 此处印章拍下声 pa 留给后期接入
+	emit('claim')
+}
+
+function handleOverlayTap() { /* 不允许遮罩关闭 */ }
+
+function particleStyle(i) {
+	const left = (i * 13) % 100
+	const top = (i * 17) % 100
+	const delay = (i * 0.12) % 1.4
+	const dur = 1.6 + (i % 4) * 0.3
+	const size = 6 + (i % 3) * 4
+	return `left:${left}%;top:${top}%;animation-delay:${delay}s;animation-duration:${dur}s;width:${size}rpx;height:${size}rpx;`
+}
+</script>
+
+<style lang="scss" scoped>
+@import '@/uni.scss';
+
+.reward-stage {
+	position: fixed;
+	inset: 0;
+	z-index: 1000;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	overflow: hidden;
+}
+
+.reward-stage__veil {
+	position: absolute;
+	inset: 0;
+	background:
+		radial-gradient(ellipse at 50% 50%, rgba(255, 200, 130, 0.18) 0%, transparent 40%),
+		rgba(0, 0, 0, 0.78);
+	backdrop-filter: blur(12rpx);
+	animation: fadeIn 0.4s ease both;
+}
+
+.reward-stage__particles {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+}
+
+.reward-stage__particle {
+	position: absolute;
+	background: radial-gradient(circle, rgba(255, 220, 130, 1) 0%, transparent 70%);
+	border-radius: 50%;
+	animation: rewardSpark linear infinite;
+}
+
+@keyframes rewardSpark {
+	0%   { opacity: 0; transform: scale(0); }
+	30%  { opacity: 1; }
+	100% { opacity: 0; transform: scale(2.4); }
+}
+
+.reward-stage__voucher {
+	position: relative;
+	width: 88%;
+	max-width: 640rpx;
+	max-height: 92vh;
+	overflow-y: auto;
+	animation: voucherPop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes voucherPop {
+	0%   { opacity: 0; transform: scale(0.7) translateY(40rpx); }
+	100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.reward-stage__roll {
+	position: absolute;
+	left: -10rpx;
+	right: -10rpx;
+	height: 28rpx;
+	border-radius: 999rpx;
+	background: linear-gradient(135deg, #4a2a18 0%, #8b4513 30%, #d4a574 50%, #8b4513 70%, #3d2010 100%);
+	box-shadow: 0 6rpx 14rpx rgba(0, 0, 0, 0.55);
+	z-index: 2;
+}
+
+.reward-stage__roll--top { top: -14rpx; }
+.reward-stage__roll--bot { bottom: -14rpx; }
+
+.reward-stage__paper {
+	position: relative;
+	padding: 50rpx 44rpx 36rpx;
+	background:
+		linear-gradient(180deg, rgba(245, 232, 208, 0.97) 0%, rgba(232, 215, 180, 0.95) 100%);
+	border-radius: 6rpx;
+	box-shadow: 0 22rpx 50rpx rgba(0, 0, 0, 0.6);
+}
+
+.reward-stage__fiber {
+	position: absolute;
+	inset: 0;
+	background:
+		repeating-linear-gradient(90deg, rgba(139, 69, 19, 0.05) 0, rgba(139, 69, 19, 0.05) 1rpx, transparent 1rpx, transparent 7rpx),
+		repeating-linear-gradient(0deg, rgba(139, 69, 19, 0.04) 0, rgba(139, 69, 19, 0.04) 1rpx, transparent 1rpx, transparent 12rpx);
+	pointer-events: none;
+	mix-blend-mode: multiply;
+	border-radius: 6rpx;
+}
+
+.reward-stage__paper > * { position: relative; z-index: 1; }
+
+/* 拍下的红章 */
+.reward-stage__seal {
+	position: absolute;
+	top: -32rpx;
+	right: 60rpx;
+	width: 100rpx;
+	height: 100rpx;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: rgba(196, 30, 58, 0.06);
+	border: 6rpx solid $py-red;
+	border-radius: 50%;
+	color: $py-red;
+	font-size: 30rpx;
+	font-weight: 700;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	transform: rotate(-12deg);
+	box-shadow: 0 4rpx 8rpx rgba(0, 0, 0, 0.42);
+	z-index: 3;
+	animation: stampSlam 0.65s cubic-bezier(0.36, 1.6, 0.5, 1) both;
+	animation-delay: 0.4s;
+}
+
+.reward-stage__seal::before {
+	content: '';
+	position: absolute;
+	inset: 6rpx;
+	border: 1rpx solid rgba(196, 30, 58, 0.45);
+	border-radius: 50%;
+}
+
+@keyframes stampSlam {
+	0%   { transform: scale(2.6) rotate(8deg); opacity: 0; }
+	60%  { transform: scale(0.92) rotate(-15deg); opacity: 1; }
+	100% { transform: scale(1) rotate(-12deg); opacity: 1; }
+}
+
+.reward-stage__head {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 8rpx;
+	margin-bottom: 22rpx;
+}
+
+.reward-stage__eyebrow {
+	font-size: 20rpx;
+	letter-spacing: 10rpx;
+	color: $py-red;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	font-weight: 700;
+}
+
+.reward-stage__title {
+	font-size: 38rpx;
+	font-weight: 700;
+	color: #4a2a18;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	letter-spacing: 6rpx;
+	text-align: center;
+}
+
+.reward-stage__list {
+	display: flex;
+	flex-direction: column;
+	gap: 12rpx;
+}
+
+.reward-stage__item {
+	display: flex;
+	align-items: center;
+	gap: 16rpx;
+	padding: 14rpx 20rpx;
+	background: rgba(255, 248, 239, 0.7);
+	border: 1rpx solid rgba(110, 85, 65, 0.32);
+	border-left: 4rpx solid $py-red;
+	border-radius: 4rpx;
+}
+
+.reward-stage__item-stamp {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 50rpx;
+	height: 50rpx;
+	color: $py-paper-warm;
+	font-size: 22rpx;
+	font-weight: 700;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	border-radius: 6rpx;
+	transform: rotate(-6deg);
+	flex-shrink: 0;
+	box-shadow: 0 2rpx 4rpx rgba(0, 0, 0, 0.42);
+}
+
+.reward-stage__item-stamp--exp    { background: $py-bronze; }
+.reward-stage__item-stamp--silver { background: #6b3510; }
+.reward-stage__item-stamp--key    { background: $py-gold; color: $py-ink; }
+.reward-stage__item-stamp--score  { background: $py-red; }
+
+.reward-stage__item-label {
+	flex: 1;
+	font-size: 24rpx;
+	color: $py-ink-soft;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	letter-spacing: 4rpx;
+}
+
+.reward-stage__item-value {
+	font-size: 32rpx;
+	font-weight: 700;
+	color: $py-red;
+	font-family: 'Noto Serif SC', serif;
+	letter-spacing: 1rpx;
+}
+
+/* 角色加成 */
+.reward-stage__bonus {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 6rpx;
+	margin-top: 18rpx;
+	padding: 14rpx 22rpx;
+	background: rgba(196, 30, 58, 0.12);
+	border: 1rpx dashed $py-red;
+	border-radius: 4rpx;
+}
+
+.reward-stage__bonus-label {
+	font-size: 18rpx;
+	letter-spacing: 8rpx;
+	color: $py-red;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	font-weight: 700;
+}
+
+.reward-stage__bonus-text {
+	font-size: 22rpx;
+	color: #4a2a18;
+	line-height: 1.7;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	text-align: center;
+	letter-spacing: 1rpx;
+}
+
+/* NPC */
+.reward-stage__npc {
+	display: flex;
+	align-items: flex-start;
+	gap: 14rpx;
+	margin-top: 22rpx;
+	padding: 14rpx 18rpx;
+	background: rgba(212, 165, 116, 0.18);
+	border-radius: 6rpx;
+}
+
+.reward-stage__npc-img {
+	width: 90rpx;
+	height: 110rpx;
+	flex-shrink: 0;
+	animation: floatY 3s ease-in-out infinite;
+}
+
+.reward-stage__npc-bubble {
+	flex: 1;
+	min-width: 0;
+}
+
+.reward-stage__npc-line {
+	font-size: 22rpx;
+	line-height: 1.85;
+	color: #4a2a18;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	letter-spacing: 1rpx;
+}
+
+/* 收下铜印 */
+.reward-stage__claim {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 16rpx;
+	margin-top: 22rpx;
+	padding: 18rpx 36rpx;
+	background:
+		linear-gradient(135deg, $py-red 0%, #8b1a2e 50%, $py-red 100%);
+	border: 2rpx solid rgba(255, 220, 220, 0.45);
+	border-radius: 999rpx;
+	color: $py-paper-warm;
+	box-shadow:
+		inset 0 1rpx 0 rgba(255, 220, 220, 0.45),
+		0 8rpx 20rpx rgba(196, 30, 58, 0.45);
+	transition: transform 0.18s ease;
+}
+
+.reward-stage__claim:active {
+	transform: scale(0.96) rotate(-1deg);
+}
+
+.reward-stage__claim-stamp {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 44rpx;
+	height: 44rpx;
+	background: $py-paper-warm;
+	color: $py-red;
+	font-size: 24rpx;
+	font-weight: 700;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	border-radius: 4rpx;
+	transform: rotate(-6deg);
+	box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.5);
+}
+
+.reward-stage__claim-text {
+	font-size: 28rpx;
+	font-weight: 700;
+	letter-spacing: 10rpx;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	text-shadow: 0 1rpx 2rpx rgba(0, 0, 0, 0.5);
+}
+
+.reward-stage__claim-arrow {
+	font-size: 30rpx;
+	color: rgba(255, 220, 220, 0.85);
+	animation: arrowNudge 1.4s ease-in-out infinite;
+}
+
+@keyframes arrowNudge {
+	0%, 100% { transform: translateX(0); }
+	50%      { transform: translateX(6rpx); }
+}
+</style>
