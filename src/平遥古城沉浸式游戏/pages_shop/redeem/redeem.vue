@@ -2,6 +2,7 @@
 	<view class="redeem-stage">
 		<!-- 暗夜背景 -->
 		<view class="redeem-stage__bg"></view>
+		<view class="redeem-stage__bg-glow"></view>
 
 		<!-- 飘动萤火 -->
 		<FallingLeaves type="firefly" :density="8" />
@@ -16,17 +17,41 @@
 			<text class="redeem-stage__back-label">回 账 本</text>
 		</view>
 
+		<!-- 出票柜门头（呼应商城瑞蚨祥门头，衔接出票流程）-->
+		<view v-if="orderDetail" class="redeem-stage__counter">
+			<view class="redeem-stage__counter-beam"></view>
+			<view class="redeem-stage__counter-plaque">
+				<view class="redeem-stage__counter-plaque-ribbon"></view>
+				<text class="redeem-stage__counter-plaque-text">瑞 蚨 祥 ·  出 票 柜</text>
+			</view>
+			<text class="redeem-stage__counter-sub">— 票 号 出 票 ·  银 钥 已 收 讫 —</text>
+		</view>
+
 		<!-- 主体：老票号凭证 -->
 		<view v-if="orderDetail" class="redeem-stage__voucher">
 			<!-- 撕齿边 -->
 			<view class="redeem-stage__voucher-perf redeem-stage__voucher-perf--top"></view>
 			<view class="redeem-stage__voucher-perf redeem-stage__voucher-perf--bot"></view>
 
+			<!-- 掌柜小鸦递票（衔接商城掌柜角色）-->
+			<view class="redeem-stage__keeper">
+				<view class="redeem-stage__keeper-aura"></view>
+				<image class="redeem-stage__keeper-img" src="/static/img/npc_owl_full.png" mode="aspectFit" />
+				<view class="redeem-stage__keeper-bubble">
+					<view class="redeem-stage__keeper-bubble-arrow"></view>
+					<text class="redeem-stage__keeper-bubble-name">— 掌柜小鸦 —</text>
+					<text class="redeem-stage__keeper-bubble-line">{{ keeperLine }}</text>
+				</view>
+			</view>
+
 			<view class="redeem-stage__voucher-paper">
 				<view class="redeem-stage__voucher-fiber"></view>
 
 				<!-- 顶部牌匾 -->
 				<view class="redeem-stage__voucher-head">
+					<view class="redeem-stage__voucher-cat">
+						<text>{{ categoryGlyph }}</text>
+					</view>
 					<text class="redeem-stage__voucher-eyebrow">— 平 遥 票 号 凭 证 —</text>
 					<view class="redeem-stage__voucher-bar"></view>
 					<text class="redeem-stage__voucher-title">{{ orderDetail.itemName }}</text>
@@ -162,6 +187,20 @@ const qrCells = computed(() => {
 	})
 })
 
+// 品类小印（与商城器型语义一致：食 / 物 / 游），纯展示用
+const categoryGlyph = computed(() => {
+	const map = { food: '食', cultural: '物', experience: '游' }
+	return map[orderDetail.value?.category] || '宝'
+})
+
+// 掌柜递票的氛围话，随凭证状态略有不同（不改变任何业务逻辑）
+const keeperLine = computed(() => {
+	const key = orderStatus.value.key
+	if (key === 'used') return '此票已核销，路引仍记在账本里。'
+	if (key === 'expired') return '票子过了效期，下回早些来兑。'
+	return '票已出讫，收好路引，凭此码入店核销。'
+})
+
 onLoad((options) => {
 	requestedOrderId.value = options?.orderId || ''
 	loadOrder()
@@ -212,6 +251,112 @@ function goBack() {
 		radial-gradient(ellipse at 50% 20%, rgba(255, 130, 60, 0.16) 0%, transparent 40%),
 		radial-gradient(ellipse at 50% 80%, rgba(196, 30, 58, 0.08) 0%, transparent 50%);
 	pointer-events: none;
+}
+
+/* 顶部暖光（与商城门头 bg-glow 一致，强化页面衔接）*/
+.redeem-stage__bg-glow {
+	position: absolute;
+	inset: 0;
+	background: radial-gradient(ellipse at 50% 0%, rgba(255, 130, 60, 0.28) 0%, transparent 38%);
+	pointer-events: none;
+}
+
+/* ===== 出票柜门头（呼应商城瑞蚨祥门头）===== */
+.redeem-stage__counter {
+	position: relative;
+	z-index: 4;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 10rpx;
+	margin-top: 18rpx;
+	animation: fadeInDown 0.55s ease both;
+}
+
+.redeem-stage__counter-beam {
+	position: absolute;
+	left: -32rpx;
+	right: -32rpx;
+	top: -8rpx;
+	height: 20rpx;
+	background:
+		linear-gradient(180deg, #6b3510 0%, #4a2a18 55%, #2a1810 100%),
+		repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.32) 0, rgba(0, 0, 0, 0.32) 3rpx, transparent 3rpx, transparent 64rpx);
+	background-blend-mode: multiply;
+	border-bottom: 2rpx solid rgba(0, 0, 0, 0.5);
+	box-shadow: 0 4rpx 10rpx rgba(0, 0, 0, 0.55);
+}
+
+.redeem-stage__counter-plaque {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	margin-top: 14rpx;
+	padding: 10rpx 44rpx;
+	background:
+		radial-gradient(ellipse at 50% 30%, rgba(255, 220, 170, 0.32) 0%, transparent 60%),
+		linear-gradient(135deg, #4a2a18 0%, #6b3510 30%, #8b4513 50%, #6b3510 70%, #3d2010 100%);
+	border: 2rpx solid rgba(212, 165, 116, 0.55);
+	border-radius: 4rpx;
+	color: $py-paper-warm;
+	font-size: 28rpx;
+	font-weight: 700;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	letter-spacing: 8rpx;
+	text-shadow: 0 1rpx 0 rgba(255, 235, 200, 0.4), 0 2rpx 0 rgba(0, 0, 0, 0.5);
+	box-shadow:
+		inset 0 1rpx 0 rgba(255, 235, 200, 0.5),
+		inset 0 -3rpx 8rpx rgba(0, 0, 0, 0.4),
+		0 8rpx 18rpx rgba(0, 0, 0, 0.55);
+}
+
+.redeem-stage__counter-plaque::before,
+.redeem-stage__counter-plaque::after {
+	content: '';
+	position: absolute;
+	top: -9rpx;
+	width: 26rpx;
+	height: 16rpx;
+	background: #2a1810;
+	border-radius: 4rpx 4rpx 0 0;
+}
+
+.redeem-stage__counter-plaque::before { left: 16rpx; transform: skewX(-20deg); }
+.redeem-stage__counter-plaque::after  { right: 16rpx; transform: skewX(20deg); }
+
+.redeem-stage__counter-plaque-text {
+	position: relative;
+	z-index: 1;
+	font-size: 28rpx;
+	font-weight: 700;
+	letter-spacing: 8rpx;
+	color: $py-paper-warm;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	text-shadow: 0 1rpx 0 rgba(255, 235, 200, 0.4), 0 2rpx 0 rgba(0, 0, 0, 0.5);
+}
+
+.redeem-stage__counter-plaque-ribbon {
+	position: absolute;
+	top: -20rpx;
+	left: 50%;
+	transform: translateX(-50%);
+	width: 40rpx;
+	height: 24rpx;
+	background: linear-gradient(180deg, $py-red 0%, #6b1622 100%);
+	clip-path: polygon(0 0, 100% 0, 80% 100%, 50% 80%, 20% 100%);
+}
+
+.redeem-stage__counter-sub {
+	font-size: 18rpx;
+	letter-spacing: 6rpx;
+	color: rgba(212, 165, 116, 0.78);
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+}
+
+@keyframes fadeInDown {
+	0%   { opacity: 0; transform: translateY(-16rpx); }
+	100% { opacity: 1; transform: translateY(0); }
 }
 
 /* ===== 顶部铜钱返回 ===== */
@@ -279,7 +424,7 @@ function goBack() {
 /* ===== 票号凭证 ===== */
 .redeem-stage__voucher {
 	position: relative;
-	margin: 80rpx auto 0;
+	margin: 40rpx auto 0;
 	max-width: 720rpx;
 	animation: scrollUnfurlV 0.6s cubic-bezier(0.2, 0.7, 0.3, 1) both;
 	transform-origin: top center;
@@ -299,6 +444,95 @@ function goBack() {
 
 .redeem-stage__voucher-perf--top { top: -8rpx; }
 .redeem-stage__voucher-perf--bot { bottom: -8rpx; transform: rotate(180deg); }
+
+/* ===== 掌柜小鸦递票（衔接商城掌柜角色）===== */
+.redeem-stage__keeper {
+	position: absolute;
+	top: -68rpx;
+	right: 12rpx;
+	z-index: 5;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	pointer-events: none;
+}
+
+.redeem-stage__keeper-aura {
+	position: absolute;
+	left: 50%;
+	bottom: -8rpx;
+	width: 96rpx;
+	height: 20rpx;
+	transform: translateX(-50%);
+	background: radial-gradient(ellipse at 50% 50%, rgba(255, 215, 100, 0.4) 0%, transparent 70%);
+	animation: keeperBreath 2.6s ease-in-out infinite;
+}
+
+@keyframes keeperBreath {
+	0%, 100% { opacity: 0.5; transform: translateX(-50%) scale(1); }
+	50%      { opacity: 0.9; transform: translateX(-50%) scale(1.15); }
+}
+
+.redeem-stage__keeper-img {
+	width: 96rpx;
+	height: 118rpx;
+	animation: keeperFloat 3.4s ease-in-out infinite;
+	filter: drop-shadow(0 6rpx 18rpx rgba(0, 0, 0, 0.55));
+}
+
+@keyframes keeperFloat {
+	0%, 100% { transform: translateY(0); }
+	50%      { transform: translateY(-8rpx); }
+}
+
+.redeem-stage__keeper-bubble {
+	position: absolute;
+	right: 100rpx;
+	top: 8rpx;
+	z-index: 6;
+	width: 280rpx;
+	padding: 12rpx 16rpx;
+	background: rgba(255, 248, 239, 0.96);
+	border: 2rpx solid rgba(196, 30, 58, 0.32);
+	border-radius: 18rpx 4rpx 18rpx 18rpx;
+	box-shadow: 0 6rpx 14rpx rgba(0, 0, 0, 0.45);
+	pointer-events: auto;
+	animation: keeperBubbleIn 0.4s cubic-bezier(0.2, 0.8, 0.4, 1) 0.3s both;
+}
+
+.redeem-stage__keeper-bubble-arrow {
+	position: absolute;
+	right: -10rpx;
+	top: 18rpx;
+	width: 0;
+	height: 0;
+	border-top: 8rpx solid transparent;
+	border-bottom: 8rpx solid transparent;
+	border-left: 12rpx solid rgba(255, 248, 239, 0.96);
+}
+
+@keyframes keeperBubbleIn {
+	0%   { transform: translateX(20rpx); opacity: 0; }
+	100% { transform: translateX(0); opacity: 1; }
+}
+
+.redeem-stage__keeper-bubble-name {
+	display: block;
+	font-size: 16rpx;
+	letter-spacing: 4rpx;
+	color: $py-red;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	font-weight: 700;
+}
+
+.redeem-stage__keeper-bubble-line {
+	display: block;
+	margin-top: 4rpx;
+	font-size: 20rpx;
+	line-height: 1.6;
+	color: $py-ink-soft;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+}
 
 .redeem-stage__voucher-paper {
 	position: relative;
@@ -326,10 +560,40 @@ function goBack() {
 
 /* 顶部牌匾 */
 .redeem-stage__voucher-head {
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
 	gap: 8rpx;
+}
+
+/* 品类小印（呼应商城器型语义：食 / 物 / 游）*/
+.redeem-stage__voucher-cat {
+	position: absolute;
+	top: -8rpx;
+	left: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 56rpx;
+	height: 56rpx;
+	background: rgba(196, 30, 58, 0.06);
+	border: 3rpx solid $py-red;
+	border-radius: 6rpx;
+	transform: rotate(-8deg);
+	color: $py-red;
+	font-size: 30rpx;
+	font-weight: 700;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	box-shadow: 0 3rpx 8rpx rgba(0, 0, 0, 0.28);
+}
+
+.redeem-stage__voucher-cat::before {
+	content: '';
+	position: absolute;
+	inset: 4rpx;
+	border: 1rpx solid rgba(196, 30, 58, 0.4);
+	border-radius: 3rpx;
 }
 
 .redeem-stage__voucher-eyebrow {
@@ -378,6 +642,14 @@ function goBack() {
 	transform: rotate(-12deg);
 	z-index: 3;
 	box-shadow: 0 4rpx 8rpx rgba(0, 0, 0, 0.32);
+	animation: stampDrop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.45s both;
+}
+
+/* 盖章落定：从上方放大砸下，终态保留 -12deg 旋转 */
+@keyframes stampDrop {
+	0%   { opacity: 0; transform: rotate(-12deg) scale(2.4); }
+	60%  { opacity: 1; transform: rotate(-12deg) scale(0.92); }
+	100% { opacity: 1; transform: rotate(-12deg) scale(1); }
 }
 
 .redeem-stage__voucher-state-stamp::before {
@@ -656,5 +928,10 @@ function goBack() {
 	.redeem-stage__voucher-actions { flex-direction: column; }
 	.redeem-stage__voucher-state-stamp { width: 90rpx; height: 90rpx; top: 50rpx; right: 30rpx; }
 	.redeem-stage__voucher-seal { width: 90rpx; height: 90rpx; right: 30rpx; bottom: 240rpx; }
+	.redeem-stage__keeper { top: -56rpx; right: 6rpx; }
+	.redeem-stage__keeper-img { width: 80rpx; height: 100rpx; }
+	.redeem-stage__keeper-bubble { width: 240rpx; right: 84rpx; }
+	.redeem-stage__voucher-cat { width: 48rpx; height: 48rpx; font-size: 26rpx; }
+	.redeem-stage__counter-plaque { font-size: 24rpx; letter-spacing: 6rpx; padding: 8rpx 32rpx; }
 }
 </style>

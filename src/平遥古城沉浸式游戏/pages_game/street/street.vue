@@ -690,6 +690,11 @@ let lastTime = Date.now()
 let joystickInput = { dx: 0, dy: 0 }
 let currentPhaseData = null
 
+/* 程序化纹理缓存：跨场景复用，避免每次 loadScene 重复生成上传 GPU。
+   只在 dispose() 里统一释放，clearScene 不动它们（material.dispose 不级联 texture）。*/
+let textureCache = {}
+let skyTextureCache = {}
+
 function emit(name, detail) {
 	window.dispatchEvent(new CustomEvent(name, { detail }))
 }
@@ -709,6 +714,239 @@ export default {
 		this.dispose()
 	},
 	methods: {
+		/* ===== 程序化纹理工具（CanvasTexture，零外部图片） ===== */
+		getTexture(key, factory) {
+			if (textureCache[key]) return textureCache[key]
+			const tex = factory()
+			if (tex) textureCache[key] = tex
+			return tex
+		},
+		makeCanvas(size) {
+			const canvas = document.createElement('canvas')
+			canvas.width = size
+			canvas.height = size
+			return canvas
+		},
+		/* 青砖墙：横向砖块 + 砖缝 + 轻微做旧斑驳 */
+		makeBrickTexture(baseHex, mortarHex) {
+			return this.getTexture('brick_' + baseHex + '_' + mortarHex, () => {
+				const size = 512
+				const canvas = this.makeCanvas(size)
+				const ctx = canvas.getContext('2d')
+				ctx.fillStyle = mortarHex
+				ctx.fillRect(0, 0, size, size)
+
+				const rows = 14
+				const brickH = size / rows
+				for (let r = 0; r < rows; r++) {
+					const y = r * brickH
+					const offset = (r % 2) * (size / 12)
+					const cols = 6
+					const brickW = size / cols
+					for (let c = -1; c <= cols; c++) {
+						const x = c * brickW + offset
+						// 每块砖在基色上做轻微明暗扰动，营造做旧感
+						const shade = 0.86 + Math.random() * 0.18
+						ctx.fillStyle = this.tintHex(baseHex, shade)
+						ctx.fillRect(x + 2, y + 2, brickW - 4, brickH - 4)
+						// 偶尔点缀风化斑点
+						if (Math.random() < 0.3) {
+							ctx.fillStyle = 'rgba(60, 48, 36, 0.10)'
+							const sx = x + 4 + Math.random() * (brickW - 10)
+							const sy = y + 4 + Math.random() * (brickH - 8)
+							ctx.fillRect(sx, sy, 2 + Math.random() * 6, 1 + Math.random() * 3)
+						}
+					}
+				}
+				const tex = new THREE.CanvasTexture(canvas)
+				tex.wrapS = THREE.RepeatWrapping
+				tex.wrapT = THREE.RepeatWrapping
+				tex.colorSpace = THREE.SRGBColorSpace
+				tex.needsUpdate = true
+				return tex
+			})
+		},
+		/* 灰瓦屋顶：纵向瓦垄条纹 + 高光 */
+		makeRoofTexture(tileHex) {
+			return this.getTexture('roof_' + tileHex, () => {
+				const size = 256
+				const canvas = this.makeCanvas(size)
+				const ctx = canvas.getContext('2d')
+				ctx.fillStyle = tileHex
+				ctx.fillRect(0, 0, size, size)
+				const ridges = 16
+				const w = size / ridges
+				for (let i = 0; i < ridges; i++) {
+					const x = i * w
+					ctx.fillStyle = this.tintHex(tileHex, 1.18)
+					ctx.fillRect(x, 0, w * 0.32, size)
+					ctx.fillStyle = this.tintHex(tileHex, 0.72)
+					ctx.fillRect(x + w * 0.78, 0, w * 0.22, size)
+				}
+				// 横向瓦当暗缝
+				ctx.fillStyle = 'rgba(20, 20, 24, 0.18)'
+				for (let y = 0; y < size; y += size / 6) {
+					ctx.fillRect(0, y, size, 2)
+				}
+				const tex = new THREE.CanvasTexture(canvas)
+				tex.wrapS = THREE.RepeatWrapping
+				tex.wrapT = THREE.RepeatWrapping
+				tex.colorSpace = THREE.SRGBColorSpace
+				tex.needsUpdate = true
+				return tex
+			})
+		},
+		/* 木纹：竖向木纹 + 节疤，用于门框 / 木柱 */
+		makeWoodTexture(woodHex) {
+			return this.getTexture('wood_' + woodHex, () => {
+				const size = 256
+				const canvas = this.makeCanvas(size)
+				const ctx = canvas.getContext('2d')
+				ctx.fillStyle = woodHex
+				ctx.fillRect(0, 0, size, size)
+				for (let i = 0; i < 40; i++) {
+					const x = Math.random() * size
+					ctx.strokeStyle = Math.random() < 0.5
+						? this.tintHex(woodHex, 0.82)
+						: this.tintHex(woodHex, 1.14)
+					ctx.lineWidth = 0.5 + Math.random() * 1.5
+					ctx.beginPath()
+					ctx.moveTo(x, 0)
+					ctx.bezierCurveTo(x + 6, size * 0.33, x - 6, size * 0.66, x + 2, size)
+					ctx.stroke()
+				}
+				const tex = new THREE.CanvasTexture(canvas)
+				tex.wrapS = THREE.RepeatWrapping
+				tex.wrapT = THREE.RepeatWrapping
+				tex.colorSpace = THREE.SRGBColorSpace
+				tex.needsUpdate = true
+				return tex
+			})
+		},
+		/* 木格窗：透明底 + 暖色窗棂格栅，作为窗扇贴图 */
+		makeLatticeTexture(frameHex) {
+			return this.getTexture('lattice_' + frameHex, () => {
+				const size = 256
+				const canvas = this.makeCanvas(size)
+				const ctx = canvas.getContext('2d')
+				// 窗纸暖底（夜里靠 emissive 透光）
+				ctx.fillStyle = '#f3e3bd'
+				ctx.fillRect(0, 0, size, size)
+				ctx.strokeStyle = frameHex
+				ctx.lineWidth = 10
+				ctx.strokeRect(4, 4, size - 8, size - 8)
+				ctx.lineWidth = 5
+				const lines = 5
+				const step = size / lines
+				for (let i = 1; i < lines; i++) {
+					ctx.beginPath(); ctx.moveTo(i * step, 0); ctx.lineTo(i * step, size); ctx.stroke()
+					ctx.beginPath(); ctx.moveTo(0, i * step); ctx.lineTo(size, i * step); ctx.stroke()
+				}
+				const tex = new THREE.CanvasTexture(canvas)
+				tex.colorSpace = THREE.SRGBColorSpace
+				tex.needsUpdate = true
+				return tex
+			})
+		},
+		/* 青石板路：不规则石块 + 石缝 + 轻微做旧 */
+		makeStoneGroundTexture() {
+			return this.getTexture('stone_ground', () => {
+				const size = 512
+				const canvas = this.makeCanvas(size)
+				const ctx = canvas.getContext('2d')
+				ctx.fillStyle = '#3a382f'
+				ctx.fillRect(0, 0, size, size)
+				const rows = 7
+				const tileH = size / rows
+				for (let r = 0; r < rows; r++) {
+					const y = r * tileH
+					const offset = (r % 2) * (size / 10)
+					const cols = 5
+					const tileW = size / cols
+					for (let c = -1; c <= cols; c++) {
+						const x = c * tileW + offset
+						const g = 120 + Math.floor(Math.random() * 36)
+						ctx.fillStyle = `rgb(${g - 8},${g - 4},${g - 14})`
+						ctx.fillRect(x + 3, y + 3, tileW - 6, tileH - 6)
+						// 做旧：斑块
+						if (Math.random() < 0.5) {
+							ctx.fillStyle = 'rgba(40, 40, 36, 0.12)'
+							ctx.beginPath()
+							ctx.arc(x + tileW * (0.3 + Math.random() * 0.4), y + tileH * (0.3 + Math.random() * 0.4), 4 + Math.random() * 10, 0, Math.PI * 2)
+							ctx.fill()
+						}
+					}
+				}
+				const tex = new THREE.CanvasTexture(canvas)
+				tex.wrapS = THREE.RepeatWrapping
+				tex.wrapT = THREE.RepeatWrapping
+				tex.repeat.set(8, 8)
+				tex.colorSpace = THREE.SRGBColorSpace
+				tex.needsUpdate = true
+				return tex
+			})
+		},
+		/* 天空渐变（顶→底两色），夜晚追加星点 */
+		makeSkyTexture(topHex, bottomHex, withStars) {
+			const key = 'sky_' + topHex + '_' + bottomHex + (withStars ? '_star' : '')
+			if (skyTextureCache[key]) return skyTextureCache[key]
+			const w = 256
+			const h = 512
+			const canvas = document.createElement('canvas')
+			canvas.width = w
+			canvas.height = h
+			const ctx = canvas.getContext('2d')
+			const grad = ctx.createLinearGradient(0, 0, 0, h)
+			grad.addColorStop(0, topHex)
+			grad.addColorStop(1, bottomHex)
+			ctx.fillStyle = grad
+			ctx.fillRect(0, 0, w, h)
+			if (withStars) {
+				// 仅在上半部撒星，避免压到地平线
+				for (let i = 0; i < 110; i++) {
+					const sx = Math.random() * w
+					const sy = Math.random() * h * 0.55
+					const r = Math.random() < 0.85 ? 0.6 + Math.random() * 0.8 : 1.4 + Math.random() * 1.0
+					ctx.fillStyle = `rgba(255, 250, 235, ${0.45 + Math.random() * 0.5})`
+					ctx.beginPath()
+					ctx.arc(sx, sy, r, 0, Math.PI * 2)
+					ctx.fill()
+				}
+				// 少量带光晕的亮星
+				for (let i = 0; i < 6; i++) {
+					const sx = Math.random() * w
+					const sy = Math.random() * h * 0.4
+					const halo = ctx.createRadialGradient(sx, sy, 0, sx, sy, 6)
+					halo.addColorStop(0, 'rgba(255, 248, 220, 0.9)')
+					halo.addColorStop(1, 'rgba(255, 248, 220, 0)')
+					ctx.fillStyle = halo
+					ctx.beginPath()
+					ctx.arc(sx, sy, 6, 0, Math.PI * 2)
+					ctx.fill()
+				}
+			}
+			const tex = new THREE.CanvasTexture(canvas)
+			tex.colorSpace = THREE.SRGBColorSpace
+			tex.needsUpdate = true
+			skyTextureCache[key] = tex
+			return tex
+		},
+		/* 颜色明暗扰动：传入 #rrggbb 与系数，返回 rgb() 字符串 */
+		tintHex(hex, factor) {
+			const raw = hex.replace('#', '')
+			const r = Math.min(255, Math.round(parseInt(raw.slice(0, 2), 16) * factor))
+			const g = Math.min(255, Math.round(parseInt(raw.slice(2, 4), 16) * factor))
+			const b = Math.min(255, Math.round(parseInt(raw.slice(4, 6), 16) * factor))
+			return `rgb(${r},${g},${b})`
+		},
+		/* 设置/刷新天空：scene.background 用渐变纹理，夜晚带星空 */
+		refreshSky(phase, fallbackTopHex, fallbackBottomHex) {
+			if (!scene) return
+			const topHex = (phase && phase.sky && phase.sky.top) ? phase.sky.top : (fallbackTopHex || '#d7c0a2')
+			const botHex = (phase && phase.sky && phase.sky.bottom) ? phase.sky.bottom : (fallbackBottomHex || '#f6ead7')
+			const isNight = phase && phase.key === 'night'
+			scene.background = this.makeSkyTexture(topHex, botHex, isNight)
+		},
 		loadThreeJS() {
 			const script = document.createElement('script')
 			script.src = '/static/libs/three.min.js'
@@ -769,7 +1007,9 @@ export default {
 			const fogColor = phase ? colorHex(phase.fog?.color, skyColor) : skyColor
 			const fogDensity = phase?.fog?.density || data.streetData.ambience?.fogDensity || 0.02
 
-			scene.background = new THREE.Color(skyColor)
+			/* 渐变天空（夜晚带星空），替代单色背景 */
+			currentPhaseData = phase
+			this.refreshSky(phase, data.streetData.sceneTone?.skyTop, data.streetData.sceneTone?.skyBottom)
 			scene.fog = new THREE.FogExp2(fogColor, fogDensity)
 
 			camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 100)
@@ -803,6 +1043,7 @@ export default {
 			const groundGeometry = new THREE.PlaneGeometry(60, 60, 24, 24)
 			const groundMaterial = new THREE.MeshStandardMaterial({
 				color: colorHex(data.streetData.ambience?.groundColor, 0x9e9e8e),
+				map: this.makeStoneGroundTexture(),
 				roughness: 0.92,
 				metalness: 0.08
 			})
@@ -855,9 +1096,14 @@ export default {
 				const group = new THREE.Group()
 
 				const bodyGeometry = new THREE.BoxGeometry(4.3, 3.2 + depth * 0.2, 3.1)
+				/* 青砖墙纹理：庙宇/城门偏暖砖，民居/商铺偏青灰砖 */
+				const warmStyle = building.style === 'gate' || building.style === 'temple'
+				const brickBase = warmStyle ? '#b89a72' : '#9aa093'
+				const brickTex = this.makeBrickTexture(brickBase, '#5b5247')
 				const bodyMaterial = new THREE.MeshStandardMaterial({
-					color: building.style === 'gate' ? 0xc7b18b : building.style === 'temple' ? 0xd8c8b0 : 0xd0c2aa,
-					roughness: 0.85,
+					color: building.style === 'gate' ? 0xe8dcc4 : building.style === 'temple' ? 0xf0e6d4 : 0xe6ddcc,
+					map: brickTex,
+					roughness: 0.92,
 					flatShading: true
 				})
 				const body = new THREE.Mesh(bodyGeometry, bodyMaterial)
@@ -868,7 +1114,8 @@ export default {
 
 				const roofGeometry = new THREE.ConeGeometry(3.1, 1.3, 4)
 				const roofMaterial = new THREE.MeshStandardMaterial({
-					color: building.style === 'gate' ? 0x5a3a2b : 0x3d3d3d,
+					color: building.style === 'gate' ? 0xb89a86 : 0xcfcfcf,
+					map: this.makeRoofTexture(building.style === 'gate' ? '#5a3a2b' : '#3d3d3d'),
 					roughness: 0.92,
 					flatShading: true
 				})
@@ -889,11 +1136,89 @@ export default {
 				lantern.position.set(1.4, 2.4, 1.55)
 				group.add(lantern)
 
+				/* 程序化建筑细节：门框 / 木格窗 / 檐下斗拱 / 正脊 */
+				this.addBuildingDetails(group, building, depth)
+
 				group.position.set(x, 0, z)
 				group.userData = { buildingId: building.id, poiId: building.poiId || '', type: building.style || 'building' }
 				scene.add(group)
 				buildings.push(group)
 			})
+		},
+		/* 给单栋建筑 group 追加几何细节（全部 add 进 group，随 clearScene 一起回收） */
+		addBuildingDetails(group, building, depth) {
+			const bodyH = 3.2 + depth * 0.2
+			const halfW = 2.15
+			const frontZ = 1.56  // body 半深 3.1/2 ≈ 1.55，贴在朝玩家正面
+			const woodTex = this.makeWoodTexture('#5a3320')
+			const frameMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: woodTex, roughness: 0.85, flatShading: true })
+
+			/* 门框 + 门洞（朝玩家正面，居中偏下） */
+			const doorW = 1.1
+			const doorH = Math.min(2.0, bodyH * 0.62)
+			const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(doorW + 0.34, doorH + 0.28, 0.16), frameMat)
+			doorFrame.position.set(0, doorH / 2 + 0.05, frontZ)
+			group.add(doorFrame)
+			const doorPanel = new THREE.Mesh(
+				new THREE.PlaneGeometry(doorW, doorH),
+				new THREE.MeshStandardMaterial({ color: 0x3a2415, map: woodTex, roughness: 0.8, side: THREE.DoubleSide, flatShading: true })
+			)
+			doorPanel.position.set(0, doorH / 2 + 0.05, frontZ + 0.09)
+			group.add(doorPanel)
+			// 门钉/门环点缀
+			const knob = new THREE.Mesh(
+				new THREE.SphereGeometry(0.07, 8, 8),
+				new THREE.MeshStandardMaterial({ color: 0xC9A227, emissive: 0x3a2c00, roughness: 0.4, metalness: 0.6 })
+			)
+			knob.position.set(0.22, doorH / 2 + 0.05, frontZ + 0.12)
+			group.add(knob)
+
+			/* 木格窗：正面门两侧各一扇，夜里靠 emissive 透光（userData.isWindowGlow） */
+			const latticeTex = this.makeLatticeTexture('#6b3a1c')
+			const winSize = 0.95
+			const winY = Math.min(bodyH * 0.7, doorH + 0.55)
+			const winMatBase = () => new THREE.MeshStandardMaterial({
+				color: 0xffffff,
+				map: latticeTex,
+				emissive: 0xffcf85,
+				emissiveMap: latticeTex,
+				emissiveIntensity: 0.0,
+				roughness: 0.7,
+				side: THREE.DoubleSide,
+				flatShading: true
+			})
+			;[-1, 1].forEach((sign) => {
+				const win = new THREE.Mesh(new THREE.PlaneGeometry(winSize, winSize), winMatBase())
+				win.position.set(sign * 1.25, winY, frontZ + 0.02)
+				win.userData.isWindowGlow = true
+				group.add(win)
+				// 窗楣木条
+				const lintel = new THREE.Mesh(new THREE.BoxGeometry(winSize + 0.2, 0.12, 0.14), frameMat)
+				lintel.position.set(sign * 1.25, winY + winSize / 2 + 0.12, frontZ)
+				group.add(lintel)
+			})
+
+			/* 檐下斗拱：屋檐下沿一排小木块 */
+			const eaveY = bodyH + 0.42
+			const dougongMat = new THREE.MeshStandardMaterial({ color: 0x7a4a2c, map: woodTex, roughness: 0.85, flatShading: true })
+			for (let i = -2; i <= 2; i++) {
+				const dg = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.26, 0.34), dougongMat)
+				dg.position.set(i * 0.85, eaveY, frontZ - 0.1)
+				group.add(dg)
+			}
+			// 檐枋横木（贯穿正面屋檐）
+			const beam = new THREE.Mesh(new THREE.BoxGeometry(halfW * 2 + 0.3, 0.22, 0.26), frameMat)
+			beam.position.set(0, eaveY + 0.22, frontZ - 0.06)
+			group.add(beam)
+
+			/* 正脊：屋顶顶端一根脊，配两端小脊兽 */
+			const ridge = new THREE.Mesh(
+				new THREE.BoxGeometry(2.4, 0.16, 0.16),
+				new THREE.MeshStandardMaterial({ color: 0x2c2c2c, roughness: 0.9, flatShading: true })
+			)
+			ridge.position.set(0, 4.7 + depth * 0.1, 0)
+			ridge.rotation.y = Math.PI / 4
+			group.add(ridge)
 		},
 		createPoiBeacons(pois, streetData) {
 			(pois || []).forEach((poi) => {
@@ -970,7 +1295,7 @@ export default {
 			player = group
 		},
 		createDecorations(streetData) {
-			/* 沿玩家可视区域均匀放置装饰物：石灯 / 古槐 / 旗幡 / 鼓 */
+			/* 沿玩家可视区域均匀放置装饰物：石灯 / 古槐 / 旗幡 / 鼓 / 盆栽 / 石阶 / 招幌 / 风铃 */
 			const decorPlan = [
 				{ kind: 'lantern-post', x: -14, z: 4 },
 				{ kind: 'lantern-post', x: 14, z: 4 },
@@ -978,7 +1303,15 @@ export default {
 				{ kind: 'tree', x: 10, z: -2 },
 				{ kind: 'banner', x: -6, z: 1 },
 				{ kind: 'banner', x: 6, z: 1 },
-				{ kind: 'drum', x: 0, z: 7 }
+				{ kind: 'drum', x: 0, z: 7 },
+				{ kind: 'potted', x: -3.4, z: 5.5 },
+				{ kind: 'potted', x: 3.4, z: 5.5 },
+				{ kind: 'stone-step', x: -8.5, z: 3 },
+				{ kind: 'stone-step', x: 8.5, z: 3 },
+				{ kind: 'hanging-sign', x: -11.5, z: 1.5 },
+				{ kind: 'hanging-sign', x: 11.5, z: 1.5 },
+				{ kind: 'wind-chime', x: -14, z: 4 },
+				{ kind: 'wind-chime', x: 14, z: 4 }
 			]
 
 			decorPlan.forEach((d) => {
@@ -992,6 +1325,15 @@ export default {
 					post.position.y = 1.3
 					group.add(post)
 
+					/* 挑杆横木：从灯柱顶端探出，灯笼悬于杆端 */
+					const arm = new THREE.Mesh(
+						new THREE.CylinderGeometry(0.05, 0.05, 0.9, 6),
+						new THREE.MeshStandardMaterial({ color: 0x4a2a18, roughness: 0.9, flatShading: true })
+					)
+					arm.rotation.z = Math.PI / 2
+					arm.position.set(0.4, 2.55, 0)
+					group.add(arm)
+
 					const lantern = new THREE.Mesh(
 						new THREE.SphereGeometry(0.36, 12, 10),
 						new THREE.MeshStandardMaterial({
@@ -1001,8 +1343,15 @@ export default {
 							flatShading: true
 						})
 					)
-					lantern.position.y = 2.45
+					lantern.position.set(0.8, 2.35, 0)
 					group.add(lantern)
+					// 灯穗
+					const tassel = new THREE.Mesh(
+						new THREE.ConeGeometry(0.06, 0.24, 6),
+						new THREE.MeshStandardMaterial({ color: 0xE8B84B, emissive: 0x4a3200, roughness: 0.6, flatShading: true })
+					)
+					tassel.position.set(0.8, 1.95, 0)
+					group.add(tassel)
 					group.userData.isLantern = true
 				} else if (d.kind === 'tree') {
 					const trunk = new THREE.Mesh(
@@ -1060,6 +1409,81 @@ export default {
 					)
 					drum.position.y = 0.46
 					group.add(drum)
+				} else if (d.kind === 'potted') {
+					/* 盆栽：陶盆 + 几丛叶团 */
+					const pot = new THREE.Mesh(
+						new THREE.CylinderGeometry(0.26, 0.18, 0.4, 10),
+						new THREE.MeshStandardMaterial({ color: 0x8a4a2a, roughness: 0.9, flatShading: true })
+					)
+					pot.position.y = 0.2
+					group.add(pot)
+					const leafColors = [0x4f7a1f, 0x6b8e23, 0x3f6b1a]
+					for (let i = 0; i < 3; i++) {
+						const leaf = new THREE.Mesh(
+							new THREE.IcosahedronGeometry(0.3 + i * 0.06, 0),
+							new THREE.MeshStandardMaterial({ color: leafColors[i % leafColors.length], roughness: 0.9, flatShading: true })
+						)
+						leaf.position.set((i - 1) * 0.18, 0.55 + i * 0.16, (i - 1) * 0.12)
+						group.add(leaf)
+					}
+				} else if (d.kind === 'stone-step') {
+					/* 石阶：三级渐窄青石台阶 */
+					const stepMat = new THREE.MeshStandardMaterial({ color: 0x8f8f82, roughness: 0.96, flatShading: true })
+					for (let i = 0; i < 3; i++) {
+						const w = 1.6 - i * 0.36
+						const step = new THREE.Mesh(new THREE.BoxGeometry(w, 0.18, 0.7 - i * 0.14), stepMat)
+						step.position.set(0, 0.09 + i * 0.18, -i * 0.22)
+						step.receiveShadow = true
+						group.add(step)
+					}
+				} else if (d.kind === 'hanging-sign') {
+					/* 招幌：竖立木杆 + 竖向招牌 + 飘穗，区别于旗幡 */
+					const pole = new THREE.Mesh(
+						new THREE.CylinderGeometry(0.06, 0.07, 3.4, 6),
+						new THREE.MeshStandardMaterial({ color: 0x3d2010, roughness: 0.88, flatShading: true })
+					)
+					pole.position.y = 1.7
+					group.add(pole)
+					const board = new THREE.Mesh(
+						new THREE.BoxGeometry(0.46, 1.5, 0.08),
+						new THREE.MeshStandardMaterial({
+							color: 0xC41E3A,
+							emissive: 0x3a0a14,
+							emissiveIntensity: 0.2,
+							roughness: 0.7,
+							flatShading: true
+						})
+					)
+					board.position.set(0.3, 2.4, 0)
+					group.add(board)
+					const trim = new THREE.Mesh(
+						new THREE.BoxGeometry(0.5, 0.12, 0.1),
+						new THREE.MeshStandardMaterial({ color: 0xE8B84B, emissive: 0x3a2c00, roughness: 0.5, flatShading: true })
+					)
+					trim.position.set(0.3, 3.18, 0)
+					group.add(trim)
+					group.userData.isSign = true
+				} else if (d.kind === 'wind-chime') {
+					/* 檐角风铃：悬线 + 小铃铛，随风轻摆 */
+					const line = new THREE.Mesh(
+						new THREE.CylinderGeometry(0.012, 0.012, 0.5, 4),
+						new THREE.MeshStandardMaterial({ color: 0x2a1c10, roughness: 0.9, flatShading: true })
+					)
+					line.position.y = 2.4
+					group.add(line)
+					const bell = new THREE.Mesh(
+						new THREE.ConeGeometry(0.1, 0.18, 8),
+						new THREE.MeshStandardMaterial({ color: 0xC9A227, emissive: 0x2a2000, roughness: 0.45, metalness: 0.55, flatShading: true })
+					)
+					bell.position.y = 2.1
+					group.add(bell)
+					const clapper = new THREE.Mesh(
+						new THREE.SphereGeometry(0.04, 6, 6),
+						new THREE.MeshStandardMaterial({ color: 0xE8B84B, roughness: 0.5, metalness: 0.5 })
+					)
+					clapper.position.y = 1.98
+					group.add(clapper)
+					group.userData.isWindChime = true
 				}
 
 				group.position.set(d.x, 0, d.z)
@@ -1099,7 +1523,8 @@ export default {
 			currentPhaseData = phase
 
 			const skyColor = colorHex(phase.sky?.top, 0xD7C0A2)
-			scene.background = new THREE.Color(skyColor)
+			/* 渐变天空（夜晚带星空），随时辰刷新 */
+			this.refreshSky(phase)
 			if (scene.fog) {
 				scene.fog.color = new THREE.Color(colorHex(phase.fog?.color, skyColor))
 				scene.fog.density = phase.fog?.density || scene.fog.density
@@ -1127,7 +1552,7 @@ export default {
 				renderer.toneMappingExposure = phase.exposure
 			}
 
-			/* 灯笼 / 旗幡：夜间增强发光 */
+			/* 灯笼 / 旗幡 / 招幌：夜间增强发光 */
 			const lit = phase.lanternsLit
 			decorations.forEach((group) => {
 				if (group.userData?.isLantern) {
@@ -1137,13 +1562,28 @@ export default {
 						}
 					})
 				}
-				if (group.userData?.isBanner) {
+				if (group.userData?.isBanner || group.userData?.isSign) {
 					group.traverse((mesh) => {
 						if (mesh.isMesh && mesh.material && mesh.material.emissive) {
 							mesh.material.emissiveIntensity = lit ? 0.45 : 0.18
 						}
 					})
 				}
+			})
+
+			/* 建筑窗格：入夜后窗纸透暖光，配合 Bloom 晕染出灯火气 */
+			this.updateWindowGlow(phase)
+		},
+		/* 根据时辰调整建筑木格窗的透光强度（晨/午暗、昏微亮、夜最亮） */
+		updateWindowGlow(phase) {
+			const key = phase?.key
+			const glow = key === 'night' ? 1.15 : key === 'dusk' ? 0.6 : 0.0
+			buildings.forEach((group) => {
+				group.traverse((mesh) => {
+					if (mesh.isMesh && mesh.userData?.isWindowGlow && mesh.material) {
+						mesh.material.emissiveIntensity = glow
+					}
+				})
 			})
 		},
 		createJoystick() {
@@ -1241,7 +1681,7 @@ export default {
 					beacon.rotation.y += deltaTime * (beacon.userData.isHighlighted ? 1.2 : 0.4)
 				})
 
-				/* 装饰物：旗幡轻晃，灯笼微呼吸 */
+				/* 装饰物：旗幡轻晃，灯笼微呼吸，招幌摇曳，风铃轻摆 */
 				decorations.forEach((group, idx) => {
 					if (group.userData?.isBanner) {
 						group.rotation.y = Math.sin(now * 0.0012 + idx) * 0.18
@@ -1249,6 +1689,14 @@ export default {
 					if (group.userData?.isLantern) {
 						const scale = 1 + Math.sin(now * 0.002 + idx) * 0.04
 						group.scale.set(scale, scale, scale)
+						group.rotation.z = Math.sin(now * 0.0014 + idx) * 0.05
+					}
+					if (group.userData?.isSign) {
+						group.rotation.z = Math.sin(now * 0.0016 + idx) * 0.08
+					}
+					if (group.userData?.isWindChime) {
+						group.rotation.x = Math.sin(now * 0.0026 + idx) * 0.12
+						group.rotation.z = Math.cos(now * 0.0021 + idx) * 0.1
 					}
 				})
 
@@ -1294,6 +1742,11 @@ export default {
 		dispose() {
 			if (animationId) cancelAnimationFrame(animationId)
 			this.clearScene()
+			/* 释放程序化纹理缓存（共享纹理不在 clearScene 里清，统一在此释放） */
+			Object.keys(textureCache).forEach((k) => { if (textureCache[k]) textureCache[k].dispose() })
+			Object.keys(skyTextureCache).forEach((k) => { if (skyTextureCache[k]) skyTextureCache[k].dispose() })
+			textureCache = {}
+			skyTextureCache = {}
 			if (renderer) renderer.dispose()
 			scene = null
 			camera = null

@@ -1,5 +1,5 @@
 <template>
-	<view class="dialog-stage">
+	<view class="dialog-stage" :class="'dialog-stage--' + activeDialogId">
 		<!-- 街景虚化背景（保留 3D 街景的氛围） -->
 		<view class="dialog-stage__bg-blur"></view>
 		<view class="dialog-stage__bg-glow"></view>
@@ -9,6 +9,7 @@
 
 		<!-- 左侧：晋小鸦立绘 -->
 		<view class="dialog-stage__owl">
+			<view class="dialog-stage__owl-glow"></view>
 			<image class="dialog-stage__owl-img" src="/static/img/npc_owl_full.png" mode="aspectFit" />
 			<view class="dialog-stage__owl-shadow"></view>
 			<view class="dialog-stage__owl-card">
@@ -267,6 +268,26 @@ function goBack() {
 		radial-gradient(ellipse at 20% 30%, rgba(255, 200, 130, 0.16) 0%, transparent 35%),
 		radial-gradient(ellipse at 70% 60%, rgba(196, 30, 58, 0.08) 0%, transparent 40%);
 	pointer-events: none;
+	transition: background 0.6s ease;
+}
+
+/* 场景调色：随话题切换氛围 */
+.dialog-stage--county-office-history .dialog-stage__bg-glow {
+	background:
+		radial-gradient(ellipse at 22% 28%, rgba(255, 206, 128, 0.22) 0%, transparent 38%),
+		radial-gradient(ellipse at 72% 62%, rgba(176, 123, 58, 0.12) 0%, transparent 42%);
+}
+
+.dialog-stage--baozheng-case .dialog-stage__bg-glow {
+	background:
+		radial-gradient(ellipse at 24% 26%, rgba(150, 180, 200, 0.14) 0%, transparent 38%),
+		radial-gradient(ellipse at 70% 64%, rgba(196, 30, 58, 0.16) 0%, transparent 44%);
+}
+
+.dialog-stage--nearby-shops .dialog-stage__bg-glow {
+	background:
+		radial-gradient(ellipse at 18% 32%, rgba(255, 170, 92, 0.24) 0%, transparent 40%),
+		radial-gradient(ellipse at 74% 58%, rgba(255, 120, 60, 0.12) 0%, transparent 42%);
 }
 
 /* ===== 左侧晋小鸦立绘 ===== */
@@ -283,10 +304,30 @@ function goBack() {
 	pointer-events: none;
 }
 
+.dialog-stage__owl-glow {
+	position: absolute;
+	left: 50%;
+	bottom: 70rpx;
+	width: 320rpx;
+	height: 90rpx;
+	transform: translateX(-50%);
+	background: radial-gradient(ellipse at 50% 50%, rgba(255, 210, 130, 0.4) 0%, transparent 68%);
+	pointer-events: none;
+	z-index: 0;
+	animation: owlGlowBreath 3.6s ease-in-out infinite;
+}
+
+@keyframes owlGlowBreath {
+	0%, 100% { opacity: 0.55; transform: translateX(-50%) scale(1); }
+	50%      { opacity: 1; transform: translateX(-50%) scale(1.16); }
+}
+
 .dialog-stage__owl-img {
 	width: 100%;
 	max-width: 380rpx;
 	height: 460rpx;
+	position: relative;
+	z-index: 1;
 	animation: owlBreathe 3.4s ease-in-out infinite;
 	filter: drop-shadow(0 16rpx 36rpx rgba(0, 0, 0, 0.7));
 }
@@ -339,13 +380,29 @@ function goBack() {
 }
 
 .dialog-stage__owl-desc {
+	position: relative;
 	margin-top: 6rpx;
+	padding: 0 18rpx;
 	font-size: 20rpx;
 	line-height: 1.7;
 	color: $py-ink-soft;
 	letter-spacing: 1rpx;
 	text-align: center;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
 }
+
+.dialog-stage__owl-desc::before,
+.dialog-stage__owl-desc::after {
+	position: absolute;
+	top: -4rpx;
+	font-size: 28rpx;
+	line-height: 1;
+	color: rgba(196, 30, 58, 0.55);
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+}
+
+.dialog-stage__owl-desc::before { content: '“'; left: 0; }
+.dialog-stage__owl-desc::after  { content: '”'; right: 0; top: auto; bottom: -4rpx; }
 
 /* ===== 右侧折扇 ===== */
 .dialog-stage__fan {
@@ -453,6 +510,8 @@ function goBack() {
 .dialog-stage__fan-subtitle {
 	display: block;
 	margin-top: 14rpx;
+	padding-left: 16rpx;
+	border-left: 4rpx solid rgba(196, 30, 58, 0.55);
 	font-size: 22rpx;
 	line-height: 1.85;
 	color: rgba(110, 85, 65, 0.95);
@@ -554,6 +613,12 @@ function goBack() {
 	display: flex;
 	flex-direction: column;
 	gap: 6rpx;
+	animation: msgIn 0.4s cubic-bezier(0.2, 0.8, 0.4, 1) both;
+}
+
+@keyframes msgIn {
+	0%   { opacity: 0; transform: translateY(12rpx); }
+	100% { opacity: 1; transform: translateY(0); }
 }
 
 .dialog-stage__msg--player .dialog-stage__msg-meta {
@@ -599,12 +664,40 @@ function goBack() {
 }
 
 .dialog-stage__msg-bubble {
+	position: relative;
 	max-width: 88%;
 	padding: 14rpx 20rpx;
 	border-radius: 6rpx;
 	background: linear-gradient(180deg, rgba(255, 248, 239, 0.95) 0%, rgba(245, 240, 232, 0.92) 100%);
 	border: 1rpx solid rgba(212, 165, 116, 0.35);
 	box-shadow: 0 4rpx 12rpx rgba(0, 0, 0, 0.18);
+}
+
+/* NPC 气泡：左上尖角朝向晋小鸦 */
+.dialog-stage__msg--npc .dialog-stage__msg-bubble::before {
+	content: '';
+	position: absolute;
+	left: -10rpx;
+	top: 18rpx;
+	width: 0;
+	height: 0;
+	border-top: 8rpx solid transparent;
+	border-bottom: 8rpx solid transparent;
+	border-right: 12rpx solid rgba(255, 248, 239, 0.95);
+	filter: drop-shadow(-1rpx 0 0 rgba(212, 165, 116, 0.35));
+}
+
+/* 旅人气泡：右上尖角 */
+.dialog-stage__msg--player .dialog-stage__msg-bubble::after {
+	content: '';
+	position: absolute;
+	right: -10rpx;
+	top: 18rpx;
+	width: 0;
+	height: 0;
+	border-top: 8rpx solid transparent;
+	border-bottom: 8rpx solid transparent;
+	border-left: 12rpx solid #6b3510;
 }
 
 .dialog-stage__msg-text {
@@ -658,6 +751,12 @@ function goBack() {
 	font-size: 22rpx;
 	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
 	letter-spacing: 2rpx;
+	transition: transform 0.16s ease, background 0.16s ease;
+}
+
+.dialog-stage__quick-chip:active {
+	transform: scale(0.94);
+	background: rgba(196, 30, 58, 0.16);
 }
 
 /* ===== 快捷动作 ===== */
@@ -726,6 +825,12 @@ function goBack() {
 	color: #6b3510;
 	font-size: 20rpx;
 	border: 1rpx solid rgba(201, 174, 138, 0.5);
+	transition: transform 0.16s ease, background 0.16s ease;
+}
+
+.dialog-stage__shortcut:active {
+	transform: scale(0.94);
+	background: rgba(212, 165, 116, 0.28);
 }
 
 .dialog-stage__input-row {

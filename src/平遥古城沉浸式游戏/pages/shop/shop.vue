@@ -76,7 +76,19 @@
 
 		<!-- 货架场景（柜台纵深感）-->
 		<scroll-view class="shop-stage__shelves-scroll" scroll-y :show-scrollbar="false">
-			<view class="shop-stage__shelves">
+			<view :key="activeCategory" class="shop-stage__shelves">
+				<!-- 铺面纵深：两侧木柱 + 楹联竖条 -->
+				<view class="shop-stage__post shop-stage__post--l">
+					<view class="shop-stage__couplet">
+						<text>晋商旧物聚一架</text>
+					</view>
+				</view>
+				<view class="shop-stage__post shop-stage__post--r">
+					<view class="shop-stage__couplet">
+						<text>银钥可换满堂珍</text>
+					</view>
+				</view>
+
 				<view
 					v-for="(shelfRow, rowIdx) in shelfRows"
 					:key="rowIdx"
@@ -109,17 +121,22 @@
 							<!-- 商品光晕 -->
 							<view class="shop-stage__product-halo"></view>
 
-							<!-- 商品本体（球形 / 包袱 / 卷轴）-->
+							<!-- 商品本体（按品类呈不同器型：食盒 / 锦盒 / 票券）-->
 							<view class="shop-stage__product-body">
-								<view class="shop-stage__product-orb">
+								<view
+									class="shop-stage__product-orb"
+									:class="`shop-stage__product-orb--${item.category}`"
+								>
 									<view class="shop-stage__product-orb-shine"></view>
 									<text class="shop-stage__product-orb-icon">{{ getProductIcon(item) }}</text>
 								</view>
 								<view class="shop-stage__product-shadow"></view>
 							</view>
 
-							<!-- 商品名（直接刻在木板上）-->
-							<text class="shop-stage__product-name">{{ item.name }}</text>
+							<!-- 商品名（木匾名签）-->
+							<view class="shop-stage__product-plaque">
+								<text class="shop-stage__product-name">{{ item.name }}</text>
+							</view>
 
 							<!-- 价格挂签 -->
 							<view class="shop-stage__product-tag">
@@ -158,7 +175,10 @@
 				<view class="shop-stage__detail-fiber"></view>
 
 				<view class="shop-stage__detail-product">
-					<view class="shop-stage__detail-product-inner" :class="getRarityClass(currentItem)">
+					<view
+						class="shop-stage__detail-product-inner"
+						:class="[getRarityClass(currentItem), `shop-stage__product-orb--${currentItem.category}`]"
+					>
 						<text class="shop-stage__detail-product-icon">{{ getProductIcon(currentItem) }}</text>
 					</view>
 				</view>
@@ -685,11 +705,79 @@ function redeemItem(item) {
 
 .shop-stage__shelves {
 	position: relative;
-	padding: 24rpx 32rpx 40rpx;
+	padding: 24rpx 56rpx 40rpx;
 	background:
-		linear-gradient(180deg, rgba(58, 34, 22, 0.65) 0%, rgba(40, 22, 14, 0.85) 100%);
+		linear-gradient(180deg, rgba(58, 34, 22, 0.65) 0%, rgba(40, 22, 14, 0.85) 100%),
+		repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.16) 0, rgba(0, 0, 0, 0.16) 1rpx, transparent 1rpx, transparent 14rpx),
+		repeating-linear-gradient(90deg, rgba(176, 123, 58, 0.08) 0, rgba(176, 123, 58, 0.08) 2rpx, transparent 2rpx, transparent 90rpx);
+	background-blend-mode: normal, multiply, screen;
 	box-shadow:
 		inset 0 4rpx 12rpx rgba(0, 0, 0, 0.55);
+	animation: shelfSwap 0.42s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+/* 换架（分类切换）卷入过渡 */
+@keyframes shelfSwap {
+	0%   { opacity: 0; transform: translateY(18rpx) scale(0.98); }
+	60%  { opacity: 1; }
+	100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ===== 铺面木柱 + 楹联 ===== */
+.shop-stage__post {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 40rpx;
+	z-index: 1;
+	pointer-events: none;
+	background:
+		linear-gradient(90deg, #2a1810 0%, #6b3510 35%, #b07b3a 50%, #6b3510 65%, #2a1810 100%);
+	box-shadow:
+		inset 0 0 0 1rpx rgba(0, 0, 0, 0.45),
+		inset 0 0 12rpx rgba(0, 0, 0, 0.5);
+}
+
+.shop-stage__post--l { left: 0; }
+.shop-stage__post--r { right: 0; }
+
+.shop-stage__post::before {
+	content: '';
+	position: absolute;
+	left: 50%;
+	top: 0;
+	width: 2rpx;
+	height: 100%;
+	transform: translateX(-50%);
+	background: repeating-linear-gradient(0deg, rgba(255, 235, 195, 0.12) 0, rgba(255, 235, 195, 0.12) 3rpx, transparent 3rpx, transparent 24rpx);
+}
+
+.shop-stage__couplet {
+	position: absolute;
+	top: 30rpx;
+	left: 50%;
+	transform: translateX(-50%);
+	width: 30rpx;
+	padding: 12rpx 0;
+	display: flex;
+	justify-content: center;
+	background: linear-gradient(180deg, $py-red 0%, #6b1622 100%);
+	border: 1rpx solid rgba(255, 220, 220, 0.4);
+	border-radius: 3rpx;
+	box-shadow: 0 4rpx 10rpx rgba(0, 0, 0, 0.5);
+}
+
+.shop-stage__couplet text {
+	writing-mode: vertical-rl;
+	font-size: 18rpx;
+	letter-spacing: 6rpx;
+	line-height: 1.1;
+	color: $py-paper-warm;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	font-weight: 700;
+	text-shadow: 0 1rpx 2rpx rgba(0, 0, 0, 0.6);
+	white-space: nowrap;
+	overflow: hidden;
 }
 
 /* 单层货架 */
@@ -878,6 +966,48 @@ function redeemItem(item) {
 	50%      { transform: translateY(-6rpx); }
 }
 
+/* ===== 品类器型差异化（食盒 / 锦盒 / 票券）===== */
+/* 食单：圆食盒，顶部一道盒盖缝 */
+.shop-stage__product-orb--food {
+	border-radius: 18rpx;
+}
+
+.shop-stage__product-orb--food::before {
+	content: '';
+	position: absolute;
+	left: 12%;
+	right: 12%;
+	top: 30%;
+	height: 2rpx;
+	background: rgba(42, 24, 16, 0.55);
+	box-shadow: 0 1rpx 0 rgba(255, 235, 195, 0.35);
+	pointer-events: none;
+	z-index: 1;
+}
+
+/* 文藏：方锦盒，十字系带 */
+.shop-stage__product-orb--cultural {
+	border-radius: 12rpx;
+}
+
+.shop-stage__product-orb--cultural::before {
+	content: '';
+	position: absolute;
+	inset: 0;
+	background:
+		linear-gradient(90deg, transparent calc(50% - 4rpx), rgba(196, 30, 58, 0.7) calc(50% - 4rpx), rgba(196, 30, 58, 0.7) calc(50% + 4rpx), transparent calc(50% + 4rpx)),
+		linear-gradient(0deg, transparent calc(50% - 4rpx), rgba(196, 30, 58, 0.7) calc(50% - 4rpx), rgba(196, 30, 58, 0.7) calc(50% + 4rpx), transparent calc(50% + 4rpx));
+	border-radius: 12rpx;
+	pointer-events: none;
+	z-index: 1;
+}
+
+/* 行程：立式票券，剪票豁口 */
+.shop-stage__product-orb--experience {
+	border-radius: 8rpx;
+	clip-path: polygon(0 0, 100% 0, 100% 42%, 90% 50%, 100% 58%, 100% 100%, 0 100%, 0 58%, 10% 50%, 0 42%);
+}
+
 .shop-stage__product-orb-shine {
 	position: absolute;
 	top: 18rpx;
@@ -919,18 +1049,56 @@ function redeemItem(item) {
 	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
 	letter-spacing: 1rpx;
 	text-align: center;
-	max-width: 180rpx;
+	max-width: 156rpx;
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	text-shadow: 0 1rpx 2rpx rgba(0, 0, 0, 0.65);
 	z-index: 2;
-	margin-top: 4rpx;
 }
+
+/* 商品名木匾名签 */
+.shop-stage__product-plaque {
+	position: relative;
+	z-index: 2;
+	margin-top: 6rpx;
+	padding: 4rpx 14rpx;
+	background:
+		linear-gradient(180deg, #6b3510 0%, #4a2a18 100%);
+	border: 1rpx solid rgba(212, 165, 116, 0.5);
+	border-radius: 4rpx;
+	box-shadow:
+		inset 0 1rpx 0 rgba(255, 235, 195, 0.32),
+		0 2rpx 5rpx rgba(0, 0, 0, 0.5);
+}
+
+.shop-stage__product-plaque::before,
+.shop-stage__product-plaque::after {
+	content: '';
+	position: absolute;
+	top: 50%;
+	width: 6rpx;
+	height: 6rpx;
+	transform: translateY(-50%);
+	background: $py-gold;
+	border-radius: 50%;
+	box-shadow: 0 0 2rpx rgba(0, 0, 0, 0.5);
+}
+
+.shop-stage__product-plaque::before { left: 4rpx; }
+.shop-stage__product-plaque::after  { right: 4rpx; }
 
 .shop-stage__product--selected .shop-stage__product-name {
 	color: $py-paper-warm;
 	text-shadow: 0 0 8rpx rgba(255, 220, 130, 0.5), 0 1rpx 2rpx rgba(0, 0, 0, 0.65);
+}
+
+.shop-stage__product--selected .shop-stage__product-plaque {
+	border-color: rgba(255, 220, 130, 0.7);
+	box-shadow:
+		inset 0 1rpx 0 rgba(255, 235, 195, 0.4),
+		0 0 12rpx rgba(255, 220, 130, 0.5),
+		0 2rpx 5rpx rgba(0, 0, 0, 0.5);
 }
 
 /* 价格挂签 */
@@ -982,7 +1150,8 @@ function redeemItem(item) {
 /* ===== 柜台前景 ===== */
 .shop-stage__counter {
 	position: relative;
-	margin: 32rpx -32rpx 0;
+	z-index: 4;
+	margin: 32rpx -56rpx 0;
 }
 
 .shop-stage__counter-top {
