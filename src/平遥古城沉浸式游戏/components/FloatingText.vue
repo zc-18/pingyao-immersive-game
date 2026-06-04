@@ -26,7 +26,9 @@ const floatingStyle = computed(() => ({
 
 const typeClass = computed(() => `floating-text--${props.type}`)
 
-watch(() => props.visible, (visible) => {
+// 同时观察 visible 与 text：父级连续触发飘字时 visible 一直为 true，仅 watch(visible) 不会重放，
+// 旧动画进度（可能已淡出到近乎透明）会被新文案直接套用，等于丢字。getter 返回数组，任一变化即重触发。
+watch(() => [props.visible, props.text], ([visible]) => {
 	if (visible) {
 		startAnimation()
 	} else {
@@ -34,13 +36,19 @@ watch(() => props.visible, (visible) => {
 	}
 })
 
+// 代次令牌：新动画启动即作废上一段 rAF 循环，避免两条循环并发改 offsetY/opacity 且各自 emit('complete')
+// （旧循环会先到点把刚开始的新文案提前隐藏）。
+let animToken = 0
+
 function startAnimation() {
+	const myToken = ++animToken
 	offsetY.value = 0
 	opacity.value = 1
 
 	// 使用 requestAnimationFrame 实现平滑动画
 	const startTime = Date.now()
 	const animate = () => {
+		if (myToken !== animToken) return // 已被更新的动画作废，停止改值且不再 emit
 		const elapsed = Date.now() - startTime
 		const progress = Math.min(elapsed / props.duration, 1)
 
@@ -63,6 +71,7 @@ function startAnimation() {
 }
 
 function resetAnimation() {
+	animToken++ // 失效正在跑的循环
 	offsetY.value = 0
 	opacity.value = 1
 }

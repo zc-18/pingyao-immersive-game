@@ -7,6 +7,18 @@ export const STORAGE_KEYS = {
 	redeemOrders: 'pygc_shop_redeem_orders'
 }
 
+/**
+ * 全项目统一的「本地日历日」字符串（YYYY-MM-DD，本地时区）。
+ * 签到(check-in)、每日任务重置(quest-manager)、时辰(phase) 等"今天"口径必须一致：
+ * 一律以本地午夜为日界，禁止再用 new Date().toISOString()（那是 UTC，UTC+8 下要到本地 08:00 才翻日）。
+ */
+export function localDateString(date = new Date()) {
+	const y = date.getFullYear()
+	const m = String(date.getMonth() + 1).padStart(2, '0')
+	const d = String(date.getDate()).padStart(2, '0')
+	return `${y}-${m}-${d}`
+}
+
 const defaultState = {
 	[STORAGE_KEYS.userProfile]: {
 		nickname: '\u5e73\u9065\u884c\u5ba2',
@@ -277,6 +289,7 @@ export function patchStorageObject(key, patch = {}) {
 const storage = {
 	keys: STORAGE_KEYS,
 	defaultState,
+	localDateString,
 	get: getStorage,
 	set: setStorage,
 	remove: removeStorage,

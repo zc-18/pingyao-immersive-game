@@ -127,6 +127,7 @@ import GateTransition from '@/components/GateTransition.vue'
 import { roleList } from '@/common/data/roles.js'
 import { patchStorageObject, STORAGE_KEYS } from '@/common/utils/storage.js'
 import { markPageVisit, patchRuntimeState } from '@/common/utils/game-state.js'
+import { playSFX, SFX } from '@/common/utils/audio.js'
 
 const currentIndex = ref(0)
 const isSubmitting = ref(false)
@@ -166,7 +167,8 @@ function switchRole(direction) {
 function confirmRole() {
 	if (isSubmitting.value) return
 	isSubmitting.value = true
-	// 此处印章拍下声 pa 留给后期接入
+	// 印章拍下声：启程音效（缺素材时静默兜底）
+	playSFX(SFX.QUEST_START)
 
 	patchStorageObject(STORAGE_KEYS.userProfile, {
 		roleId: currentRole.value.id,

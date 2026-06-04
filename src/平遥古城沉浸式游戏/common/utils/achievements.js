@@ -167,6 +167,28 @@ export const ACHIEVEMENTS = [
 	}
 ]
 
+/**
+ * 成就解锁奖励（银钥 / 经验）。此前成就只点亮印章、无任何奖励，循环偏弱；
+ * 这里给每个成就配一份解锁奖励，按难度递增。「银钥半囊」不再发银钥（避免反哺自身达成条件）。
+ */
+const ACHIEVEMENT_REWARDS = {
+	'first-step': { silverKey: 8, exp: 15 },
+	'rishengchang-open': { silverKey: 20, exp: 40 },
+	'three-streets': { silverKey: 30, exp: 60 },
+	'poi-five': { silverKey: 24, exp: 40 },
+	'owl-friend': { silverKey: 20, exp: 35 },
+	'long-walk': { silverKey: 18, exp: 30 },
+	'silver-collector': { silverKey: 0, exp: 40 },
+	'check-in-week': { silverKey: 30, exp: 60 },
+	'level-shopkeeper': { silverKey: 15, exp: 30 },
+	'level-master': { silverKey: 40, exp: 80 }
+}
+const DEFAULT_ACHIEVEMENT_REWARD = { silverKey: 12, exp: 24 }
+
+export function getAchievementReward(id) {
+	return ACHIEVEMENT_REWARDS[id] || DEFAULT_ACHIEVEMENT_REWARD
+}
+
 export function evaluateAchievements(snapshot = {}) {
 	const progress = snapshot.progress || getUserProgress()
 	const profile = snapshot.profile || getUserProfile()
@@ -194,11 +216,27 @@ export function syncAchievementUnlocks() {
 	const list = evaluateAchievements({ progress })
 	const newlyUnlocked = list.filter((item) => item.unlocked && !previously.has(item.id))
 	if (newlyUnlocked.length === 0) {
-		return { newlyUnlocked: [], list }
+		return { newlyUnlocked: [], list, grantedReward: { silverKey: 0, exp: 0 } }
 	}
-	const merged = [...new Set([...progress.unlockedAchievements, ...newlyUnlocked.map((item) => item.id)])]
-	patchStorageObject(STORAGE_KEYS.userProgress, { unlockedAchievements: merged })
-	return { newlyUnlocked, list }
+	const merged = [...new Set([...(progress.unlockedAchievements || []), ...newlyUnlocked.map((item) => item.id)])]
+	// 累计本批解锁奖励，与 unlockedAchievements 同一次写入——保证「记录解锁」与「发奖」原子；
+	// 因解锁记录立即持久化，已解锁成就不会再次进入 newlyUnlocked，故发奖天然幂等、不会重复。
+	const grantedReward = newlyUnlocked.reduce((acc, item) => {
+		const reward = getAchievementReward(item.id)
+		acc.silverKey += reward.silverKey || 0
+		acc.exp += reward.exp || 0
+		return acc
+	}, { silverKey: 0, exp: 0 })
+	patchStorageObject(STORAGE_KEYS.userProgress, {
+		unlockedAchievements: merged,
+		silverKey: (Number(progress.silverKey) || 0) + grantedReward.silverKey,
+		exp: (Number(progress.exp) || 0) + grantedReward.exp
+	})
+	return {
+		newlyUnlocked: newlyUnlocked.map((item) => ({ ...item, reward: getAchievementReward(item.id) })),
+		list,
+		grantedReward
+	}
 }
 
 export function getAchievementSummary() {

@@ -131,6 +131,7 @@ import streetScenes from '@/common/data/streets.js'
 import { roleList } from '@/common/data/roles.js'
 import { getStorage, patchStorageObject, STORAGE_KEYS } from '@/common/utils/storage.js'
 import { getLevelMeta, getLevelProgress } from '@/common/utils/level.js'
+import { playBGM, stopBGM, playSFX, SFX, BGM } from '@/common/utils/audio.js'
 import {
 	getCurrentStreetScene,
 	getExploreDirectionLabel,
@@ -369,6 +370,13 @@ function loadCurrentScene() {
 		scenePulseText.value = result.stageLine
 		announceMicroReward(result.microReward)
 	}
+	// sceneLoaded 也可能是任务收尾事件：当 load-* 的 explore 目标是最后一个未完成目标时（目标可乱序完成），
+	// 换幕补满会使整条任务通关。必须与 enter/talk/interact 三处一致结算，否则任务变成"全目标满但仍 active"
+	// 的僵尸态——getTrackedQuest 持续返回它、ensureJourneyQuest 早退，卡住后续主线且漏发最终奖励。
+	if (result.completed && trackedQuest.value) {
+		handleQuestComplete(trackedQuest.value.id)
+		return
+	}
 	// 换幕开场白：接通此前从未被调用的 SCENE_CUES（kind:'scene'），晋小鸦按街景道一句开场，
 	// 强化"切场也有引导"。不覆盖常驻消息（刚领奖 / 任务卷轴等 autoHide=false 的气泡）。
 	if (!(npcVisible.value && !npcAutoHide.value)) {
@@ -445,7 +453,9 @@ function handlePoiEnter(poiId) {
 	const sync = syncAchievementUnlocks()
 	if (sync.newlyUnlocked?.length) {
 		const labels = sync.newlyUnlocked.map((a) => a.name).join('、')
-		uni.showToast({ title: `点亮成就：${labels}`, icon: 'none', duration: 2200 })
+		const gr = sync.grantedReward || {}
+		const bonus = gr.silverKey ? ` · 银钥+${gr.silverKey}` : (gr.exp ? ` · 经验+${gr.exp}` : '')
+		uni.showToast({ title: `点亮成就：${labels}${bonus}`, icon: 'none', duration: 2200 })
 	}
 
 	if (result.completed && trackedQuest.value) {
@@ -489,6 +499,7 @@ function handlePoiApproach(poiId) {
 function playPoiTopic() {
 	if (!activePoi.value) return
 	markNpcTalk(activePoi.value.npcTopic)
+	playSFX(SFX.NPC_TALK)
 	const result = advanceQuestByEvent(EVENT_TYPES.npcDialogCompleted, {
 		poiId: activePoi.value.id,
 		topic: activePoi.value.npcTopic
@@ -532,6 +543,7 @@ function handleQuestComplete(questId) {
 	const oldLevel = getLevelMeta(userProgress.value.exp || 0)
 	const result = completeQuestAndCollectFeedback(questId)
 	if (!result) return
+	playSFX(SFX.QUEST_COMPLETE)
 
 	userProgress.value = getStorage(STORAGE_KEYS.userProgress, {})
 	const newLevel = getLevelMeta(userProgress.value.exp || 0)
@@ -556,6 +568,7 @@ function handleQuestComplete(questId) {
 		setTimeout(() => {
 			showLevelUp.value = false
 		}, 3200)
+		playSFX(SFX.LEVEL_UP)
 	}
 
 	refreshRuntimeState()
@@ -569,12 +582,15 @@ function handleClaimReward() {
 	} else if (rewards.exp) {
 		showFloatingText(`EXP +${rewards.exp}`, 'exp')
 	}
+	playSFX(SFX.COIN)
 
 	// 同步成就（任务领奖后是常见的成就解锁时机）
 	const sync = syncAchievementUnlocks()
 	if (sync.newlyUnlocked?.length) {
 		const labels = sync.newlyUnlocked.map((a) => a.name).join('、')
-		uni.showToast({ title: `点亮成就：${labels}`, icon: 'none', duration: 2200 })
+		const gr = sync.grantedReward || {}
+		const bonus = gr.silverKey ? ` · 银钥+${gr.silverKey}` : (gr.exp ? ` · 经验+${gr.exp}` : '')
+		uni.showToast({ title: `点亮成就：${labels}${bonus}`, icon: 'none', duration: 2200 })
 	}
 
 	if (pendingSceneAfterClaim.value) {
@@ -600,6 +616,7 @@ function announceMicroReward(microReward) {
 	const type = microReward.silverKey ? 'silverKey' : 'exp'
 	if (lines.length) {
 		showFloatingText(lines.join(' · '), type)
+		playSFX(SFX.COIN)
 	}
 	userProgress.value = getStorage(STORAGE_KEYS.userProgress, {})
 }
@@ -719,12 +736,15 @@ onMounted(() => {
 		initScene()
 	}
 	watchPhase()
+	// 街景是核心沉浸场景：进入即起环境 BGM（受"音效"开关与素材是否就位双重兜底，缺文件不报错）。
+	playBGM(BGM.STREET_AMBIENT)
 })
 
 onUnmounted(() => {
 	uni.showTabBar()
 	flushSteps(true)
 	stopWatchPhase()
+	stopBGM()
 })
 </script>
 
@@ -1718,10 +1738,14 @@ export default {
 							if (mesh.material.color) mesh.material.color.setHex(0xFFD700)
 							if (mesh.material.emissive) mesh.material.emissive.setHex(0xFFD700)
 							mesh.material.emissiveIntensity = 1.2
-						} else if (mesh.material.emissive) {
-							mesh.material.color.setHex(0xD4A574)
-							mesh.material.emissive.setHex(0xD4A574)
-							mesh.material.emissiveIntensity = 0.7
+						} else {
+							// color 复位移出 emissive 门控：体积光柱 beam 是 MeshBasicMaterial（只有 .color、无 .emissive），
+							// 旧写法 else if (emissive) 会跳过它，导致取消高亮后旧目标光柱卡在金色 0xFFD700。
+							if (mesh.material.color) mesh.material.color.setHex(0xD4A574)
+							if (mesh.material.emissive) {
+								mesh.material.emissive.setHex(0xD4A574)
+								mesh.material.emissiveIntensity = 0.7
+							}
 						}
 					}
 				})

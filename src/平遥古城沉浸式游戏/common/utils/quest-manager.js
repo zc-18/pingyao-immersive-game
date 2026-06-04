@@ -1,5 +1,5 @@
 import { questList, questMap, QUEST_STATUS, QUEST_TYPE } from '../data/quests.js'
-import { STORAGE_KEYS, patchStorageObject, getStorage } from './storage.js'
+import { STORAGE_KEYS, patchStorageObject, getStorage, localDateString } from './storage.js'
 import { getLevelMeta } from './level.js'
 
 export const EVENT_TYPES = {
@@ -46,7 +46,9 @@ function cloneObjectives(objectives = []) {
 
 function checkDailyReset() {
 	const questData = getQuestData()
-	const today = new Date().toISOString().split('T')[0]
+	// 本地日历日（与 check-in.js 的签到口径统一）。原先用 new Date().toISOString() 取 UTC 日，
+	// UTC+8 下每日任务要到本地 08:00 才重置，且会在 08:00 开出同一本地日二次发奖窗口。
+	const today = localDateString()
 	if (questData.dailyReset === today) return
 
 	questList.filter((quest) => quest.resetDaily).forEach((quest) => {

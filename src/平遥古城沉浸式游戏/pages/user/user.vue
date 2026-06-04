@@ -204,6 +204,7 @@ import AchievementWall from '@/components/AchievementWall.vue'
 import { getGameSnapshot, markPageVisit, rememberReturnContext } from '@/common/utils/game-state.js'
 import { syncAchievementUnlocks } from '@/common/utils/achievements.js'
 import { STORAGE_KEYS, getStorage, patchStorageObject } from '@/common/utils/storage.js'
+import { syncAudioSettings, playSFX, SFX } from '@/common/utils/audio.js'
 
 const snapshot = ref(getGameSnapshot())
 const settingsOpen = ref(false)
@@ -220,6 +221,8 @@ function loadSettings() {
 function toggleMusic() {
 	settings.value.music = !settings.value.music
 	patchStorageObject(STORAGE_KEYS.gameSettings, { enableMusic: settings.value.music })
+	// 立即生效："音效"是全局音频总开关——关闭即停掉 BGM/SFX，开启则交由各页生命周期恢复。
+	syncAudioSettings()
 }
 function toggleEffect() {
 	settings.value.effect = !settings.value.effect
@@ -231,6 +234,7 @@ const achvRefreshKey = ref(0)
 function handleCheckInClaimed(data) {
 	snapshot.value = getGameSnapshot()
 	achvRefreshKey.value++
+	playSFX(SFX.REWARD)
 	if (data?.newAchievements?.length) {
 		const labels = data.newAchievements.map((a) => a.name).join('、')
 		uni.showToast({ title: `新章：${labels}`, icon: 'none', duration: 2200 })
@@ -297,7 +301,9 @@ onShow(() => {
 	checkInRef.value?.refresh?.()
 	if (sync.newlyUnlocked?.length) {
 		const labels = sync.newlyUnlocked.map((a) => a.name).join('、')
-		uni.showToast({ title: `点亮：${labels}`, icon: 'none', duration: 2200 })
+		const gr = sync.grantedReward || {}
+		const bonus = gr.silverKey ? `（银钥+${gr.silverKey}）` : (gr.exp ? `（经验+${gr.exp}）` : '')
+		uni.showToast({ title: `点亮：${labels}${bonus}`, icon: 'none', duration: 2200 })
 	}
 })
 

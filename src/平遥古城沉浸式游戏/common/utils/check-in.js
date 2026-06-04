@@ -16,7 +16,7 @@
  *   ≥8 → 循环回到第 1 天
  */
 
-import { STORAGE_KEYS, getUserProgress, patchStorageObject } from './storage.js'
+import { STORAGE_KEYS, getUserProgress, patchStorageObject, localDateString } from './storage.js'
 
 const REWARD_TABLE = [
 	{ silverKey: 8, silver: 30, exp: 20, label: '初步入城', stamp: false },
@@ -29,10 +29,7 @@ const REWARD_TABLE = [
 ]
 
 function todayIso(date = new Date()) {
-	const yyyy = date.getFullYear()
-	const mm = String(date.getMonth() + 1).padStart(2, '0')
-	const dd = String(date.getDate()).padStart(2, '0')
-	return `${yyyy}-${mm}-${dd}`
+	return localDateString(date)
 }
 
 function diffDays(prevIso, todayStr) {
@@ -96,8 +93,13 @@ export function claimDailyCheckIn() {
 	const reward = REWARD_TABLE[slot]
 
 	const stamps = [...state.stamps]
-	if (reward.stamp && !stamps.includes(`week-${Math.ceil(newStreak / 7)}`)) {
-		stamps.push(`week-${Math.ceil(newStreak / 7)}`)
+	if (reward.stamp) {
+		// 把里程碑章 key 细化到「周期 + 该周第几日」，否则第5日(半月书签)与第7日(七日章成)
+		// 都算出 week-N 而被 includes 去重吞掉，"七日章"永远不会单独记录。
+		const stampKey = `week-${Math.ceil(newStreak / 7)}-d${((newStreak - 1) % 7) + 1}`
+		if (!stamps.includes(stampKey)) {
+			stamps.push(stampKey)
+		}
 	}
 
 	const next = patchStorageObject(STORAGE_KEYS.userProgress, {

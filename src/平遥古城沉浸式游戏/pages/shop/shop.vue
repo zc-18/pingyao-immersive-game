@@ -246,6 +246,7 @@ import {
 	shopItems
 } from '@/common/data/shop-items.js'
 import { markPageVisit, rememberReturnContext } from '@/common/utils/game-state.js'
+import { playSFX, SFX } from '@/common/utils/audio.js'
 
 const activeCategory = ref(shopCategories[0]?.id || 'food')
 const assets = ref(getShopAssets())
@@ -305,6 +306,7 @@ function redeemItem(item) {
 	assets.value = setShopAssets(nextAssets)
 	const order = createRedeemOrder(item)
 	saveRedeemOrder(order)
+	playSFX(SFX.COIN)
 	currentItem.value = null
 	setTimeout(() => {
 		isRedeeming.value = false

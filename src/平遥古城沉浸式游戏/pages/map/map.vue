@@ -245,8 +245,10 @@ const cityPoiList = computed(() => {
 	return poiList.map((poi) => {
 		const fromScene = overridesById[poi.id]
 		if (fromScene) return fromScene
-		// 全城状态：已访问 → nearby；已发现 → route；否则 → discoverable
-		let status = poi.baseStatus || 'discoverable'
+		// 全城状态：已访问 → nearby；已发现 → route；否则 → discoverable（未点亮）。
+		// 不能用 poi.baseStatus 兜底——poi-list 里多处 POI 自带 hot/route/quest 等可解锁基态，
+		// 会让从未到访的县衙/票号/明清街等被误判"已探"，与成就/我的页的真实探索口径冲突。
+		let status = 'discoverable'
 		if (visited.has(poi.id)) status = 'nearby'
 		else if (discovered.has(poi.id)) status = 'route'
 		return {
