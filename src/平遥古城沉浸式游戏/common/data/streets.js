@@ -139,11 +139,12 @@ export const streetScenes = [
 		heroPoiId: 'mingqing-street',
 		defaultPoiId: 'mingqing-street',
 		nearbyPoiRadius: 120,
-		poiIds: ['mingqing-street', 'vinegar-workshop', 'county-office'],
+		poiIds: ['mingqing-street', 'vinegar-workshop', 'county-office', 'tea-house'],
 		poiOverrides: {
 			'mingqing-street': { distance: 72, status: 'route', mapPosition: { x: 52, y: 62, depth: 2 } },
 			'vinegar-workshop': { distance: 124, status: 'quest', mapPosition: { x: 34, y: 55, depth: 2 } },
-			'county-office': { distance: 154, status: 'discoverable', mapPosition: { x: 66, y: 41, depth: 1 } }
+			'county-office': { distance: 154, status: 'discoverable', mapPosition: { x: 66, y: 41, depth: 1 } },
+			'tea-house': { distance: 96, status: 'route', mapPosition: { x: 67, y: 50, depth: 2 } }
 		},
 		playerStart: { x: 53, y: 76, bearing: 12, useMockLocation: true },
 		recommendedCamera: { distance: 12, polar: 1, azimuth: 0 },

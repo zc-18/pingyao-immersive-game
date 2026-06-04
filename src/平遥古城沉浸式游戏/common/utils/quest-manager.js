@@ -168,11 +168,18 @@ export function startQuest(questId) {
 }
 
 export function ensureJourneyQuest() {
-	const activeQuest = getTrackedQuest()
-	if (activeQuest) return activeQuest
+	const tracked = getTrackedQuest()
+	// 已在追踪 main/side 时直接返回；但若只有 daily（如 daily-walk 被步数自动激活）占着追踪槽，
+	// 不能让它挡住主线/角色支线的开启——继续向下挑选并启动，getTrackedQuest 的 main>side>daily 会自然顶上来。
+	if (tracked && tracked.type !== QUEST_TYPE.daily) return tracked
 	const available = getAvailableQuests()
-	const firstQuest = available.find((item) => item.type === QUEST_TYPE.main) || available[0]
-	if (!firstQuest) return null
+	// 主线优先；主线走完后，优先开启与当前角色匹配的专属支线（第7轮角色分支），再退回普通支线 / 任意可接
+	const roleId = getStorage(STORAGE_KEYS.userProfile, {}).roleId
+	const firstQuest = available.find((item) => item.type === QUEST_TYPE.main)
+		|| available.find((item) => item.trigger?.condition?.roleId && item.trigger.condition.roleId === roleId)
+		|| available.find((item) => item.type === QUEST_TYPE.side)
+		|| available[0]
+	if (!firstQuest) return tracked || null
 	startQuest(firstQuest.id)
 	return getTrackedQuest()
 }
@@ -227,8 +234,12 @@ export function advanceQuestByEvent(eventType, payload = {}) {
 	const progress = getQuestData().questProgress[quest.id]
 	if (!progress) return { quest, updated: false, completed: false, stageLine: '' }
 
-	const pendingObjective = progress.objectives.find((item) => item.current < item.required)
-	if (!pendingObjective || !shouldAdvanceObjective(pendingObjective, eventType, payload)) {
+	// 找到第一个「未完成且能被本事件推进」的目标，而非只取数组里第一个未完成目标，
+	// 否则玩家乱序触发（如先建筑交互后对话）会被静默丢弃，造成"点了没反应"。
+	const pendingObjective = progress.objectives.find(
+		(item) => item.current < item.required && shouldAdvanceObjective(item, eventType, payload)
+	)
+	if (!pendingObjective) {
 		return {
 			quest: getTrackedQuest(),
 			updated: false,
@@ -330,6 +341,49 @@ export function completeQuestAndCollectFeedback(questId) {
 	}
 }
 
+/* 步数任务结算：把本次步数增量累加进所有「collect/steps」目标（如每日 daily-walk）。
+   步数链路独立于 tracked-quest 事件流——原先 collect/steps 没有任何事件能推进，
+   每日步数任务永远卡在 0/1000。这里自动激活可接的步数任务并按增量结算，满足后即时发奖。 */
+export function recordSteps(delta = 0) {
+	const inc = Math.max(0, Math.floor(Number(delta) || 0))
+	if (inc <= 0) return { updated: false, completed: [] }
+
+	// 自动激活含 steps 目标且当前可接的任务（保证每日步数任务能被推进）
+	questList.forEach((quest) => {
+		const hasSteps = (quest.objectives || []).some((o) => o.type === 'collect' && o.target === 'steps')
+		if (hasSteps && getQuestStatus(quest.id) === QUEST_STATUS.available) {
+			startQuest(quest.id)
+		}
+	})
+
+	const questData = getQuestData()
+	let updated = false
+	const touchedQuestIds = []
+	questData.activeQuests.forEach((qid) => {
+		const progress = questData.questProgress[qid]
+		if (!progress) return
+		let touched = false
+		progress.objectives.forEach((o) => {
+			if (o.type === 'collect' && o.target === 'steps' && o.current < o.required) {
+				o.current = Math.min(o.required, o.current + inc)
+				updated = true
+				touched = true
+			}
+		})
+		if (touched) touchedQuestIds.push(qid)
+	})
+	if (updated) saveQuestData(questData)
+
+	const completed = []
+	touchedQuestIds.forEach((qid) => {
+		if (checkQuestComplete(qid)) {
+			const result = completeQuest(qid)
+			if (result) completed.push(result)
+		}
+	})
+	return { updated, completed }
+}
+
 export function claimQuestReward(questId) {
 	const questData = getQuestData()
 	if (!questData.completedQuests.includes(questId)) return false
@@ -404,6 +458,7 @@ export default {
 	checkQuestComplete,
 	completeQuest,
 	completeQuestAndCollectFeedback,
+	recordSteps,
 	claimQuestReward,
 	getQuestNpcHint,
 	getQuestProgressPercent,

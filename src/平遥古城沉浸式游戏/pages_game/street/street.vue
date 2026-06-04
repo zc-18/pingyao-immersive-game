@@ -1,5 +1,5 @@
 <template>
-	<view class="street-stage">
+	<view class="street-stage" :sceneCmd="sceneCmd" :change:sceneCmd="render.onSceneCmd">
 		<!-- 3D 街景画布（不动）-->
 		<canvas id="street-canvas" type="2d" class="street-stage__canvas"></canvas>
 
@@ -130,7 +130,7 @@ import GateTransition from '@/components/GateTransition.vue'
 import streetScenes from '@/common/data/streets.js'
 import { roleList } from '@/common/data/roles.js'
 import { getStorage, patchStorageObject, STORAGE_KEYS } from '@/common/utils/storage.js'
-import { getLevelMeta } from '@/common/utils/level.js'
+import { getLevelMeta, getLevelProgress } from '@/common/utils/level.js'
 import {
 	getCurrentStreetScene,
 	getExploreDirectionLabel,
@@ -151,10 +151,12 @@ import {
 	completeQuestAndCollectFeedback,
 	ensureJourneyQuest,
 	getQuestNpcHint,
-	getQuestTargetPoi
+	getQuestTargetPoi,
+	recordSteps
 } from '@/common/utils/quest-manager.js'
 import { syncAchievementUnlocks } from '@/common/utils/achievements.js'
 import { getCurrentPhase } from '@/common/utils/phase.js'
+import { getContextualNpcCue } from '@/common/utils/npc-cue.js'
 import MiniMap from '@/components/MiniMap.vue'
 
 const statusLabelMap = { nearby: '已靠近', discoverable: '待点亮', quest: '主线热点', hot: '必看地标', route: '顺路可达' }
@@ -163,6 +165,9 @@ const userProfile = ref(getStorage(STORAGE_KEYS.userProfile, {}))
 const userProgress = ref(getStorage(STORAGE_KEYS.userProgress, {}))
 const currentStreetIndex = ref(0)
 const activePoiId = ref('')
+/* 当前是否正贴在某 POI 的进入半径内（独立于驱动卷轴遮罩的 activePoiId）：
+   进入 poi-enter 置位、离开 poi-leave 清空，仅供 approach 浮空门控用，避免 activePoiId 粘滞导致预告哑火。*/
+const nearActivePoiId = ref('')
 const npcVisible = ref(false)
 const npcMessage = ref('')
 const npcAutoHide = ref(false)
@@ -184,6 +189,11 @@ const playerWorldPos = ref({ x: 0, z: 10 })
 const playerHeading = ref(0)
 let phaseWatchTimer = null
 
+/* 逻辑层 → renderjs 的唯一通道：响应式命令对象，renderjs 用 :change 观察其变化
+   （取代原先 window.dispatchEvent，后者在 APP 端逻辑层/视图层不共享 window 而失效）。
+   每次都带新的 ts 以保证引用变化、触发观察器。*/
+const sceneCmd = ref({ action: 'noop', ts: 0 })
+
 const roleMap = roleList.reduce((map, role) => {
 	map[role.id] = role
 	return map
@@ -201,12 +211,7 @@ const levelMeta = computed(() => getLevelMeta(userProgress.value.exp || 0))
 const silverKey = computed(() => Number(userProgress.value.silverKey || 0))
 const userScore = computed(() => Number(userProgress.value.score || 0))
 const displaySteps = computed(() => Number(userProgress.value.steps || 0))
-const expPercent = computed(() => {
-	const cur = Number(userProgress.value.exp || 0)
-	const next = Number(levelMeta.value.expToNextLevel || 100)
-	const base = Math.max(1, next + cur)
-	return Math.min(100, Math.floor((cur / base) * 100))
-})
+const expPercent = computed(() => getLevelProgress(userProgress.value.exp || 0))
 const roleAvatarChar = computed(() => roleMap[userProfile.value.roleId]?.avatar || '客')
 const snapshot = computed(() => getGameSnapshot())
 const sceneHint = computed(() => getExploreDirectionLabel({
@@ -290,23 +295,41 @@ function serializePhase(phase) {
 	}
 }
 
-let onRenderReady
-let onRenderProgress
-let onRenderError
-let onPoiEnterListener
-let onPoiLeaveListener
-let onPlayerMoveListener
-
 watch(currentStreet, (street) => {
 	activePoiId.value = ''
+	nearActivePoiId.value = ''            // 切换街景后清空贴靠态，否则新街景的 approach 预告被旧 poiId 门控住而哑火
 	setCurrentStreetScene(street.id, { sceneMode: 'story' })
 	plaqueFlipping.value = true
 	setTimeout(() => { plaqueFlipping.value = false }, 600)
 })
 
 function sendToRenderjs(type, data) {
-	if (typeof window === 'undefined') return
-	window.dispatchEvent(new CustomEvent('logic-message', { detail: { type, data } }))
+	// 逻辑层 → renderjs：改变响应式 prop sceneCmd，触发 renderjs 的 :change 观察器。
+	// APP 端逻辑层与视图层是两个 JS 上下文、不共享 window，故不能再用 window 事件。
+	sceneCmd.value = { action: type, data: data || {}, ts: Date.now() }
+}
+
+/* renderjs → 逻辑层：renderjs 通过 this.$ownerInstance.callMethod('handleRenderMsg', {detail}) 回调。
+   <script setup> 顶层函数可被 callMethod 命中（与 3d-test.vue 的 handleRenderMsg 同机制）。 */
+function handleRenderMsg(msg) {
+	if (!msg || !msg.detail) return
+	const { type, data } = msg.detail
+	if (type === 'render-ready') {
+		isLoading.value = false
+	} else if (type === 'render-progress') {
+		loadProgress.value = Math.max(0, Math.min(100, Number(data) || 0))
+	} else if (type === 'render-error') {
+		isLoading.value = false
+		uni.showToast({ title: (data && data.error) || '街景加载失败', icon: 'none' })
+	} else if (type === 'poi-enter') {
+		handlePoiEnter(data)
+	} else if (type === 'poi-leave') {
+		handlePoiLeave()
+	} else if (type === 'poi-near') {
+		handlePoiApproach(data)
+	} else if (type === 'player-move') {
+		handlePlayerMove(data)
+	}
 }
 
 function refreshRuntimeState() {
@@ -346,6 +369,18 @@ function loadCurrentScene() {
 		scenePulseText.value = result.stageLine
 		announceMicroReward(result.microReward)
 	}
+	// 换幕开场白：接通此前从未被调用的 SCENE_CUES（kind:'scene'），晋小鸦按街景道一句开场，
+	// 强化"切场也有引导"。不覆盖常驻消息（刚领奖 / 任务卷轴等 autoHide=false 的气泡）。
+	if (!(npcVisible.value && !npcAutoHide.value)) {
+		npcMessage.value = getContextualNpcCue({
+			kind: 'scene',
+			sceneId: currentStreet.value.id,
+			phaseKey: currentPhase.value.key,
+			roleId: userProfile.value.roleId
+		})
+		npcVisible.value = true
+		npcAutoHide.value = true
+	}
 }
 
 function applyPhaseToScene() {
@@ -359,6 +394,16 @@ function watchPhase() {
 		if (next.key !== currentPhase.value.key) {
 			currentPhase.value = next
 			applyPhaseToScene()
+			// 换幕时晋小鸦按时辰/角色道一句情境寒暄（不打断常驻消息 / POI 卷轴）
+			if (!activePoiId.value && !(npcVisible.value && !npcAutoHide.value)) {
+				npcMessage.value = getContextualNpcCue({
+					kind: 'phase',
+					roleId: userProfile.value.roleId,
+					phaseKey: next.key
+				})
+				npcVisible.value = true
+				npcAutoHide.value = true
+			}
 		}
 	}, 60_000)
 }
@@ -374,13 +419,21 @@ function handlePoiEnter(poiId) {
 	const poi = streetPois.value.find((item) => item.id === poiId)
 	if (!poi) return
 	activePoiId.value = poiId
+	nearActivePoiId.value = poiId
 	markPoiVisited(poiId)
 	setCurrentPoi(poiId, poi.npcTopic)
 	userProgress.value = getStorage(STORAGE_KEYS.userProgress, {})
 
 	const result = advanceQuestByEvent(EVENT_TYPES.poiEntered, { poiId, sceneId: currentStreet.value.id })
 	scenePulseText.value = result.stageLine || poi.npcTopic
-	npcMessage.value = result.stageLine || getQuestNpcHint(trackedQuest.value?.id) || poi.npcTopic
+	npcMessage.value = getContextualNpcCue({
+		kind: 'enter',
+		roleId: userProfile.value.roleId,
+		phaseKey: currentPhase.value.key,
+		poiId,
+		poi,
+		questHint: result.stageLine || getQuestNpcHint(trackedQuest.value?.id) || ''
+	})
 	npcVisible.value = true
 	npcAutoHide.value = true
 
@@ -404,9 +457,33 @@ function handlePoiEnter(poiId) {
 }
 
 function handlePoiLeave() {
+	nearActivePoiId.value = ''
 	if (npcAutoHide.value) {
 		npcVisible.value = false
 	}
+}
+
+/* 由远及近的浮空预告（第7轮）：玩家走近 POI 外圈时，晋小鸦先按角色/时辰给一句情境提示，
+   不推进任务、不开 POI 卷轴；带每点位冷却，避免来回走动反复弹气泡。 */
+const approachCooldown = {}
+function handlePoiApproach(poiId) {
+	if (!poiId) return
+	if (nearActivePoiId.value) return                   // 已贴在某 POI 进入半径内，交给 enter 流程
+	if (npcVisible.value && !npcAutoHide.value) return  // 有常驻消息时不打扰
+	const now = Date.now()
+	if (now - (approachCooldown[poiId] || 0) < 15000) return
+	approachCooldown[poiId] = now
+	const poi = streetPois.value.find((item) => item.id === poiId)
+	if (!poi) return
+	npcMessage.value = getContextualNpcCue({
+		kind: 'approach',
+		roleId: userProfile.value.roleId,
+		phaseKey: currentPhase.value.key,
+		poiId,
+		poi
+	})
+	npcVisible.value = true
+	npcAutoHide.value = true
 }
 
 function playPoiTopic() {
@@ -569,11 +646,19 @@ function flushSteps(force = false) {
 	if (pendingStepDelta <= 0) return
 	const now = Date.now()
 	if (!force && pendingStepDelta < STEP_FLUSH_MIN_DELTA && now - lastStepFlush < STEP_FLUSH_INTERVAL) return
-	const nextSteps = Number(userProgress.value.steps || 0) + pendingStepDelta
+	const delta = pendingStepDelta
+	const nextSteps = Number(userProgress.value.steps || 0) + delta
 	pendingStepDelta = 0
 	lastStepFlush = now
 	patchStorageObject(STORAGE_KEYS.userProgress, { steps: nextSteps })
 	userProgress.value = getStorage(STORAGE_KEYS.userProgress, {})
+	// 把步数增量结算进「古城漫步」等步数任务（此前步数与任务系统零耦合，每日任务永远 0/1000）
+	const stepResult = recordSteps(delta)
+	if (stepResult.completed && stepResult.completed.length) {
+		userProgress.value = getStorage(STORAGE_KEYS.userProgress, {})
+		const done = stepResult.completed[0]
+		uni.showToast({ title: `${done.quest.title} 达成 · 银钥+${done.rewards.silverKey}`, icon: 'none', duration: 2200 })
+	}
 }
 
 function handlePlayerMove(detail) {
@@ -621,38 +706,18 @@ onLoad(() => {
 		npcMessage.value = trackedQuest.value?.introLine || currentStreet.value.playerHint
 		npcVisible.value = true
 		npcAutoHide.value = true
-		initScene()
+		// initScene 移到 onMounted：确保 'init' 命令在 renderjs 视图挂载后再下发，
+		// 这样 :change:sceneCmd 观察器才能稳定捕获到变更（onLoad 早于挂载）。
 	}
 })
 
 onMounted(() => {
-	onRenderReady = () => {
-		isLoading.value = false
+	// 非序章玩家：在此触发场景初始化。此时 renderjs 视图已挂载，
+	// sceneCmd 的变更会被 :change 观察器稳定捕获（renderjs → 逻辑层回调走 callMethod('handleRenderMsg')）。
+	const runtime = getStorage(STORAGE_KEYS.appRuntime, {})
+	if (runtime.hasCompletedPrologue) {
+		initScene()
 	}
-	onRenderProgress = (event) => {
-		loadProgress.value = event.detail || 0
-	}
-	onRenderError = (event) => {
-		isLoading.value = false
-		uni.showToast({ title: event.detail?.error || '街景加载失败', icon: 'none' })
-	}
-	onPoiEnterListener = (event) => {
-		handlePoiEnter(event.detail)
-	}
-	onPoiLeaveListener = () => {
-		handlePoiLeave()
-	}
-	onPlayerMoveListener = (event) => {
-		handlePlayerMove(event.detail)
-	}
-
-	window.addEventListener('render-ready', onRenderReady)
-	window.addEventListener('render-progress', onRenderProgress)
-	window.addEventListener('render-error', onRenderError)
-	window.addEventListener('poi-enter', onPoiEnterListener)
-	window.addEventListener('poi-leave', onPoiLeaveListener)
-	window.addEventListener('player-move', onPlayerMoveListener)
-
 	watchPhase()
 })
 
@@ -660,12 +725,6 @@ onUnmounted(() => {
 	uni.showTabBar()
 	flushSteps(true)
 	stopWatchPhase()
-	window.removeEventListener('render-ready', onRenderReady)
-	window.removeEventListener('render-progress', onRenderProgress)
-	window.removeEventListener('render-error', onRenderError)
-	window.removeEventListener('poi-enter', onPoiEnterListener)
-	window.removeEventListener('poi-leave', onPoiLeaveListener)
-	window.removeEventListener('player-move', onPlayerMoveListener)
 })
 </script>
 
@@ -689,14 +748,19 @@ let isInitialized = false
 let lastTime = Date.now()
 let joystickInput = { dx: 0, dy: 0 }
 let currentPhaseData = null
+let ownerInstanceRef = null
 
 /* 程序化纹理缓存：跨场景复用，避免每次 loadScene 重复生成上传 GPU。
    只在 dispose() 里统一释放，clearScene 不动它们（material.dispose 不级联 texture）。*/
 let textureCache = {}
 let skyTextureCache = {}
 
+/* renderjs → 逻辑层：通过 $ownerInstance.callMethod 回调逻辑层的 handleRenderMsg。
+   APP 端逻辑层无共享 window，不能再用 window.dispatchEvent。ownerInstanceRef 在 mounted/onSceneCmd 赋值。 */
 function emit(name, detail) {
-	window.dispatchEvent(new CustomEvent(name, { detail }))
+	if (ownerInstanceRef && ownerInstanceRef.callMethod) {
+		ownerInstanceRef.callMethod('handleRenderMsg', { detail: { type: name, data: detail } })
+	}
 }
 
 function colorHex(value, fallback) {
@@ -707,8 +771,8 @@ function colorHex(value, fallback) {
 
 export default {
 	mounted() {
-		this.loadThreeJS()
-		this.listenLogicMessages()
+		// 保存逻辑层代理；场景初始化由 onSceneCmd('init') 观察器驱动。
+		ownerInstanceRef = this.$ownerInstance
 	},
 	beforeUnmount() {
 		this.dispose()
@@ -947,44 +1011,67 @@ export default {
 			const isNight = phase && phase.key === 'night'
 			scene.background = this.makeSkyTexture(topHex, botHex, isNight)
 		},
-		loadThreeJS() {
-			const script = document.createElement('script')
-			script.src = '/static/libs/three.min.js'
-			script.onload = () => {
-				THREE = window.THREE
-				this.loadPostProcessing()
+		/* 逻辑层 → renderjs 命令入口（:change:sceneCmd 观察器）。
+		   observer 内 this 不可靠，必须用传入的 instance 调用方法。 */
+		onSceneCmd(newVal, oldVal, ownerInstance, instance) {
+			if (ownerInstance) ownerInstanceRef = ownerInstance
+			if (!newVal || !newVal.action) return
+			const action = newVal.action
+			const data = newVal.data || {}
+			if (action === 'init') {
+				if (!isInitialized) {
+					isInitialized = true
+					instance.bootScene(data)
+				}
+			} else if (action === 'loadScene') {
+				instance.loadScene(data)
+				/* 换幕 / 路由重建完成即发 render-ready 隐藏加载层：动画循环在首次 init 时已启动，
+				   重建后的场景下一帧即呈现；首次 init 的 render-ready 仍由 initScene 末尾发出，故首屏不闪。*/
+				emit('render-ready')
+			} else if (action === 'highlightPoi') {
+				instance.highlightQuestPoi(data.poiId)
+			} else if (action === 'applyPhase') {
+				instance.applyPhase(data.phase)
 			}
-			script.onerror = () => emit('render-error', { error: 'Three.js 加载失败' })
-			document.head.appendChild(script)
 		},
-		loadPostProcessing() {
-			const scripts = [
-				'/static/libs/EffectComposer.js',
-				'/static/libs/RenderPass.js',
-				'/static/libs/UnrealBloomPass.js'
-			]
-			scripts.forEach((src) => {
+		loadScript(src) {
+			return new Promise((resolve, reject) => {
 				const script = document.createElement('script')
 				script.src = src
-				script.onerror = () => emit('render-error', { error: `${src} 加载失败` })
+				script.onload = () => resolve()
+				script.onerror = () => reject(new Error(src + ' 加载失败'))
 				document.head.appendChild(script)
 			})
 		},
-		listenLogicMessages() {
-			window.addEventListener('logic-message', (event) => {
-				const { type, data } = event.detail
-				if (type === 'init' && !isInitialized) {
-					this.initScene(data)
-					isInitialized = true
-				} else if (type === 'loadScene') {
-					this.loadScene(data)
-				} else if (type === 'highlightPoi') {
-					this.highlightQuestPoi(data.poiId)
-				} else if (type === 'applyPhase') {
-					this.applyPhase(data.phase)
+		async bootScene(data) {
+			try {
+				// 7 个库必须按依赖顺序【串行】加载（见 static/libs/README.md）；
+				// 原代码只并行加载了 3 个且缺 CopyShader/ShaderPass/LuminosityHighPassShader，
+				// 导致 EffectComposer/UnrealBloomPass 构造失败、render-ready 永不触发（一直在加载根因之一）。
+				const libs = [
+					'/static/libs/three.min.js',
+					'/static/libs/CopyShader.js',
+					'/static/libs/LuminosityHighPassShader.js',
+					'/static/libs/ShaderPass.js',
+					'/static/libs/RenderPass.js',
+					'/static/libs/EffectComposer.js',
+					'/static/libs/UnrealBloomPass.js'
+				]
+				for (let i = 0; i < libs.length; i++) {
+					await this.loadScript(libs[i])
+					emit('render-progress', Math.round(((i + 1) / libs.length) * 70))
 				}
-			})
+				THREE = window.THREE
+				if (!THREE) {
+					emit('render-error', { error: 'Three.js 未能加载' })
+					return
+				}
+				this.initScene(data)
+			} catch (err) {
+				emit('render-error', { error: (err && err.message) || '街景资源加载失败' })
+			}
 		},
+
 		initScene(data) {
 			if (!THREE) {
 				emit('render-error', { error: 'Three.js 未准备完成' })
@@ -1268,7 +1355,10 @@ export default {
 				group.add(beam)
 
 				group.position.set(x, 0, z)
-				group.userData = { poiId: poi.id, type: 'poi', isHighlighted: poi.status === 'quest', entered: false }
+				/* 预置 nearHinted：出生点(0,0,10)附近(<8)的信标视为“已在身边”，不在加载首帧弹由远及近预告
+				   （否则瞬间盖掉入城/任务引导语）；玩家走远(>=9)再回来才会触发。*/
+				const spawnDist = Math.sqrt(x * x + (z - 10) * (z - 10))
+				group.userData = { poiId: poi.id, type: 'poi', isHighlighted: poi.status === 'quest', entered: false, nearHinted: spawnDist < 8 }
 				scene.add(group)
 				poiBeacons.push(group)
 			})
@@ -1655,6 +1745,17 @@ export default {
 				if (particles.material) particles.material.dispose()
 				particles = null
 			}
+
+			/* 玩家化身每次 loadScene 都会 createPlayer 重建；若不在此移除旧 player，
+			   切换街景后旧化身会残留并逐次叠加（视觉重影 + 几何/材质泄漏）。比照 particles 一并清理。*/
+			if (player) {
+				scene.remove(player)
+				player.traverse((item) => {
+					if (item.geometry) item.geometry.dispose()
+					if (item.material) item.material.dispose()
+				})
+				player = null
+			}
 		},
 		startAnimation() {
 			const animate = () => {
@@ -1731,6 +1832,13 @@ export default {
 						} else if (distance >= 3.2 && beacon.userData.entered) {
 							beacon.userData.entered = false
 							emit('poi-leave', beacon.userData.poiId)
+						}
+						/* 外圈预告：进入 3.2~8 区间发一次 poi-near（由远及近的浮空提示），离开 9 复位（带迟滞） */
+						if (distance >= 3.2 && distance < 8 && !beacon.userData.nearHinted) {
+							beacon.userData.nearHinted = true
+							emit('poi-near', beacon.userData.poiId)
+						} else if (distance >= 9 && beacon.userData.nearHinted) {
+							beacon.userData.nearHinted = false
 						}
 					})
 				}

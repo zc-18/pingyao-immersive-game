@@ -248,6 +248,127 @@ export const questList = [
 		prerequisite: null
 	},
 	{
+		id: 'side-study-citygod',
+		type: QUEST_TYPE.side,
+		title: '城隍问俗',
+		description: '研学者的专属一程：走进城隍庙，从砖雕彩塑里读出平遥的民俗信仰与礼制章法。',
+		introLine: '你既爱考据，城隍庙的旧规矩最该听。随我去书院横巷那头看看。',
+		approachLine: '进入书院横巷，靠近城隍庙照壁，我替你把民俗源流一一道来。',
+		completionLine: '砖雕里的章法你都记下了，这一段民俗考据收入行旅册。',
+		sceneEventBindings: ['scene_loaded', 'poi_entered', 'npc_dialog_completed', 'building_interacted'],
+		trigger: { type: 'poi', condition: { roleId: 'study' } },
+		objectives: [
+			{ id: 'visit-citygod', type: 'visit', target: 'city-god-temple', targetName: '城隍庙', current: 0, required: 1, desc: '前往城隍庙', storyLine: '靠近城隍庙照壁，听一段民俗旧规。' },
+			{ id: 'talk-citygod', type: 'talk', target: 'npc-owl', targetName: '晋小鸦', current: 0, required: 1, desc: '听晋小鸦讲城隍信仰', storyLine: '展开对话，把砖雕背后的故事听全。' },
+			{ id: 'explore-citygod', type: 'explore', target: 'city-god-temple', targetName: '城隍庙', current: 0, required: 1, desc: '细看城隍庙砖雕', storyLine: '与城隍庙交互，记下这处民俗考据。' }
+		],
+		rewards: { exp: 150, silver: 50, silverKey: 18, score: 30 },
+		roleBonus: commonRoleBonus,
+		npcHints: [
+			{ stage: 0, text: '城隍庙管的不止平安，更管这一城的来去。我们去殿前看看。' },
+			{ stage: 1, text: '你看这砖雕上的章法，礼与俗都刻在里头。' },
+			{ stage: 2, text: '考据这一程，你算把平遥的里子也读懂了一层。' }
+		],
+		sceneId: 'academy-lane',
+		prerequisite: 'main-market-crossing'
+	},
+	{
+		id: 'side-treasure-wall',
+		type: QUEST_TYPE.side,
+		title: '城墙寻匣',
+		description: '寻宝人的专属一程：登上城墙马道，在垛口与暗格之间，找出当年守军遗落的旧物线索。',
+		introLine: '你这双眼是寻宝的。城墙马道暗格多，跟我去灯影长街那头碰碰运气。',
+		approachLine: '到灯影长街，靠近城墙，留意垛口下那些不起眼的砖缝。',
+		completionLine: '暗格里的旧物线索被你寻着了，这一程寻宝收入行旅册。',
+		sceneEventBindings: ['scene_loaded', 'poi_entered', 'building_interacted'],
+		trigger: { type: 'poi', condition: { roleId: 'treasure' } },
+		objectives: [
+			{ id: 'visit-wall', type: 'visit', target: 'city-wall', targetName: '古城墙', current: 0, required: 1, desc: '登上古城墙', storyLine: '靠近城墙，垛口之下别有洞天。' },
+			{ id: 'explore-wall', type: 'explore', target: 'city-wall', targetName: '城墙暗格', current: 0, required: 1, desc: '搜寻城墙暗格', storyLine: '与城墙交互，翻出守军遗落的线索。' }
+		],
+		rewards: { exp: 90, silver: 60, silverKey: 42, score: 30 },
+		roleBonus: commonRoleBonus,
+		npcHints: [
+			{ stage: 0, text: '城墙绕城六公里，藏东西的地方可不少。先登上去。' },
+			{ stage: 1, text: '马道暗格最易被忽略，你这眼力该用在这儿。' }
+		],
+		sceneId: 'lantern-quarter',
+		prerequisite: 'main-market-crossing'
+	},
+	{
+		id: 'side-encounter-tea',
+		type: QUEST_TYPE.side,
+		title: '茶铺偶遇',
+		description: '偶遇客的专属一程：在市集十字口的老茶铺坐下，一盏茶的工夫，遇见一段平遥人情。',
+		introLine: '你不赶路，最配坐茶铺。市集那头的老茶铺，正好歇脚听故事。',
+		approachLine: '到市集十字口，靠近老茶铺，邻座一搭话，缘分就来了。',
+		completionLine: '一盏茶喝完，一段偶遇也收进了行旅册。',
+		sceneEventBindings: ['poi_entered', 'npc_dialog_completed'],
+		trigger: { type: 'poi', condition: { roleId: 'encounter' } },
+		objectives: [
+			{ id: 'visit-tea', type: 'visit', target: 'tea-house', targetName: '老茶铺', current: 0, required: 1, desc: '走进老茶铺', storyLine: '靠近茶铺，铜壶煮水声里坐下来。' },
+			{ id: 'talk-tea', type: 'talk', target: 'npc-owl', targetName: '晋小鸦', current: 0, required: 1, desc: '在茶铺听一段偶遇', storyLine: '与邻座搭话，听一段不期而遇的故事。' }
+		],
+		rewards: { exp: 110, silver: 55, silverKey: 22, score: 35 },
+		roleBonus: commonRoleBonus,
+		npcHints: [
+			{ stage: 0, text: '老茶铺最聚人气，坐下便有故事漂过来。' },
+			{ stage: 1, text: '你听，这一桌的闲话，比账本还热闹。' }
+		],
+		sceneId: 'market-crossing',
+		prerequisite: 'main-market-crossing'
+	},
+	{
+		id: 'side-checkin-lantern',
+		type: QUEST_TYPE.side,
+		title: '灯影集印',
+		description: '打卡爱好者的专属一程：灯影长街连盖两枚旅印，灯影广场与城墙俯瞰，一气收齐。',
+		introLine: '你目标最明确。灯影长街那头有两枚旅印等你，一气盖完最痛快。',
+		approachLine: '到灯影长街，先打卡灯影广场，再登城墙补一枚俯瞰章。',
+		completionLine: '两枚旅印连盖收齐，灯影这一程在行旅册里亮成一片。',
+		sceneEventBindings: ['scene_loaded', 'poi_entered', 'building_interacted'],
+		trigger: { type: 'poi', condition: { roleId: 'checkin' } },
+		objectives: [
+			{ id: 'visit-lantern', type: 'visit', target: 'lantern-square', targetName: '灯影广场', current: 0, required: 1, desc: '打卡灯影广场', storyLine: '灯影广场灯连成河，先盖一枚。' },
+			{ id: 'visit-wall-checkin', type: 'visit', target: 'city-wall', targetName: '古城墙', current: 0, required: 1, desc: '登城墙补一枚俯瞰章', storyLine: '登上城墙俯瞰全城，再盖一枚。' },
+			{ id: 'explore-lantern', type: 'explore', target: 'lantern-square', targetName: '灯影广场', current: 0, required: 1, desc: '在灯影广场定格一帧', storyLine: '与灯影广场交互，定格最亮一帧。' }
+		],
+		rewards: { exp: 90, silver: 50, silverKey: 20, score: 72 },
+		roleBonus: commonRoleBonus,
+		npcHints: [
+			{ stage: 0, text: '灯影广场是必到的打卡点，等灯全亮，先盖一枚。' },
+			{ stage: 1, text: '城墙俯瞰那枚章也别落下，登高一张才算圆满。' },
+			{ stage: 2, text: '两枚连盖收齐，你的旅印墙又亮一片。' }
+		],
+		sceneId: 'lantern-quarter',
+		prerequisite: 'main-market-crossing'
+	},
+	{
+		id: 'side-helper-escort',
+		type: QUEST_TYPE.side,
+		title: '镖局相托',
+		description: '帮不忙行的专属一程：到同兴公镖局搭把手，护一程信义，换来一城人的高看。',
+		introLine: '你最肯搭手。同兴公镖局正缺人照应，随我去灯影长街那头。',
+		approachLine: '到灯影长街，靠近镖局，问一句"可有要帮忙的"，事就来了。',
+		completionLine: '镖局这桩委托办妥，"威信"二字也记了你一份人情。',
+		sceneEventBindings: ['scene_loaded', 'poi_entered', 'npc_dialog_completed', 'building_interacted'],
+		trigger: { type: 'poi', condition: { roleId: 'helper' } },
+		objectives: [
+			{ id: 'visit-escort', type: 'visit', target: 'protection-bureau', targetName: '同兴公镖局', current: 0, required: 1, desc: '前往同兴公镖局', storyLine: '靠近镖局门面，问一句可有要帮忙的。' },
+			{ id: 'talk-escort', type: 'talk', target: 'npc-owl', targetName: '晋小鸦', current: 0, required: 1, desc: '听镖局当家说委托', storyLine: '听当家说完委托的来龙去脉。' },
+			{ id: 'explore-escort', type: 'explore', target: 'protection-bureau', targetName: '镖局器械架', current: 0, required: 1, desc: '帮镖局清点器械', storyLine: '与镖局交互，把这桩委托办妥。' }
+		],
+		rewards: { exp: 100, silver: 92, silverKey: 20, score: 30 },
+		roleBonus: commonRoleBonus,
+		npcHints: [
+			{ stage: 0, text: '镖局重情义，肯搭手的人最被高看。先过去。' },
+			{ stage: 1, text: '"威信"二字，是一程程黑路换出来的，听他说说。' },
+			{ stage: 2, text: '事办妥了，这一城的人情，先记你一份。' }
+		],
+		sceneId: 'lantern-quarter',
+		prerequisite: 'main-market-crossing'
+	},
+	{
 		id: 'daily-walk',
 		type: QUEST_TYPE.daily,
 		title: '古城漫步',

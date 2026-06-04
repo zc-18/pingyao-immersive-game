@@ -53,17 +53,29 @@ function handleClose() {
 	emit('close')
 }
 
+function expandBubble() {
+	isExpanded.value = true
+	if (props.autoHide) {
+		clearTimeout(autoHideTimer)
+		autoHideTimer = setTimeout(() => {
+			isExpanded.value = false
+		}, 3500)
+	}
+}
+
 watch(() => props.visible, (newVal) => {
 	if (newVal) {
-		isExpanded.value = true
-		if (props.autoHide) {
-			clearTimeout(autoHideTimer)
-			autoHideTimer = setTimeout(() => {
-				isExpanded.value = false
-			}, 3500)
-		}
+		expandBubble()
 	} else {
 		isExpanded.value = false
+	}
+})
+
+// 消息变化时若气泡仍可见，也重新展开并重启计时器：
+// approach / 换幕寒暄等在 visible 已为 true 时推送新句，否则 watch(visible) 不触发、新台词被吞。
+watch(() => props.message, () => {
+	if (props.visible) {
+		expandBubble()
 	}
 })
 

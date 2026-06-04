@@ -23,17 +23,17 @@
 				<view
 					class="ledger__settings-toggle"
 					:class="{ 'ledger__settings-toggle--on': settings.music }"
-					@tap="settings.music = !settings.music"
+					@tap="toggleMusic"
 				>
 					<view class="ledger__settings-toggle-knob"></view>
 				</view>
 			</view>
 			<view class="ledger__settings-row">
-				<text class="ledger__settings-label">竖 屏 锁 定</text>
+				<text class="ledger__settings-label">画 面 特 效</text>
 				<view
 					class="ledger__settings-toggle"
-					:class="{ 'ledger__settings-toggle--on': settings.portrait }"
-					@tap="settings.portrait = !settings.portrait"
+					:class="{ 'ledger__settings-toggle--on': settings.effect }"
+					@tap="toggleEffect"
 				>
 					<view class="ledger__settings-toggle-knob"></view>
 				</view>
@@ -203,10 +203,28 @@ import DailyCheckIn from '@/components/DailyCheckIn.vue'
 import AchievementWall from '@/components/AchievementWall.vue'
 import { getGameSnapshot, markPageVisit, rememberReturnContext } from '@/common/utils/game-state.js'
 import { syncAchievementUnlocks } from '@/common/utils/achievements.js'
+import { STORAGE_KEYS, getStorage, patchStorageObject } from '@/common/utils/storage.js'
 
 const snapshot = ref(getGameSnapshot())
 const settingsOpen = ref(false)
-const settings = ref({ music: true, portrait: false })
+const settings = ref({ music: true, effect: true })
+
+/* 设置抽屉与 gameSettings 持久化绑定（此前仅为内存 ref，开关既不读也不写 storage）。 */
+function loadSettings() {
+	const gs = getStorage(STORAGE_KEYS.gameSettings, {})
+	settings.value = {
+		music: gs.enableMusic !== false,
+		effect: gs.enableEffect !== false
+	}
+}
+function toggleMusic() {
+	settings.value.music = !settings.value.music
+	patchStorageObject(STORAGE_KEYS.gameSettings, { enableMusic: settings.value.music })
+}
+function toggleEffect() {
+	settings.value.effect = !settings.value.effect
+	patchStorageObject(STORAGE_KEYS.gameSettings, { enableEffect: settings.value.effect })
+}
 const checkInRef = ref(null)
 const achvRefreshKey = ref(0)
 
@@ -222,10 +240,7 @@ function handleCheckInClaimed(data) {
 const roleSubtitleText = computed(() => snapshot.value.profile.roleName ? `${snapshot.value.profile.roleName} · ${snapshot.value.level.title}` : `${snapshot.value.level.title} · 待定身份`)
 
 const storyCount = computed(() => snapshot.value.progress.totalQuestCompleted || snapshot.value.progress.questData?.completedQuests?.length || 0)
-const expPercent = computed(() => {
-	const total = (snapshot.value.level.expToNextLevel || 100) + (snapshot.value.progress.exp || 0)
-	return total > 0 ? Math.min(100, Math.floor(((snapshot.value.progress.exp || 0) / total) * 100)) : 0
-})
+const expPercent = computed(() => snapshot.value.level.progress || 0)
 
 const roleImage = computed(() => {
 	const roleId = snapshot.value.profile.roleId
@@ -267,7 +282,7 @@ const steleList = computed(() => [
 	{ label: '故事 · 篇', value: storyCount.value },
 	{ label: '点亮 · 火', value: snapshot.value.progress.discoveredPoiIds?.length || 0 },
 	{ label: '行旅 · 步', value: snapshot.value.progress.steps || 0 },
-	{ label: '票券 · 张', value: snapshot.value.latestOrder ? 1 : 0 }
+	{ label: '票券 · 张', value: snapshot.value.redeemOrderCount || 0 }
 ])
 
 const mottoText = computed(() => snapshot.value.profile.roleMotto || snapshot.value.currentStreet?.playerHint || '一城风物，不必赶路')
@@ -277,6 +292,7 @@ onShow(() => {
 	rememberReturnContext('/pages_game/street/street', '/pages/user/user')
 	const sync = syncAchievementUnlocks()
 	snapshot.value = getGameSnapshot()
+	loadSettings()
 	achvRefreshKey.value++
 	checkInRef.value?.refresh?.()
 	if (sync.newlyUnlocked?.length) {

@@ -218,7 +218,8 @@ export function getGameSnapshot() {
 	const currentPois = getScenePoiList(currentStreet?.id, { trackedQuest })
 	const currentPoi = currentPois.find((item) => item.id === runtime.currentPoiId) || currentPois[0] || null
 	const unlockedPoiCount = currentPois.filter((item) => item.status !== 'discoverable').length
-	const latestOrder = getRedeemOrders()[0] || null
+	const redeemOrders = getRedeemOrders()
+	const latestOrder = redeemOrders[0] || null
 	const journeyCopy = trackedQuest ? getQuestJourneyCopy(trackedQuest.id) : null
 	const questHint = trackedQuest ? getQuestNpcHint(trackedQuest.id) : ''
 	const questProgress = trackedQuest ? getQuestProgressPercent(trackedQuest.id) : 0
@@ -239,6 +240,7 @@ export function getGameSnapshot() {
 		currentPoi,
 		unlockedPoiCount,
 		latestOrder,
+		redeemOrderCount: redeemOrders.length,
 		heroSceneTitle: currentStreet?.title || currentStreet?.name || '',
 		heroNpcLine: questHint || runtime.lastQuestStageLine || journeyCopy?.approachLine || currentStreet?.playerHint || '',
 		primaryActionLabel: runtime.hasCompletedPrologue ? '继续主线' : '进入古城',
