@@ -793,7 +793,9 @@ function flushSteps(force = false) {
 }
 
 function handlePlayerMove(detail) {
-	pendingStepDelta += 1
+	// steps 为 renderjs 节流上报时累计的移动帧数；显式传入即按其计（含 0），未传入按 1 兜底——保证步数总量与逐帧上报时一致。
+	const stepDelta = (detail && detail.steps !== undefined) ? Math.max(0, Number(detail.steps) || 0) : 1
+	pendingStepDelta += stepDelta
 	flushSteps(false)
 	if (detail && typeof detail.x === 'number' && typeof detail.z === 'number') {
 		const prev = playerWorldPos.value
@@ -903,6 +905,11 @@ let animationId = null
 let isInitialized = false
 let lastTime = Date.now()
 let joystickInput = { dx: 0, dy: 0 }
+/* 移动上报节流：累计移动帧数（即步数增量），每 ~110ms 汇报一次，避免每帧 emit 以 ~60次/秒 轰炸
+   渲染层↔逻辑层桥（callMethod）并触发 MiniMap 每帧重渲。步数总量与朝向解算保持不变。 */
+let moveStepAccum = 0
+let lastMoveEmit = 0
+let wasMoving = false
 let currentPhaseData = null
 let ownerInstanceRef = null
 let resizeHandlerRef = null
@@ -2000,10 +2007,23 @@ export default {
 				const deltaTime = (now - lastTime) / 1000
 				lastTime = now
 
-				if (player && (joystickInput.dx !== 0 || joystickInput.dy !== 0)) {
+				const moving = player && (joystickInput.dx !== 0 || joystickInput.dy !== 0)
+				if (moving) {
 					player.position.x = Math.max(-18, Math.min(18, player.position.x + joystickInput.dx * 4 * deltaTime))
 					player.position.z = Math.max(-18, Math.min(16, player.position.z + joystickInput.dy * 4 * deltaTime))
-					emit('player-move', { x: player.position.x, z: player.position.z })
+					moveStepAccum += 1
+					// 节流上报：累计步数、每 ~110ms 汇报一次（含步数增量 steps），桥调用从 ~60→~9 次/秒，步数总量不变。
+					if (now - lastMoveEmit >= 110) {
+						emit('player-move', { x: player.position.x, z: player.position.z, steps: moveStepAccum })
+						moveStepAccum = 0
+						lastMoveEmit = now
+					}
+					wasMoving = true
+				} else if (wasMoving) {
+					// 刚停下：补发最终坐标 + 残余步数，避免短促移动（<110ms）丢步或 MiniMap 停在旧位。
+					if (player) emit('player-move', { x: player.position.x, z: player.position.z, steps: moveStepAccum })
+					moveStepAccum = 0
+					wasMoving = false
 				}
 
 				if (camera && player) {
