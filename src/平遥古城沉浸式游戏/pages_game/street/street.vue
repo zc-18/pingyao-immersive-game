@@ -1,7 +1,8 @@
 <template>
 	<view class="street-stage" :sceneCmd="sceneCmd" :change:sceneCmd="render.onSceneCmd">
-		<!-- 3D 街景画布（不动）-->
-		<canvas id="street-canvas" type="2d" class="street-stage__canvas"></canvas>
+		<!-- 3D 街景容器：renderjs 会让 THREE 自建 WebGL canvas 并挂入此 view。
+		     绝不能用 <canvas type="2d">——那是 2D 上下文画布，new THREE.WebGLRenderer({canvas}) 取不到 WebGL 上下文会抛错（「一直在张望」根因之一）。 -->
+		<view id="street-canvas" class="street-stage__canvas"></view>
 
 		<!-- 上方暗角光层（暮色 / 夜灯笼） -->
 		<view class="street-stage__vignette"></view>
@@ -54,8 +55,15 @@
 		<LevelUpEffect :visible="showLevelUp" :old-level="levelUpData.oldLevel" :new-level="levelUpData.newLevel" :old-level-name="levelUpData.oldLevelName" :new-level-name="levelUpData.newLevelName" />
 		<InteractionButton v-if="interactionCard" :label="interactionCard.label" @action="handleSceneInteraction" />
 
-		<!-- 加载（毛笔画圈 + 灯笼 + 晋小鸦正在张望…）-->
-		<BrushLoader :visible="isLoading" :progress="loadProgress" />
+		<!-- 加载（毛笔画圈 + 灯笼 + 晋小鸦正在张望…）；stage/hint 为可观测面包屑，escape 为兜底逃生 -->
+		<BrushLoader
+			:visible="isLoading"
+			:progress="loadProgress"
+			:stage="loadStage"
+			:hint="loadHint"
+			:show-escape="showEscape"
+			@escape="forceEnterCity"
+		/>
 
 		<!-- POI 详情（卷轴样式）-->
 		<view v-if="activePoi" class="street-stage__poi-overlay" @tap="closePoi">
@@ -174,6 +182,10 @@ const npcMessage = ref('')
 const npcAutoHide = ref(false)
 const isLoading = ref(true)
 const loadProgress = ref(0)
+/* 加载可观测面包屑 + 兜底逃生（三轮排查的教训：盲调太久。stage 停在哪一步=卡在哪一步） */
+const loadStage = ref('正在唤起街景…')
+const loadHint = ref('')
+const showEscape = ref(false)
 const showEntranceAnim = ref(false)
 const scenePulseText = ref('')
 const showRewardPopup = ref(false)
@@ -194,6 +206,24 @@ let phaseWatchTimer = null
    （取代原先 window.dispatchEvent，后者在 APP 端逻辑层/视图层不共享 window 而失效）。
    每次都带新的 ts 以保证引用变化、触发观察器。*/
 const sceneCmd = ref({ action: 'noop', ts: 0 })
+
+/* 加载兜底 + 首帧握手状态（修复「一直在张望」永久卡死）：
+   - renderViewReady：renderjs 视图层 mounted 后回发 view-ready，证明 :change 观察器已就绪，可安全(补)发 init；
+   - lastSceneCmdPayload/Action：缓存最近一次 init/loadScene 载荷，供 view-ready 补发与 watchdog 重试；
+   - loadWatchdog/initAttempts：加载超时兜底——任何一环静默失败都不会让用户永久卡在加载层。 */
+let renderViewReady = false
+let lastSceneCmdPayload = null
+let lastSceneCmdAction = 'init'
+let loadWatchdog = null
+let initAttempts = 0
+const MAX_INIT_ATTEMPTS = 2
+const LOAD_TIMEOUT = 10000
+/* 绝对兜底（独立于 initScene 是否被调用）：onMounted 里无条件武装，杜绝任何「init 从未触发」的路径永久卡死。
+   entryEscapeTimer：到点亮出「直接进入古城」按钮；entryFailsafeTimer：到点强制收起加载层。 */
+let entryEscapeTimer = null
+let entryFailsafeTimer = null
+const ENTRY_ESCAPE_DELAY = 5000
+const ENTRY_FAILSAFE_TIMEOUT = 14000
 
 const roleMap = roleList.reduce((map, role) => {
 	map[role.id] = role
@@ -315,12 +345,32 @@ function sendToRenderjs(type, data) {
 function handleRenderMsg(msg) {
 	if (!msg || !msg.detail) return
 	const { type, data } = msg.detail
-	if (type === 'render-ready') {
+	if (type === 'view-ready') {
+		// renderjs 视图层已挂载、:change 观察器就绪：若仍在加载且有缓存命令，补发一次，
+		// 杜绝首帧 init 在观察器注册前被当「初始值」丢弃而永不 bootScene。
+		renderViewReady = true
+		loadStage.value = '视图就绪 · 加载 3D 引擎…'
+		if (isLoading.value && lastSceneCmdPayload) {
+			sendToRenderjs(lastSceneCmdAction, lastSceneCmdPayload)
+		}
+	} else if (type === 'render-stage') {
+		// renderjs 各阶段面包屑：卡住时这行会停在最后到达的阶段，直接指明失败点。
+		if (data) loadStage.value = String(data)
+	} else if (type === 'render-ready') {
+		clearLoadWatchdog()
+		clearEntryTimers()
+		loadStage.value = ''
+		loadHint.value = ''
+		showEscape.value = false
 		isLoading.value = false
 	} else if (type === 'render-progress') {
 		loadProgress.value = Math.max(0, Math.min(100, Number(data) || 0))
 	} else if (type === 'render-error') {
-		isLoading.value = false
+		// 终态错误：把错误文案留在加载层（而非一闪而过的 toast）并亮出逃生按钮，供定位与继续；
+		// 不主动收起加载层——让开发者读到错误；绝对兜底计时器仍会在到点自动放行。
+		clearLoadWatchdog()
+		loadHint.value = '加载未完成：' + ((data && data.error) || '街景渲染失败')
+		showEscape.value = true
 		uni.showToast({ title: (data && data.error) || '街景加载失败', icon: 'none' })
 	} else if (type === 'poi-enter') {
 		handlePoiEnter(data)
@@ -345,26 +395,90 @@ function refreshRuntimeState() {
 	sendToRenderjs('highlightPoi', { poiId: questTargetPoiId.value })
 }
 
+function clearLoadWatchdog() {
+	if (loadWatchdog) {
+		clearTimeout(loadWatchdog)
+		loadWatchdog = null
+	}
+}
+
+/* 加载兜底：到点仍未收到 render-ready/render-error 就先重试一次，再不行也强制收起加载层，绝不永久卡「张望」。 */
+function armLoadWatchdog() {
+	clearLoadWatchdog()
+	loadWatchdog = setTimeout(() => {
+		if (!isLoading.value) return
+		initAttempts += 1
+		if (initAttempts < MAX_INIT_ATTEMPTS && lastSceneCmdPayload) {
+			// 再给一次机会：init 用 reinit（renderjs 端会先 dispose 旧场景再重建、绕过 isInitialized 闩锁）；切街景用 loadScene。
+			sendToRenderjs(lastSceneCmdAction === 'init' ? 'reinit' : 'loadScene', lastSceneCmdPayload)
+			armLoadWatchdog()
+		} else {
+			isLoading.value = false
+			uni.showToast({ title: '街景加载较慢，已先带你入城', icon: 'none', duration: 2200 })
+		}
+	}, LOAD_TIMEOUT)
+}
+
+function clearEntryTimers() {
+	if (entryEscapeTimer) { clearTimeout(entryEscapeTimer); entryEscapeTimer = null }
+	if (entryFailsafeTimer) { clearTimeout(entryFailsafeTimer); entryFailsafeTimer = null }
+}
+
+/* 绝对兜底：onMounted 无条件武装，完全独立于 initScene / renderjs。
+   即便 init 因任何路径从未被调用（如 onLoad 早抛），到点也必亮出逃生按钮并强制放行——
+   「永不被困在加载层」对所有代码路径成立，补上 watchdog 仅在 init 内武装的盲区。 */
+function armEntryFailsafe() {
+	clearEntryTimers()
+	entryEscapeTimer = setTimeout(() => {
+		if (isLoading.value) showEscape.value = true
+	}, ENTRY_ESCAPE_DELAY)
+	entryFailsafeTimer = setTimeout(() => {
+		if (isLoading.value) {
+			isLoading.value = false
+			uni.showToast({ title: '街景加载较慢，已先带你入城', icon: 'none', duration: 2200 })
+		}
+	}, ENTRY_FAILSAFE_TIMEOUT)
+}
+
+/* 逃生按钮回调：用户主动放行，立即收起加载层并停掉所有计时器。 */
+function forceEnterCity() {
+	clearLoadWatchdog()
+	clearEntryTimers()
+	loadHint.value = ''
+	showEscape.value = false
+	isLoading.value = false
+}
+
 function initScene() {
 	isLoading.value = true
 	loadProgress.value = 0
-	sendToRenderjs('init', {
+	loadStage.value = '正在准备街景数据…'
+	initAttempts = 0
+	lastSceneCmdAction = 'init'
+	lastSceneCmdPayload = {
 		streetData: currentStreet.value,
 		pois: streetPois.value,
 		questTargetPoiId: questTargetPoiId.value,
 		phase: serializePhase(currentPhase.value)
-	})
+	}
+	armLoadWatchdog()
+	sendToRenderjs('init', lastSceneCmdPayload)
 }
 
 function loadCurrentScene() {
 	isLoading.value = true
 	loadProgress.value = 0
-	sendToRenderjs('loadScene', {
+	loadStage.value = '正在切换街景…'
+	initAttempts = 0
+	lastSceneCmdAction = 'loadScene'
+	lastSceneCmdPayload = {
 		streetData: currentStreet.value,
 		pois: streetPois.value,
 		questTargetPoiId: questTargetPoiId.value,
 		phase: serializePhase(currentPhase.value)
-	})
+	}
+	armLoadWatchdog()
+	sendToRenderjs('loadScene', lastSceneCmdPayload)
 	const result = advanceQuestByEvent(EVENT_TYPES.sceneLoaded, { sceneId: currentStreet.value.id })
 	if (result.updated) {
 		scenePulseText.value = result.stageLine
@@ -696,48 +810,64 @@ function playEntranceAnimation() {
 	showEntranceAnim.value = true
 	setTimeout(() => {
 		showEntranceAnim.value = false
-		markPrologueComplete(currentStreet.value.id)
-		npcMessage.value = trackedQuest.value?.introLine || '城门已开，顺着第一段引线往前走吧。'
-		npcVisible.value = true
-		npcAutoHide.value = false
+		try {
+			markPrologueComplete(currentStreet.value.id)
+			npcMessage.value = trackedQuest.value?.introLine || '城门已开，顺着第一段引线往前走吧。'
+			npcVisible.value = true
+			npcAutoHide.value = false
+		} catch (e) {
+			// 入城前置（标记序章 / 文案）失败绝不能阻断 initScene——否则首装用户永久卡「张望」。
+		}
 		initScene()
 	}, 3000)
 }
 
 onLoad(() => {
-	markPageVisit('street', { returnPage: '/pages_game/street/street' })
-	rememberReturnContext('/pages_game/street/street', '')
-	uni.hideTabBar()
+	try {
+		markPageVisit('street', { returnPage: '/pages_game/street/street' })
+		rememberReturnContext('/pages_game/street/street', '')
+		uni.hideTabBar()
 
-	const initialStreet = getCurrentStreetScene()
-	if (initialStreet?.id && streetMap[initialStreet.id]) {
-		currentStreetIndex.value = streetMap[initialStreet.id].index
-	}
+		const initialStreet = getCurrentStreetScene()
+		if (initialStreet?.id && streetMap[initialStreet.id]) {
+			currentStreetIndex.value = streetMap[initialStreet.id].index
+		}
 
-	refreshRuntimeState()
-	const runtime = getStorage(STORAGE_KEYS.appRuntime, {})
+		refreshRuntimeState()
+		const runtime = getStorage(STORAGE_KEYS.appRuntime, {})
 
-	if (!runtime.hasCompletedPrologue) {
-		playEntranceAnimation()
-	} else {
-		npcMessage.value = trackedQuest.value?.introLine || currentStreet.value.playerHint
-		npcVisible.value = true
-		npcAutoHide.value = true
-		// initScene 移到 onMounted：确保 'init' 命令在 renderjs 视图挂载后再下发，
-		// 这样 :change:sceneCmd 观察器才能稳定捕获到变更（onLoad 早于挂载）。
+		if (!runtime.hasCompletedPrologue) {
+			playEntranceAnimation()
+		} else {
+			npcMessage.value = trackedQuest.value?.introLine || currentStreet.value.playerHint
+			npcVisible.value = true
+			npcAutoHide.value = true
+			// initScene 移到 onMounted：确保 'init' 命令在 renderjs 视图挂载后再下发，
+			// 这样 :change:sceneCmd 观察器才能稳定捕获到变更（onLoad 早于挂载）。
+		}
+	} catch (e) {
+		// onLoad 任一步抛错都不应让街景失去初始化机会：直接补一次 initScene（绝对兜底计时器在 onMounted 已武装）。
+		initScene()
 	}
 })
 
 onMounted(() => {
-	// 非序章玩家：在此触发场景初始化。此时 renderjs 视图已挂载，
-	// sceneCmd 的变更会被 :change 观察器稳定捕获（renderjs → 逻辑层回调走 callMethod('handleRenderMsg')）。
-	const runtime = getStorage(STORAGE_KEYS.appRuntime, {})
-	if (runtime.hasCompletedPrologue) {
-		initScene()
+	// 绝对兜底最先武装：不依赖 initScene / onLoad 的任何分支，保证所有路径都不会永久卡在加载层。
+	armEntryFailsafe()
+	loadStage.value = '等待 3D 视图就绪…'
+	try {
+		// 非序章玩家：在此触发场景初始化。此时 renderjs 视图已挂载，
+		// sceneCmd 的变更会被 :change 观察器稳定捕获（renderjs → 逻辑层回调走 callMethod('handleRenderMsg')）。
+		const runtime = getStorage(STORAGE_KEYS.appRuntime, {})
+		if (runtime.hasCompletedPrologue) {
+			initScene()
+		}
+		watchPhase()
+		// 街景是核心沉浸场景：进入即起环境 BGM（受"音效"开关与素材是否就位双重兜底，缺文件不报错）。
+		playBGM(BGM.STREET_AMBIENT)
+	} catch (e) {
+		// 即便初始化链抛错，加载层也由 armEntryFailsafe 到点兜底放行，绝不永久卡死。
 	}
-	watchPhase()
-	// 街景是核心沉浸场景：进入即起环境 BGM（受"音效"开关与素材是否就位双重兜底，缺文件不报错）。
-	playBGM(BGM.STREET_AMBIENT)
 })
 
 onUnmounted(() => {
@@ -745,7 +875,13 @@ onUnmounted(() => {
 	flushSteps(true)
 	stopWatchPhase()
 	stopBGM()
+	clearLoadWatchdog()
+	clearEntryTimers()
 })
+
+/* 显式暴露给 renderjs 的 $ownerInstance.callMethod('handleRenderMsg') 调用：
+   确保 Vue3 <script setup> 下回传通道可达，不依赖编译器隐式暴露（否则 render-ready 可能永远到不了逻辑层）。 */
+defineExpose({ handleRenderMsg })
 </script>
 
 <script module="render" lang="renderjs">
@@ -769,6 +905,7 @@ let lastTime = Date.now()
 let joystickInput = { dx: 0, dy: 0 }
 let currentPhaseData = null
 let ownerInstanceRef = null
+let resizeHandlerRef = null
 
 /* 程序化纹理缓存：跨场景复用，避免每次 loadScene 重复生成上传 GPU。
    只在 dispose() 里统一释放，clearScene 不动它们（material.dispose 不级联 texture）。*/
@@ -776,11 +913,21 @@ let textureCache = {}
 let skyTextureCache = {}
 
 /* renderjs → 逻辑层：通过 $ownerInstance.callMethod 回调逻辑层的 handleRenderMsg。
-   APP 端逻辑层无共享 window，不能再用 window.dispatchEvent。ownerInstanceRef 在 mounted/onSceneCmd 赋值。 */
+   APP 端逻辑层无共享 window，不能再用 window.dispatchEvent。ownerInstanceRef 在 mounted/onSceneCmd 赋值。
+   健壮化：代理未就绪时把消息入队，待拿到 ownerInstance 后 flushEmits 冲刷——终态 render-ready/render-error 绝不静默丢弃。 */
+let pendingEmits = []
 function emit(name, detail) {
 	if (ownerInstanceRef && ownerInstanceRef.callMethod) {
 		ownerInstanceRef.callMethod('handleRenderMsg', { detail: { type: name, data: detail } })
+	} else {
+		pendingEmits.push({ name, detail })
 	}
+}
+function flushEmits() {
+	if (!ownerInstanceRef || !ownerInstanceRef.callMethod || !pendingEmits.length) return
+	const queued = pendingEmits
+	pendingEmits = []
+	queued.forEach((item) => ownerInstanceRef.callMethod('handleRenderMsg', { detail: { type: item.name, data: item.detail } }))
 }
 
 function colorHex(value, fallback) {
@@ -791,8 +938,10 @@ function colorHex(value, fallback) {
 
 export default {
 	mounted() {
-		// 保存逻辑层代理；场景初始化由 onSceneCmd('init') 观察器驱动。
+		// 保存逻辑层代理并冲刷早到的消息；随后回发 view-ready，告知逻辑层 :change 观察器已就绪、可安全(补)发 init。
 		ownerInstanceRef = this.$ownerInstance
+		flushEmits()
+		emit('view-ready')
 	},
 	beforeUnmount() {
 		this.dispose()
@@ -1034,60 +1183,93 @@ export default {
 		/* 逻辑层 → renderjs 命令入口（:change:sceneCmd 观察器）。
 		   observer 内 this 不可靠，必须用传入的 instance 调用方法。 */
 		onSceneCmd(newVal, oldVal, ownerInstance, instance) {
-			if (ownerInstance) ownerInstanceRef = ownerInstance
+			if (ownerInstance) { ownerInstanceRef = ownerInstance; flushEmits() }
 			if (!newVal || !newVal.action) return
 			const action = newVal.action
 			const data = newVal.data || {}
-			if (action === 'init') {
-				if (!isInitialized) {
+			try {
+				if (action === 'init') {
+					if (!isInitialized) {
+						isInitialized = true
+						instance.bootScene(data)
+					}
+				} else if (action === 'reinit') {
+					// watchdog 重试：先彻底拆除旧场景（dispose 会移除残留 canvas 并把 isInitialized 复位），再重新引导。
+					instance.dispose()
 					isInitialized = true
 					instance.bootScene(data)
+				} else if (action === 'loadScene') {
+					instance.loadScene(data)
+					/* 换幕 / 路由重建完成即发 render-ready 隐藏加载层：动画循环在首次 init 时已启动，
+					   重建后的场景下一帧即呈现；首次 init 的 render-ready 仍由 initScene 末尾发出，故首屏不闪。*/
+					emit('render-ready')
+				} else if (action === 'highlightPoi') {
+					instance.highlightQuestPoi(data.poiId)
+				} else if (action === 'applyPhase') {
+					instance.applyPhase(data.phase)
 				}
-			} else if (action === 'loadScene') {
-				instance.loadScene(data)
-				/* 换幕 / 路由重建完成即发 render-ready 隐藏加载层：动画循环在首次 init 时已启动，
-				   重建后的场景下一帧即呈现；首次 init 的 render-ready 仍由 initScene 末尾发出，故首屏不闪。*/
-				emit('render-ready')
-			} else if (action === 'highlightPoi') {
-				instance.highlightQuestPoi(data.poiId)
-			} else if (action === 'applyPhase') {
-				instance.applyPhase(data.phase)
+			} catch (err) {
+				// 观察器内任何同步抛错都转成终态信号，避免逻辑层永远收不到 ready/error 而卡「张望」。
+				emit('render-error', { error: (err && err.message) || '街景命令处理失败' })
 			}
 		},
 		loadScript(src) {
 			return new Promise((resolve, reject) => {
 				const script = document.createElement('script')
+				let settled = false
+				const done = (fn, arg) => { if (!settled) { settled = true; clearTimeout(timer); fn(arg) } }
+				// 超时兜底：<script> 既不 onload 也不 onerror（APP 云打包后 /static 路径异常）时不至于永久挂起。
+				const timer = setTimeout(() => done(reject, new Error(src + ' 加载超时')), 8000)
 				script.src = src
-				script.onload = () => resolve()
-				script.onerror = () => reject(new Error(src + ' 加载失败'))
+				script.onload = () => done(resolve)
+				script.onerror = () => done(reject, new Error(src + ' 加载失败'))
 				document.head.appendChild(script)
 			})
 		},
 		async bootScene(data) {
 			try {
-				// 7 个库必须按依赖顺序【串行】加载（见 static/libs/README.md）；
-				// 原代码只并行加载了 3 个且缺 CopyShader/ShaderPass/LuminosityHighPassShader，
-				// 导致 EffectComposer/UnrealBloomPass 构造失败、render-ready 永不触发（一直在加载根因之一）。
+				// 快速路径：reinit / 二次进入时 window.THREE 及后处理类已就位，跳过 7 个 <script> 的重复注入，加速恢复。
+				if (window.THREE && window.THREE.EffectComposer && window.THREE.RenderPass && window.THREE.UnrealBloomPass) {
+					THREE = window.THREE
+					emit('render-progress', 70)
+					emit('render-stage', '渲染环境就绪 · 搭建街景…')
+					this.initScene(data)
+					return
+				}
+				// 依赖顺序至关重要：EffectComposer.js 定义 THREE.Pass，必须先于 RenderPass/ShaderPass/UnrealBloomPass 加载——
+				// 后三者在脚本求值期就 `class X extends THREE.Pass`，若 Pass 未定义会同步抛 TypeError，
+				// 致 THREE.RenderPass/ShaderPass 为 undefined，随后 new THREE.EffectComposer() 内部 new THREE.ShaderPass 再崩。
+				// 旧顺序把 ShaderPass/RenderPass 排在 EffectComposer 之前，是 3D 必崩的第二处根因。
 				const libs = [
 					'/static/libs/three.min.js',
 					'/static/libs/CopyShader.js',
 					'/static/libs/LuminosityHighPassShader.js',
-					'/static/libs/ShaderPass.js',
-					'/static/libs/RenderPass.js',
 					'/static/libs/EffectComposer.js',
+					'/static/libs/RenderPass.js',
+					'/static/libs/ShaderPass.js',
 					'/static/libs/UnrealBloomPass.js'
 				]
 				for (let i = 0; i < libs.length; i++) {
+					emit('render-stage', '加载 3D 引擎库 ' + (i + 1) + '/' + libs.length + '…')
 					await this.loadScript(libs[i])
 					emit('render-progress', Math.round(((i + 1) / libs.length) * 70))
 				}
 				THREE = window.THREE
 				if (!THREE) {
+					isInitialized = false
 					emit('render-error', { error: 'Three.js 未能加载' })
 					return
 				}
+				// 校验后处理类是否就位：任一缺失即发终态，避免到 new EffectComposer 才静默崩。
+				if (!THREE.EffectComposer || !THREE.RenderPass || !THREE.UnrealBloomPass) {
+					isInitialized = false
+					emit('render-error', { error: '后处理库未就位（加载顺序/缺文件）' })
+					return
+				}
+				emit('render-stage', '渲染环境就绪 · 搭建街景…')
 				this.initScene(data)
 			} catch (err) {
+				isInitialized = false
 				emit('render-error', { error: (err && err.message) || '街景资源加载失败' })
 			}
 		},
@@ -1098,14 +1280,21 @@ export default {
 				return
 			}
 
-			const canvas = document.getElementById('street-canvas')
-			if (!canvas) {
-				emit('render-error', { error: '未找到街景画布' })
+			// 渲染目标用普通容器 <view id="street-canvas">，让 THREE 自建 WebGL canvas 再挂入；
+			// 绝不能把 <canvas type="2d"> 喂给 new WebGLRenderer({canvas})——取不到 WebGL 上下文会同步抛错（「一直在张望」根因之一）。
+			const container = document.getElementById('street-canvas')
+			if (!container) {
+				emit('render-error', { error: '未找到街景容器' })
 				return
 			}
 
-			const width = window.innerWidth
-			const height = window.innerHeight
+			// 幂等防护：极端慢加载（7 库累计 10~14s）下，10s watchdog 的 reinit 可能与「仍在进行的首个 boot」竞态，
+			// 致两次进到 initScene。若已存在 renderer，先彻底拆除旧场景（dispose 会取消旧 rAF、摘除旧 canvas、释放纹理并复位状态），
+			// 再重建——保证任何路径下都只有一个 WebGL 上下文 / 一块 canvas / 一个渲染循环，杜绝叠加重影与上下文泄漏。
+			if (renderer) this.dispose()
+
+			const width = container.clientWidth || window.innerWidth
+			const height = container.clientHeight || window.innerHeight
 			scene = new THREE.Scene()
 
 			const phase = data.phase || null
@@ -1122,21 +1311,42 @@ export default {
 			camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 100)
 			camera.position.set(0, 5, 10)
 
-			renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false })
+			renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
 			renderer.setSize(width, height)
 			renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
 			renderer.shadowMap.enabled = true
 			renderer.shadowMap.type = THREE.PCFSoftShadowMap
 			renderer.toneMapping = THREE.ACESFilmicToneMapping
 			renderer.toneMappingExposure = phase?.exposure || 1.15
+			renderer.domElement.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;'
+			container.appendChild(renderer.domElement)
 
-			composer = new THREE.EffectComposer(renderer)
-			composer.addPass(new THREE.RenderPass(scene, camera))
-			bloomPassRef = new THREE.UnrealBloomPass(new THREE.Vector2(width, height), phase?.bloomStrength || 0.85, 0.5, 0.6)
-			composer.addPass(bloomPassRef)
+			/* 后处理（Bloom）：失败则降级为直接渲染，绝不因后处理异常而黑屏或卡死 */
+			try {
+				composer = new THREE.EffectComposer(renderer)
+				composer.addPass(new THREE.RenderPass(scene, camera))
+				bloomPassRef = new THREE.UnrealBloomPass(new THREE.Vector2(width, height), phase?.bloomStrength || 0.85, 0.5, 0.6)
+				composer.addPass(bloomPassRef)
+			} catch (err) {
+				composer = null
+				bloomPassRef = null
+			}
+
+			/* 横屏/尺寸变化时同步相机与渲染尺寸 */
+			if (!resizeHandlerRef) {
+				resizeHandlerRef = () => {
+					const w = container.clientWidth || window.innerWidth
+					const h = container.clientHeight || window.innerHeight
+					if (camera) { camera.aspect = w / h; camera.updateProjectionMatrix() }
+					if (renderer) renderer.setSize(w, h)
+					if (composer) composer.setSize(w, h)
+				}
+				window.addEventListener('resize', resizeHandlerRef)
+			}
 
 			currentPhaseData = phase
 			this.loadScene(data)
+			emit('render-stage', '点亮街景…')
 			this.createJoystick()
 			this.startAnimation()
 			emit('render-ready')
@@ -1782,6 +1992,8 @@ export default {
 			}
 		},
 		startAnimation() {
+			// 幂等：先取消可能残留的上一轮 rAF，确保任何路径（含极端竞态）下都只有一个动画循环，杜绝孤儿循环空转。
+			if (animationId) { cancelAnimationFrame(animationId); animationId = null }
 			const animate = () => {
 				animationId = requestAnimationFrame(animate)
 				const now = Date.now()
@@ -1868,6 +2080,7 @@ export default {
 				}
 
 				if (composer) composer.render()
+				else if (renderer && scene && camera) renderer.render(scene, camera)
 			}
 			animate()
 		},
@@ -1879,7 +2092,18 @@ export default {
 			Object.keys(skyTextureCache).forEach((k) => { if (skyTextureCache[k]) skyTextureCache[k].dispose() })
 			textureCache = {}
 			skyTextureCache = {}
-			if (renderer) renderer.dispose()
+			if (resizeHandlerRef) {
+				window.removeEventListener('resize', resizeHandlerRef)
+				resizeHandlerRef = null
+			}
+			if (renderer) {
+				renderer.dispose()
+				// renderer.dispose() 不会移除 DOM：手动把自建的 canvas 从容器摘除，避免切场/重试时残留叠加与 WebGL 上下文泄漏。
+				const container = document.getElementById('street-canvas')
+				if (container && renderer.domElement && renderer.domElement.parentNode === container) {
+					try { container.removeChild(renderer.domElement) } catch (e) {}
+				}
+			}
 			scene = null
 			camera = null
 			renderer = null

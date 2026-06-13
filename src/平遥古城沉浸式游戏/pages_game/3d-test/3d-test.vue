@@ -330,13 +330,14 @@ export default {
 		async initAll(sceneConfig) {
 			try {
 				this.sendMsg('status', '加载 Three.js…')
+				// EffectComposer.js 定义 THREE.Pass，必须先于 RenderPass/ShaderPass/UnrealBloomPass（它们在求值期 extends THREE.Pass）加载，否则同步抛 TypeError。
 				var libs = [
 					'/static/libs/three.min.js',
 					'/static/libs/CopyShader.js',
 					'/static/libs/LuminosityHighPassShader.js',
-					'/static/libs/ShaderPass.js',
-					'/static/libs/RenderPass.js',
 					'/static/libs/EffectComposer.js',
+					'/static/libs/RenderPass.js',
+					'/static/libs/ShaderPass.js',
 					'/static/libs/UnrealBloomPass.js'
 				]
 				for (var i = 0; i < libs.length; i++) {

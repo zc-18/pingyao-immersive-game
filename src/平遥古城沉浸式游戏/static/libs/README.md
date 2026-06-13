@@ -4,33 +4,29 @@
 
 ## 必需文件列表（按加载顺序）
 
-1. **three.min.js** (v0.157.0)
+> ⚠️ **顺序约束（踩坑记录）**：`EffectComposer.js` 定义了 `THREE.Pass` 基类，而 `RenderPass.js` / `ShaderPass.js` / `UnrealBloomPass.js` 在脚本求值期就 `class X extends THREE.Pass`。因此 **EffectComposer 必须排在这三者之前**，否则 `extends undefined` 会同步抛 TypeError，导致 `THREE.RenderPass/ShaderPass` 为 undefined、`new THREE.EffectComposer()` 再崩。曾因此让 street 3D 永久卡在加载层。
+
+1. **three.min.js**
    - 下载地址: https://cdn.jsdelivr.net/npm/three@0.157.0/build/three.min.js
    - 挂载至 `window.THREE`
 
 2. **CopyShader.js**
-   - 下载地址: https://cdn.jsdelivr.net/npm/three@0.157.0/examples/js/shaders/CopyShader.js
-   - 后处理必需
+   - 纯 shader 对象（无 extends 依赖），后处理必需
 
 3. **LuminosityHighPassShader.js**
-   - 下载地址: https://cdn.jsdelivr.net/npm/three@0.157.0/examples/js/shaders/LuminosityHighPassShader.js
-   - Bloom 效果必需
+   - 纯 shader 对象，Bloom 效果必需
 
-4. **ShaderPass.js**
-   - 下载地址: https://cdn.jsdelivr.net/npm/three@0.157.0/examples/js/postprocessing/ShaderPass.js
-   - 后处理通道
+4. **EffectComposer.js**
+   - 后处理合成器；**定义 `THREE.Pass` / `THREE.FullScreenQuad`，必须先于下面三个 Pass 加载**
 
 5. **RenderPass.js**
-   - 下载地址: https://cdn.jsdelivr.net/npm/three@0.157.0/examples/js/postprocessing/RenderPass.js
-   - 渲染通道
+   - 渲染通道（`class RenderPass extends THREE.Pass`）
 
-6. **EffectComposer.js**
-   - 下载地址: https://cdn.jsdelivr.net/npm/three@0.157.0/examples/js/postprocessing/EffectComposer.js
-   - 后处理合成器
+6. **ShaderPass.js**
+   - 后处理通道（`class ShaderPass extends THREE.Pass`）
 
 7. **UnrealBloomPass.js**
-   - 下载地址: https://cdn.jsdelivr.net/npm/three@0.157.0/examples/js/postprocessing/UnrealBloomPass.js
-   - Bloom 辉光效果
+   - Bloom 辉光效果（`class UnrealBloomPass extends THREE.Pass`，运行时还用到 CopyShader/LuminosityHighPassShader/ShaderPass）
 
 ## 使用方式
 
@@ -42,9 +38,9 @@ async initThree() {
     '/static/libs/three.min.js',
     '/static/libs/CopyShader.js',
     '/static/libs/LuminosityHighPassShader.js',
-    '/static/libs/ShaderPass.js',
-    '/static/libs/RenderPass.js',
     '/static/libs/EffectComposer.js',
+    '/static/libs/RenderPass.js',
+    '/static/libs/ShaderPass.js',
     '/static/libs/UnrealBloomPass.js'
   ]
   for (const src of libs) {

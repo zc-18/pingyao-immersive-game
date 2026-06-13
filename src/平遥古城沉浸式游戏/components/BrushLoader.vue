@@ -17,17 +17,28 @@
 
 			<text class="brush-loader__text">{{ text || '晋小鸦正在张望…' }}</text>
 			<text v-if="progress > 0" class="brush-loader__pct">{{ Math.floor(progress) }}%</text>
+
+			<!-- 加载阶段面包屑：卡住时这行文字会停在最后到达的阶段，便于定位是哪一步失败（视图就绪 / 加载库 X/7 / 搭建场景…）。 -->
+			<text v-if="stage" class="brush-loader__stage-text">{{ stage }}</text>
+			<!-- 提示 / 错误行：加载较慢或 renderjs 报错时把信息留在屏幕上，而非一闪而过的 toast。 -->
+			<text v-if="hint" class="brush-loader__hint">{{ hint }}</text>
+			<!-- 兜底逃生：无论何种原因卡住，过几秒出现此按钮，用户永不被永久困在加载层。 -->
+			<view v-if="showEscape" class="brush-loader__escape" @tap="$emit('escape')">直接进入古城 ▶</view>
 		</view>
 	</view>
 </template>
 
 <script setup>
 defineProps({
-	visible:  { type: Boolean, default: false },
-	progress: { type: Number, default: 0 },
-	text:     { type: String, default: '' },
-	inline:   { type: Boolean, default: false }
+	visible:    { type: Boolean, default: false },
+	progress:   { type: Number, default: 0 },
+	text:       { type: String, default: '' },
+	stage:      { type: String, default: '' },
+	hint:       { type: String, default: '' },
+	showEscape: { type: Boolean, default: false },
+	inline:     { type: Boolean, default: false }
 })
+defineEmits(['escape'])
 </script>
 
 <style lang="scss" scoped>
@@ -144,5 +155,34 @@ defineProps({
 	color: $py-gold;
 	font-family: 'Noto Serif SC', 'STSong', serif;
 	letter-spacing: 2rpx;
+}
+
+.brush-loader__stage-text {
+	font-size: 20rpx;
+	letter-spacing: 2rpx;
+	color: rgba(212, 165, 116, 0.55);
+	font-family: 'Noto Serif SC', 'STSong', serif;
+}
+
+.brush-loader__hint {
+	margin-top: 4rpx;
+	font-size: 20rpx;
+	letter-spacing: 1rpx;
+	color: rgba(231, 168, 120, 0.92);
+	text-align: center;
+	max-width: 460rpx;
+	line-height: 1.5;
+}
+
+.brush-loader__escape {
+	margin-top: 22rpx;
+	padding: 12rpx 36rpx;
+	font-size: 24rpx;
+	letter-spacing: 3rpx;
+	color: #f5f0e8;
+	border: 2rpx solid rgba(212, 165, 116, 0.6);
+	border-radius: 40rpx;
+	background: linear-gradient(180deg, rgba(139, 69, 19, 0.55) 0%, rgba(110, 53, 16, 0.7) 100%);
+	box-shadow: 0 0 20rpx rgba(255, 140, 60, 0.35);
 }
 </style>
