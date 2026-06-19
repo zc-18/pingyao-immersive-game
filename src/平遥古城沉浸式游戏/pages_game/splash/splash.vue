@@ -82,6 +82,7 @@ import { getUserProfile, hasSelectedRole } from '@/common/utils/storage.js'
 import { getGameSnapshot, getRuntimeState, markPageVisit } from '@/common/utils/game-state.js'
 import { getCurrentPhase } from '@/common/utils/phase.js'
 import { getCheckInPreview } from '@/common/utils/check-in.js'
+import { playSFX, SFX } from '@/common/utils/audio.js'
 
 const isRouting = ref(false)
 const stampShown = ref(false)
@@ -141,14 +142,14 @@ onMounted(() => {
 	// 印章在 0.6s 后"啪"地拍下
 	setTimeout(() => {
 		stampShown.value = true
-		// 此处印章拍下声 pa 留给后期接入
+		playSFX(SFX.QUEST_START) // 印章拍下声（缺素材时静默兜底）
 	}, 600)
 })
 
 function handleEnter() {
 	if (isRouting.value) return
 	isRouting.value = true
-	// 此处铜铃声 ding 留给后期接入
+	playSFX(SFX.DOOR_OPEN) // 推门入城声（缺素材时静默兜底）
 
 	// 城门过场动画 → 路由
 	showGate.value = true

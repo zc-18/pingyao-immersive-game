@@ -40,7 +40,7 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, onUnmounted } from 'vue'
 
 const props = defineProps({
 	visible: { type: Boolean, default: false },
@@ -65,6 +65,12 @@ watch(
 		}
 	}
 )
+
+// 卸载时清掉挂起的关闭定时器：街景频繁弹 toast + 多次换幕，遗留定时器会持续持有组件闭包、阻止 GC，
+// 累积成渐进卡顿。这是本组件唯一的副作用，必须随卸载回收。
+onUnmounted(() => {
+	if (timer) { clearTimeout(timer); timer = null }
+})
 </script>
 
 <style lang="scss" scoped>

@@ -61,6 +61,7 @@
 			:progress="loadProgress"
 			:stage="loadStage"
 			:hint="loadHint"
+			:tips="loadingTips"
 			:show-escape="showEscape"
 			@escape="forceEnterCity"
 		/>
@@ -87,10 +88,24 @@
 				<view class="street-stage__poi-story">
 					<text class="street-stage__poi-story-label">— 晋小鸦提示 —</text>
 					<text class="street-stage__poi-story-text">{{ activePoi.npcTopic }}</text>
+					<text v-if="poiDeepLines[activePoi.id]" class="street-stage__poi-story-deep">{{ poiDeepLines[activePoi.id] }}</text>
+				</view>
+
+				<!-- 我的札记（写过才显示）-->
+				<view v-if="poiNote" class="street-stage__poi-mynote">
+					<text class="street-stage__poi-mynote-label">— 我的札记 —</text>
+					<text class="street-stage__poi-mynote-text">{{ poiNote }}</text>
 				</view>
 
 				<view class="street-stage__poi-footer">
-					<text class="street-stage__poi-distance">距 {{ activePoi.distance }}m</text>
+					<view class="street-stage__poi-tools">
+						<view class="street-stage__poi-tool" :class="{ 'street-stage__poi-tool--on': poiFavorited }" @tap="toggleFav">
+							<text>{{ poiFavorited ? '★ 收藏' : '☆ 收藏' }}</text>
+						</view>
+						<view class="street-stage__poi-tool" @tap="editNote">
+							<text>{{ poiNote ? '✎ 改札记' : '✎ 札记' }}</text>
+						</view>
+					</view>
 					<view class="street-stage__poi-action" @tap="playPoiTopic">
 						<text>继续讲解 ›</text>
 					</view>
@@ -107,9 +122,13 @@
 			v-if="showEntranceAnim"
 			:visible="showEntranceAnim"
 			plaque-text="平 遥 古 城"
+			:kicker="entranceCopy.kicker"
 			:title="entranceCopy.title"
 			:desc="entranceCopy.desc"
 		/>
+
+		<!-- 街景内衣橱：从 HUD「行囊」唤起，换装即时热切换到 3D 化身 -->
+		<OutfitWardrobe :visible="wardrobeOpen" @close="wardrobeOpen = false" @changed="onStreetWardrobeChanged" />
 
 		<!-- 街景切换器（牌匾翻转）-->
 		<view class="street-stage__switch">
@@ -124,7 +143,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, getCurrentInstance, onMounted, onUnmounted, ref, watch } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import StreetHud from '@/components/StreetHud.vue'
 import NpcOwl from '@/components/NpcOwl.vue'
@@ -137,7 +156,7 @@ import FallingLeaves from '@/components/FallingLeaves.vue'
 import GateTransition from '@/components/GateTransition.vue'
 import streetScenes from '@/common/data/streets.js'
 import { roleList } from '@/common/data/roles.js'
-import { getStorage, patchStorageObject, STORAGE_KEYS } from '@/common/utils/storage.js'
+import { getStorage, patchStorageObject, hasSelectedRole, STORAGE_KEYS } from '@/common/utils/storage.js'
 import { getLevelMeta, getLevelProgress } from '@/common/utils/level.js'
 import { playBGM, stopBGM, playSFX, SFX, BGM } from '@/common/utils/audio.js'
 import {
@@ -166,7 +185,11 @@ import {
 import { syncAchievementUnlocks } from '@/common/utils/achievements.js'
 import { getCurrentPhase } from '@/common/utils/phase.js'
 import { getContextualNpcCue } from '@/common/utils/npc-cue.js'
+import { getEquippedCostumeSkin } from '@/common/data/costumes.js'
+import { loadingTips, poiDeepLines } from '@/common/data/culture-tips.js'
+import { toggleFavoritePoi, isFavoritePoi, getJournalNote, setJournalNote } from '@/common/utils/journal.js'
 import MiniMap from '@/components/MiniMap.vue'
+import OutfitWardrobe from '@/components/OutfitWardrobe.vue'
 
 const statusLabelMap = { nearby: '已靠近', discoverable: '待点亮', quest: '主线热点', hot: '必看地标', route: '顺路可达' }
 
@@ -200,6 +223,8 @@ const plaqueFlipping = ref(false)
 const currentPhase = ref(getCurrentPhase())
 const playerWorldPos = ref({ x: 0, z: 10 })
 const playerHeading = ref(0)
+const wardrobeOpen = ref(false)
+const journalTick = ref(0) // 收藏/札记写入后自增，驱动 poiFavorited/poiNote 重算（数据在 storage，非响应式）
 let phaseWatchTimer = null
 
 /* 逻辑层 → renderjs 的唯一通道：响应式命令对象，renderjs 用 :change 观察其变化
@@ -238,6 +263,9 @@ const streetMap = streetScenes.reduce((map, item, index) => {
 const currentStreet = computed(() => streetScenes[currentStreetIndex.value] || streetScenes[0])
 const streetPois = computed(() => getScenePoiList(currentStreet.value.id, { trackedQuest: trackedQuest.value }).sort((a, b) => a.distance - b.distance))
 const activePoi = computed(() => streetPois.value.find((item) => item.id === activePoiId.value) || null)
+/* 当前 POI 的收藏/札记态（journalTick 变化时重算）。 */
+const poiFavorited = computed(() => { journalTick.value; return activePoiId.value ? isFavoritePoi(activePoiId.value) : false })
+const poiNote = computed(() => { journalTick.value; return activePoiId.value ? getJournalNote(activePoiId.value) : '' })
 const levelMeta = computed(() => getLevelMeta(userProgress.value.exp || 0))
 const silverKey = computed(() => Number(userProgress.value.silverKey || 0))
 const userScore = computed(() => Number(userProgress.value.score || 0))
@@ -255,6 +283,7 @@ const entranceCopy = computed(() => {
 	return {
 		title: currentStreet.value.title,
 		desc: currentStreet.value.subtitle,
+		kicker: '世界文化遗产 · 晋商故里',
 		npc: role ? `晋小鸦已替你备好 ${role.name} 的第一段入城线索。` : '晋小鸦已在街口等你。'
 	}
 })
@@ -323,6 +352,23 @@ function serializePhase(phase) {
 		exposure: phase.exposure,
 		lanternsLit: phase.lanternsLit,
 		fallingType: phase.fallingType
+	}
+}
+
+/* 「画面特效」总开关：关闭则 renderjs 跳过 Bloom 后处理（直接渲染），既让设置真实生效，也给低端机降负载。 */
+function readEffectsEnabled() {
+	return getStorage(STORAGE_KEYS.gameSettings, {}).enableEffect !== false
+}
+
+/* 统一构造下发给 renderjs 的场景载荷（init / loadScene 共用，便于一处补齐特效开关与化身皮肤等跨端字段）。 */
+function buildScenePayload() {
+	return {
+		streetData: currentStreet.value,
+		pois: streetPois.value,
+		questTargetPoiId: questTargetPoiId.value,
+		phase: serializePhase(currentPhase.value),
+		effectsEnabled: readEffectsEnabled(),
+		playerSkin: getEquippedCostumeSkin(userProfile.value.roleId)
 	}
 }
 
@@ -455,12 +501,7 @@ function initScene() {
 	loadStage.value = '正在准备街景数据…'
 	initAttempts = 0
 	lastSceneCmdAction = 'init'
-	lastSceneCmdPayload = {
-		streetData: currentStreet.value,
-		pois: streetPois.value,
-		questTargetPoiId: questTargetPoiId.value,
-		phase: serializePhase(currentPhase.value)
-	}
+	lastSceneCmdPayload = buildScenePayload()
 	armLoadWatchdog()
 	sendToRenderjs('init', lastSceneCmdPayload)
 }
@@ -471,12 +512,7 @@ function loadCurrentScene() {
 	loadStage.value = '正在切换街景…'
 	initAttempts = 0
 	lastSceneCmdAction = 'loadScene'
-	lastSceneCmdPayload = {
-		streetData: currentStreet.value,
-		pois: streetPois.value,
-		questTargetPoiId: questTargetPoiId.value,
-		phase: serializePhase(currentPhase.value)
-	}
+	lastSceneCmdPayload = buildScenePayload()
 	armLoadWatchdog()
 	sendToRenderjs('loadScene', lastSceneCmdPayload)
 	const result = advanceQuestByEvent(EVENT_TYPES.sceneLoaded, { sceneId: currentStreet.value.id })
@@ -743,14 +779,48 @@ function closePoi() {
 	activePoiId.value = ''
 }
 
+/* 收藏当前 POI（行旅册「心头好」）。 */
+function toggleFav() {
+	if (!activePoi.value) return
+	const r = toggleFavoritePoi(activePoi.value.id)
+	journalTick.value++
+	playSFX(SFX.REWARD)
+	uni.showToast({ title: r.favorited ? '已收入心头好' : '已取消收藏', icon: 'none' })
+}
+
+/* 为当前 POI 写/改一条私人札记（uni.showModal 可编辑输入；≤60 字）。 */
+function editNote() {
+	if (!activePoi.value) return
+	const poiId = activePoi.value.id
+	uni.showModal({
+		title: `札记 · ${activePoi.value.name}`,
+		editable: true,
+		placeholderText: '写一句此处的心得（≤60 字）',
+		content: getJournalNote(poiId),
+		success: (res) => {
+			if (!res.confirm) return
+			setJournalNote(poiId, res.content || '')
+			journalTick.value++
+			uni.showToast({ title: '已记入行旅册', icon: 'none' })
+		}
+	})
+}
+
 function handleHudAction(action) {
 	if (action === 'inventory') {
-		uni.showToast({ title: '行囊：稍后开放', icon: 'none' })
+		// 行囊 → 衣橱：街景内换装，确认后即时热切换到 3D 化身（无需重进街景）
+		wardrobeOpen.value = true
 	} else if (action === 'quest') {
 		uni.switchTab({ url: '/pages/user/user' })
 	} else if (action === 'settings') {
 		uni.navigateTo({ url: '/pages_game/dialog/dialog' })
 	}
+}
+
+/* 街景内换装回调：把新装备的化身皮肤热下发给 renderjs，立刻重建玩家化身（不重载整场景）。 */
+function onStreetWardrobeChanged() {
+	userProfile.value = getStorage(STORAGE_KEYS.userProfile, {})
+	sendToRenderjs('reskinPlayer', { playerSkin: getEquippedCostumeSkin(userProfile.value.roleId) })
 }
 
 function switchStreet(direction) {
@@ -826,6 +896,14 @@ function playEntranceAnimation() {
 
 onLoad(() => {
 	try {
+		// 身份守卫：街景是主线核心场景，必须已择身份才可进入。无 roleId 直接进来（深链 / 异常重置）会让化身退化为「客」、
+		// 角色加成与支线全部失效。无身份则退回启动页重新择身份。
+		const guardProfile = getStorage(STORAGE_KEYS.userProfile, {})
+		if (!hasSelectedRole(guardProfile)) {
+			uni.reLaunch({ url: '/pages_game/splash/splash' })
+			return
+		}
+
 		markPageVisit('street', { returnPage: '/pages_game/street/street' })
 		rememberReturnContext('/pages_game/street/street', '')
 		uni.hideTabBar()
@@ -884,6 +962,15 @@ onUnmounted(() => {
 /* 显式暴露给 renderjs 的 $ownerInstance.callMethod('handleRenderMsg') 调用：
    确保 Vue3 <script setup> 下回传通道可达，不依赖编译器隐式暴露（否则 render-ready 可能永远到不了逻辑层）。 */
 defineExpose({ handleRenderMsg })
+
+/* H5(vue3) 关键修复：uni-h5 的 callMethod 实现是 `this.$vm[funcName]`，即在「页面公共实例代理」上找方法；
+   而 <script setup> 里 defineExpose 的方法只进 instance.exposed、不在公共代理上，故 H5 端 callMethod 静默落空、
+   renderjs→逻辑层桥彻底失效（render-ready/poi/player-move 全到不了，加载层只能靠 14s 兜底收起）。
+   这里把 handleRenderMsg 直接挂到实例代理上，让 callMethod 能命中。APP 端走 ownerId/JSBridge 路径，不受影响。 */
+const __inst = getCurrentInstance()
+if (__inst && __inst.proxy) {
+	__inst.proxy.handleRenderMsg = handleRenderMsg
+}
 </script>
 
 <script module="render" lang="renderjs">
@@ -913,6 +1000,15 @@ let wasMoving = false
 let currentPhaseData = null
 let ownerInstanceRef = null
 let resizeHandlerRef = null
+/* 复用对象，杜绝每帧分配：相机跟随目标向量（原先 animate 每帧 new THREE.Vector3，60fps 下每分钟 ~3600 次分配 → GC 抖动）。*/
+let cameraTargetVec = null
+/* 摇杆监听清理句柄：createJoystick 绑定时赋值，dispose/reinit 时调用，避免重复进入时监听堆叠（僵尸监听泄漏）。*/
+let joystickCleanup = null
+/* 画面特效（Bloom 后处理）总开关：由逻辑层依 gameSettings.enableEffect 下发。关闭则直接渲染、跳过 composer，
+   既尊重「画面特效」设置，也给低端机一条降负载逃生路。*/
+let effectsEnabled = true
+/* 化身皮肤：由逻辑层依已装备服饰下发（body/head/hat 颜色等），createPlayer 据此着色玩家化身。null 则用默认配色。*/
+let playerSkinData = null
 
 /* 程序化纹理缓存：跨场景复用，避免每次 loadScene 重复生成上传 GPU。
    只在 dispose() 里统一释放，clearScene 不动它们（material.dispose 不级联 texture）。*/
@@ -1188,32 +1284,37 @@ export default {
 			scene.background = this.makeSkyTexture(topHex, botHex, isNight)
 		},
 		/* 逻辑层 → renderjs 命令入口（:change:sceneCmd 观察器）。
-		   observer 内 this 不可靠，必须用传入的 instance 调用方法。 */
+		   observer 内 this 不可靠，必须用传入的 instance 调用方法。
+		   跨端：APP 端方法挂在第 4 参 instance 上；H5(vue3) 端观察器是组件 Proxy 的方法、挂在 this 上而 instance 不带方法。
+		   取「确实带 bootScene 的那个」作为方法上下文（ctx），两端通用。 */
 		onSceneCmd(newVal, oldVal, ownerInstance, instance) {
 			if (ownerInstance) { ownerInstanceRef = ownerInstance; flushEmits() }
 			if (!newVal || !newVal.action) return
 			const action = newVal.action
 			const data = newVal.data || {}
+			const ctx = (this && typeof this.bootScene === 'function') ? this : instance
 			try {
 				if (action === 'init') {
 					if (!isInitialized) {
 						isInitialized = true
-						instance.bootScene(data)
+						ctx.bootScene(data)
 					}
 				} else if (action === 'reinit') {
 					// watchdog 重试：先彻底拆除旧场景（dispose 会移除残留 canvas 并把 isInitialized 复位），再重新引导。
-					instance.dispose()
+					ctx.dispose()
 					isInitialized = true
-					instance.bootScene(data)
+					ctx.bootScene(data)
 				} else if (action === 'loadScene') {
-					instance.loadScene(data)
+					ctx.loadScene(data)
 					/* 换幕 / 路由重建完成即发 render-ready 隐藏加载层：动画循环在首次 init 时已启动，
 					   重建后的场景下一帧即呈现；首次 init 的 render-ready 仍由 initScene 末尾发出，故首屏不闪。*/
 					emit('render-ready')
 				} else if (action === 'highlightPoi') {
-					instance.highlightQuestPoi(data.poiId)
+					ctx.highlightQuestPoi(data.poiId)
 				} else if (action === 'applyPhase') {
-					instance.applyPhase(data.phase)
+					ctx.applyPhase(data.phase)
+				} else if (action === 'reskinPlayer') {
+					ctx.reskinPlayer(data.playerSkin)
 				}
 			} catch (err) {
 				// 观察器内任何同步抛错都转成终态信号，避免逻辑层永远收不到 ready/error 而卡「张望」。
@@ -1287,6 +1388,10 @@ export default {
 				return
 			}
 
+			// 画面特效开关 + 化身皮肤：由逻辑层随载荷下发，先存模块态供 createPlayer / 后处理分支读取。
+			effectsEnabled = data.effectsEnabled !== false
+			playerSkinData = data.playerSkin || null
+
 			// 渲染目标用普通容器 <view id="street-canvas">，让 THREE 自建 WebGL canvas 再挂入；
 			// 绝不能把 <canvas type="2d"> 喂给 new WebGLRenderer({canvas})——取不到 WebGL 上下文会同步抛错（「一直在张望」根因之一）。
 			const container = document.getElementById('street-canvas')
@@ -1328,15 +1433,20 @@ export default {
 			renderer.domElement.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;'
 			container.appendChild(renderer.domElement)
 
-			/* 后处理（Bloom）：失败则降级为直接渲染，绝不因后处理异常而黑屏或卡死 */
-			try {
-				composer = new THREE.EffectComposer(renderer)
-				composer.addPass(new THREE.RenderPass(scene, camera))
-				bloomPassRef = new THREE.UnrealBloomPass(new THREE.Vector2(width, height), phase?.bloomStrength || 0.85, 0.5, 0.6)
-				composer.addPass(bloomPassRef)
-			} catch (err) {
-				composer = null
-				bloomPassRef = null
+			/* 后处理（Bloom）：失败则降级为直接渲染，绝不因后处理异常而黑屏或卡死。
+			   「画面特效」关闭时直接跳过 composer，省下整条 Bloom pass 的逐帧开销（低端机降负载）。*/
+			composer = null
+			bloomPassRef = null
+			if (effectsEnabled) {
+				try {
+					composer = new THREE.EffectComposer(renderer)
+					composer.addPass(new THREE.RenderPass(scene, camera))
+					bloomPassRef = new THREE.UnrealBloomPass(new THREE.Vector2(width, height), phase?.bloomStrength || 0.85, 0.5, 0.6)
+					composer.addPass(bloomPassRef)
+				} catch (err) {
+					composer = null
+					bloomPassRef = null
+				}
 			}
 
 			/* 横屏/尺寸变化时同步相机与渲染尺寸 */
@@ -1601,25 +1711,76 @@ export default {
 			})
 		},
 		createPlayer() {
+			// 化身按已装备服饰着色：body/head 必有，robe（长衫下摆）/hat（冠帽）/accent（足部光环）按服饰可选，
+			// 让「换装」在第一视角街景里真实可见。playerSkinData 为 null 时回退默认票号行客配色。
+			const skin = playerSkinData || {}
 			const group = new THREE.Group()
 
 			const body = new THREE.Mesh(
 				new THREE.CylinderGeometry(0.32, 0.38, 1.2, 8),
-				new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.72, flatShading: true })
+				new THREE.MeshStandardMaterial({ color: colorHex(skin.body, 0x8B4513), roughness: 0.72, flatShading: true })
 			)
 			body.position.y = 0.6
+			body.castShadow = true
 			group.add(body)
+
+			/* 长衫下摆：装备含 robe 时加一圈锥形裙摆，远看即知换了身衣裳 */
+			if (skin.robe) {
+				const robe = new THREE.Mesh(
+					new THREE.ConeGeometry(0.52, 0.95, 10, 1, true),
+					new THREE.MeshStandardMaterial({ color: colorHex(skin.robe, colorHex(skin.body, 0x8B4513)), roughness: 0.7, side: THREE.DoubleSide, flatShading: true })
+				)
+				robe.position.y = 0.5
+				group.add(robe)
+			}
 
 			const head = new THREE.Mesh(
 				new THREE.SphereGeometry(0.26, 10, 8),
-				new THREE.MeshStandardMaterial({ color: 0xD4A574, roughness: 0.6, flatShading: true })
+				new THREE.MeshStandardMaterial({ color: colorHex(skin.head, 0xD4A574), roughness: 0.6, flatShading: true })
 			)
 			head.position.y = 1.42
 			group.add(head)
 
+			/* 冠帽：装备含 hat 时戴一顶（账房瓜皮帽 / 镖师笠帽 / 书生纶巾等以颜色区分） */
+			if (skin.hat) {
+				const hat = new THREE.Mesh(
+					new THREE.ConeGeometry(0.3, 0.32, 10),
+					new THREE.MeshStandardMaterial({ color: colorHex(skin.hat, 0x2c2c2c), roughness: 0.6, flatShading: true })
+				)
+				hat.position.y = 1.74
+				group.add(hat)
+			}
+
+			/* 服饰光环：稀有服饰（accent）在足下加一圈发光环，凸显尊贵（夜里配合 Bloom 更亮） */
+			if (skin.accent) {
+				const halo = new THREE.Mesh(
+					new THREE.TorusGeometry(0.42, 0.05, 8, 22),
+					new THREE.MeshStandardMaterial({ color: colorHex(skin.accent, 0xFFD700), emissive: colorHex(skin.accent, 0xFFD700), emissiveIntensity: 0.85, flatShading: true })
+				)
+				halo.rotation.x = Math.PI / 2
+				halo.position.y = 0.07
+				group.add(halo)
+			}
+
 			group.position.set(0, 0, 10)
 			scene.add(group)
 			player = group
+		},
+		/* 热换装：按新皮肤重建玩家化身，不重载整场景；保留当前所在位置（不把玩家弹回出生点）。 */
+		reskinPlayer(skin) {
+			if (!scene) return
+			playerSkinData = skin || null
+			const prevPos = player ? { x: player.position.x, y: player.position.y, z: player.position.z } : null
+			if (player) {
+				scene.remove(player)
+				player.traverse((item) => {
+					if (item.geometry) item.geometry.dispose()
+					if (item.material) item.material.dispose()
+				})
+				player = null
+			}
+			this.createPlayer()
+			if (prevPos && player) player.position.set(prevPos.x, prevPos.y, prevPos.z)
 		},
 		createDecorations(streetData) {
 			/* 沿玩家可视区域均匀放置装饰物：石灯 / 古槐 / 旗幡 / 鼓 / 盆栽 / 石阶 / 招幌 / 风铃 */
@@ -1820,7 +1981,9 @@ export default {
 		},
 		createParticles(phase) {
 			const type = phase?.fallingType || 'leaf'
-			const count = type === 'firefly' ? 80 : 40
+			// 粒子数下调（firefly 80→50，其余 40→26）：animate 每帧对每个粒子做 sin/cos + 改写 position buffer 并整体上传 GPU，
+			// 是逐帧最重的一项。减量后视觉仍连贯，低端机帧时间明显下降。
+			const count = type === 'firefly' ? 50 : 26
 			const positions = new Float32Array(count * 3)
 			const colorStr = type === 'firefly' ? 0xfff3a0 : type === 'cherry' ? 0xffcad4 : 0xd4a574
 
@@ -1917,33 +2080,47 @@ export default {
 			const canvas = document.getElementById('street-canvas')
 			if (!canvas) return
 
+			// reinit 时先解绑上一轮，避免触摸监听重复堆叠（僵尸监听）。
+			if (joystickCleanup) { joystickCleanup(); joystickCleanup = null }
+
 			let isTouching = false
 			let touchStartX = 0
 			let touchStartY = 0
 
-			canvas.addEventListener('touchstart', (event) => {
+			const onTouchStart = (event) => {
 				const touch = event.touches[0]
 				if (touch.clientX < window.innerWidth * 0.4 && touch.clientY > window.innerHeight * 0.5) {
 					isTouching = true
 					touchStartX = touch.clientX
 					touchStartY = touch.clientY
 				}
-			})
-
-			canvas.addEventListener('touchmove', (event) => {
+			}
+			const onTouchMove = (event) => {
 				if (!isTouching) return
 				const touch = event.touches[0]
 				const dx = (touch.clientX - touchStartX) / 70
 				const dy = (touch.clientY - touchStartY) / 70
 				joystickInput.dx = Math.max(-1, Math.min(1, dx))
 				joystickInput.dy = Math.max(-1, Math.min(1, dy))
-			})
-
-			canvas.addEventListener('touchend', () => {
+			}
+			const onTouchEnd = () => {
 				isTouching = false
 				joystickInput.dx = 0
 				joystickInput.dy = 0
-			})
+			}
+
+			canvas.addEventListener('touchstart', onTouchStart)
+			canvas.addEventListener('touchmove', onTouchMove)
+			canvas.addEventListener('touchend', onTouchEnd)
+
+			// 句柄留给 dispose() 解绑：renderer.domElement 切场会重建，但监听挂在常驻容器 #street-canvas 上，必须显式移除。
+			joystickCleanup = () => {
+				canvas.removeEventListener('touchstart', onTouchStart)
+				canvas.removeEventListener('touchmove', onTouchMove)
+				canvas.removeEventListener('touchend', onTouchEnd)
+				joystickInput.dx = 0
+				joystickInput.dy = 0
+			}
 		},
 		highlightQuestPoi(targetPoiId) {
 			poiBeacons.forEach((beacon) => {
@@ -2012,8 +2189,9 @@ export default {
 					player.position.x = Math.max(-18, Math.min(18, player.position.x + joystickInput.dx * 4 * deltaTime))
 					player.position.z = Math.max(-18, Math.min(16, player.position.z + joystickInput.dy * 4 * deltaTime))
 					moveStepAccum += 1
-					// 节流上报：累计步数、每 ~110ms 汇报一次（含步数增量 steps），桥调用从 ~60→~9 次/秒，步数总量不变。
-					if (now - lastMoveEmit >= 110) {
+					// 节流上报：累计步数、每 ~150ms 汇报一次（含步数增量 steps），桥调用 ~60→~6.7 次/秒、MiniMap 同比少重渲，
+					// 步数总量与朝向解算不变（停步时补发最终坐标+残余步数）。
+					if (now - lastMoveEmit >= 150) {
 						emit('player-move', { x: player.position.x, z: player.position.z, steps: moveStepAccum })
 						moveStepAccum = 0
 						lastMoveEmit = now
@@ -2028,8 +2206,9 @@ export default {
 
 				if (camera && player) {
 					const target = player.position
-					const cameraTarget = new THREE.Vector3(target.x + 0.2, target.y + 6, target.z + 9)
-					camera.position.lerp(cameraTarget, 0.08)
+					if (!cameraTargetVec) cameraTargetVec = new THREE.Vector3()
+					cameraTargetVec.set(target.x + 0.2, target.y + 6, target.z + 9)
+					camera.position.lerp(cameraTargetVec, 0.08)
 					camera.lookAt(target.x, target.y + 1.3, target.z - 5)
 				}
 
@@ -2106,6 +2285,8 @@ export default {
 		},
 		dispose() {
 			if (animationId) cancelAnimationFrame(animationId)
+			// 解绑摇杆触摸监听（挂在常驻容器 #street-canvas 上，不随 canvas 重建而清，必须显式移除）。
+			if (joystickCleanup) { joystickCleanup(); joystickCleanup = null }
 			this.clearScene()
 			/* 释放程序化纹理缓存（共享纹理不在 clearScene 里清，统一在此释放） */
 			Object.keys(textureCache).forEach((k) => { if (textureCache[k]) textureCache[k].dispose() })
@@ -2348,6 +2529,18 @@ export default {
 	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
 }
 
+.street-stage__poi-story-deep {
+	display: block;
+	margin-top: 10rpx;
+	padding-top: 8rpx;
+	border-top: 1rpx dashed rgba(139, 69, 19, 0.25);
+	font-size: 20rpx;
+	line-height: 1.8;
+	color: rgba(74, 42, 24, 0.78);
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	font-style: italic;
+}
+
 .street-stage__poi-footer {
 	position: relative;
 	z-index: 1;
@@ -2362,6 +2555,60 @@ export default {
 	font-size: 20rpx;
 	color: rgba(110, 85, 65, 0.78);
 	letter-spacing: 2rpx;
+}
+
+/* 收藏 / 札记 工具 + 我的札记展示 */
+.street-stage__poi-tools {
+	display: flex;
+	gap: 12rpx;
+}
+
+.street-stage__poi-tool {
+	padding: 8rpx 18rpx;
+	border: 1rpx solid rgba(139, 69, 19, 0.4);
+	border-radius: 999rpx;
+	font-size: 20rpx;
+	letter-spacing: 2rpx;
+	color: #6b3510;
+	background: rgba(212, 165, 116, 0.12);
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	transition: transform 0.16s ease;
+}
+
+.street-stage__poi-tool:active { transform: scale(0.94); }
+
+.street-stage__poi-tool--on {
+	color: $py-paper-warm;
+	background: linear-gradient(135deg, #c41e3a 0%, #8b1a2e 100%);
+	border-color: rgba(255, 220, 220, 0.5);
+}
+
+.street-stage__poi-mynote {
+	position: relative;
+	z-index: 1;
+	margin-top: 18rpx;
+	padding: 16rpx 20rpx;
+	background: rgba(196, 30, 58, 0.06);
+	border-left: 4rpx solid $py-red;
+	border-radius: 0 8rpx 8rpx 0;
+}
+
+.street-stage__poi-mynote-label {
+	display: block;
+	font-size: 16rpx;
+	letter-spacing: 6rpx;
+	color: $py-red;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	font-weight: 700;
+}
+
+.street-stage__poi-mynote-text {
+	display: block;
+	margin-top: 6rpx;
+	font-size: 22rpx;
+	line-height: 1.8;
+	color: #4a2a18;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
 }
 
 .street-stage__poi-action {

@@ -161,7 +161,7 @@ function getRoleImage(roleId) {
 function switchRole(direction) {
 	if (isSubmitting.value) return
 	currentIndex.value = (currentIndex.value + direction + roleList.length) % roleList.length
-	// 此处铜铃声 ding 留给后期接入
+	playSFX(SFX.BUTTON_CLICK) // 切换身份的铜铃轻响（缺素材时静默兜底）
 }
 
 function confirmRole() {

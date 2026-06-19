@@ -18,6 +18,12 @@
 			<text class="brush-loader__text">{{ text || '晋小鸦正在张望…' }}</text>
 			<text v-if="progress > 0" class="brush-loader__pct">{{ Math.floor(progress) }}%</text>
 
+			<!-- 文化提示轮播：加载时滚动展示古城拾遗（遮蔽加载耗时 + 传递文旅文化）。 -->
+			<view v-if="currentTip" class="brush-loader__tip">
+				<text class="brush-loader__tip-label">— 古 城 拾 遗 —</text>
+				<text :key="tipIndex" class="brush-loader__tip-text">{{ currentTip }}</text>
+			</view>
+
 			<!-- 加载阶段面包屑：卡住时这行文字会停在最后到达的阶段，便于定位是哪一步失败（视图就绪 / 加载库 X/7 / 搭建场景…）。 -->
 			<text v-if="stage" class="brush-loader__stage-text">{{ stage }}</text>
 			<!-- 提示 / 错误行：加载较慢或 renderjs 报错时把信息留在屏幕上，而非一闪而过的 toast。 -->
@@ -29,16 +35,32 @@
 </template>
 
 <script setup>
-defineProps({
+import { ref, computed, watch, onUnmounted } from 'vue'
+
+const props = defineProps({
 	visible:    { type: Boolean, default: false },
 	progress:   { type: Number, default: 0 },
 	text:       { type: String, default: '' },
 	stage:      { type: String, default: '' },
 	hint:       { type: String, default: '' },
 	showEscape: { type: Boolean, default: false },
-	inline:     { type: Boolean, default: false }
+	inline:     { type: Boolean, default: false },
+	tips:       { type: Array, default: () => [] } // 文化提示轮播：加载时滚动展示，遮蔽耗时 + 传递文旅文化
 })
 defineEmits(['escape'])
+
+/* 文化提示轮播：每 ~2.8s 切一条；仅在可见时计时，卸载/隐藏即清，杜绝遗留定时器。 */
+const tipIndex = ref(0)
+let tipTimer = null
+const currentTip = computed(() => (props.tips && props.tips.length) ? props.tips[tipIndex.value % props.tips.length] : '')
+function stopTipRotation() { if (tipTimer) { clearInterval(tipTimer); tipTimer = null } }
+function startTipRotation() {
+	stopTipRotation()
+	if (!props.tips || props.tips.length <= 1) return
+	tipTimer = setInterval(() => { tipIndex.value = (tipIndex.value + 1) % props.tips.length }, 2800)
+}
+watch(() => props.visible, (v) => { if (v) { startTipRotation() } else { stopTipRotation() } }, { immediate: true })
+onUnmounted(stopTipRotation)
 </script>
 
 <style lang="scss" scoped>
@@ -162,6 +184,39 @@ defineEmits(['escape'])
 	letter-spacing: 2rpx;
 	color: rgba(212, 165, 116, 0.55);
 	font-family: 'Noto Serif SC', 'STSong', serif;
+}
+
+/* ===== 文化提示轮播 ===== */
+.brush-loader__tip {
+	margin-top: 8rpx;
+	max-width: 600rpx;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 8rpx;
+	padding: 0 30rpx;
+}
+
+.brush-loader__tip-label {
+	font-size: 16rpx;
+	letter-spacing: 6rpx;
+	color: rgba(212, 165, 116, 0.55);
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+}
+
+.brush-loader__tip-text {
+	font-size: 21rpx;
+	line-height: 1.7;
+	text-align: center;
+	color: rgba(245, 240, 232, 0.9);
+	letter-spacing: 1rpx;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	animation: tipFade 0.6s ease both;
+}
+
+@keyframes tipFade {
+	0%   { opacity: 0; transform: translateY(8rpx); }
+	100% { opacity: 1; transform: translateY(0); }
 }
 
 .brush-loader__hint {

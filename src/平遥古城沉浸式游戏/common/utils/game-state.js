@@ -116,6 +116,10 @@ export function markPoiVisited(poiId = '') {
 	const progress = getUserProgress()
 	const discoveredPoiIds = Array.isArray(progress.discoveredPoiIds) ? progress.discoveredPoiIds : []
 	const visitedPoiIds = Array.isArray(progress.visitedPoiIds) ? progress.visitedPoiIds : []
+	// 已记录则直接返回，省去同一 POI 反复进入（来回走动 / 重进半径）时的重复写盘。
+	if (visitedPoiIds.includes(poiId) && discoveredPoiIds.includes(poiId)) {
+		return progress
+	}
 	return patchStorageObject(STORAGE_KEYS.userProgress, {
 		discoveredPoiIds: [...new Set([...discoveredPoiIds, poiId])],
 		visitedPoiIds: [...new Set([...visitedPoiIds, poiId])]

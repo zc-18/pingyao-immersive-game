@@ -292,6 +292,11 @@ export function completeQuest(questId) {
 	if (!quest || !checkQuestComplete(questId)) return null
 
 	const questData = getQuestData()
+	// 幂等保护：已在 completedQuests 则不再发奖。completeQuest 仅在 checkQuestComplete 为真时发奖并移出 activeQuests，
+	// 但 questProgress[questId] 仍保留满目标——若同一通关事件被二次派发（多事件处理器/竞态），第二次 checkQuestComplete
+	// 仍为真而重复发奖。此守卫与 claimQuestReward 的去重一致，杜绝双倍 银钥/经验/积分。
+	if (questData.completedQuests.includes(questId)) return null
+
 	const profile = getStorage(STORAGE_KEYS.userProfile, {})
 	const progress = getStorage(STORAGE_KEYS.userProgress, {})
 	const roleBonus = quest.roleBonus?.[profile.roleId] || {}

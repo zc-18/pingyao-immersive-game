@@ -95,7 +95,7 @@
 					</view>
 
 					<!-- 玩家位置（红印章 + 在此小红旗）-->
-					<view class="map-stage__player" :style="{ left: '54%', top: '52%' }">
+					<view class="map-stage__player" :style="{ left: playerMapPos.x + '%', top: playerMapPos.y + '%' }">
 						<view class="map-stage__player-flag">
 							<text class="map-stage__player-flag-text">在此</text>
 							<view class="map-stage__player-pole"></view>
@@ -213,7 +213,7 @@ import FallingLeaves from '@/components/FallingLeaves.vue'
 import EmptyOwl from '@/components/EmptyOwl.vue'
 import { getGameSnapshot, getScenePoiList, markPageVisit, rememberReturnContext } from '@/common/utils/game-state.js'
 import { getPoiStatusText, isUnlockedPoiStatus, getPoiShortLabel } from '@/common/utils/poi.js'
-import { poiList } from '@/common/data/poi-list.js'
+import { poiList, poiMap } from '@/common/data/poi-list.js'
 import { getUserProgress } from '@/common/utils/storage.js'
 
 const snapshot = ref(getGameSnapshot())
@@ -249,7 +249,7 @@ const cityPoiList = computed(() => {
 		// 不能用 poi.baseStatus 兜底——poi-list 里多处 POI 自带 hot/route/quest 等可解锁基态，
 		// 会让从未到访的县衙/票号/明清街等被误判"已探"，与成就/我的页的真实探索口径冲突。
 		let status = 'discoverable'
-		if (visited.has(poi.id)) status = 'nearby'
+		if (visited.has(poi.id)) status = 'completed'
 		else if (discovered.has(poi.id)) status = 'route'
 		return {
 			...poi,
@@ -271,6 +271,13 @@ const mapPoiList = computed(() =>
 const selectedPoi = computed(() => mapPoiList.value.find((item) => item.id === selectedPoiId.value) || null)
 const unlockedPoiCount = computed(() => mapPoiList.value.filter((item) => item.isUnlocked).length)
 const unlockedPoiList = computed(() => mapPoiList.value.filter((item) => item.isUnlocked))
+
+/* 玩家在城图上的位置：全城视野落在当前街景代表点位（heroPoi 的城图坐标），不再恒在死中心；本街视野居中即可。 */
+const playerMapPos = computed(() => {
+	if (!showAllPois.value) return { x: 54, y: 52 }
+	const hero = poiMap[snapshot.value.currentStreet?.heroPoiId]
+	return hero?.mapPosition || { x: 50, y: 50 }
+})
 
 const routeSteps = computed(() => mapPoiList.value
 	.filter((item) => item.status === 'quest' || item.status === 'route' || item.status === 'hot')
@@ -720,6 +727,7 @@ function toggleScope() {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
+	transition: left 0.5s ease, top 0.5s ease;
 }
 
 .map-stage__player-flag {

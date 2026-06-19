@@ -159,6 +159,7 @@
 						class="ledger__crest"
 						:class="{ 'ledger__crest--lit': ach.lit }"
 						:style="{ animationDelay: 0.05 * idx + 's' }"
+						@tap="showCrestHint(ach)"
 					>
 						<view class="ledger__crest-seal">
 							<text class="ledger__crest-glyph">{{ ach.lit ? ach.glyph : '？' }}</text>
@@ -186,12 +187,37 @@
 				</view>
 			</view>
 
+			<!-- ====== 册页·其五：心头好与行旅札记 ====== -->
+			<view class="ledger__page ledger__page--journal">
+				<view class="ledger__page-tab"><text>伍</text></view>
+				<text class="ledger__page-eyebrow">— 心 头 好 与 札 记 —</text>
+				<view v-if="journalEntries.length" class="ledger__journal">
+					<view v-for="entry in journalEntries" :key="entry.poiId" class="ledger__journal-item">
+						<view class="ledger__journal-stamp" :class="{ 'ledger__journal-stamp--fav': entry.favorited }">
+							<text>{{ entry.shortName }}</text>
+						</view>
+						<view class="ledger__journal-body">
+							<view class="ledger__journal-head">
+								<text class="ledger__journal-name">{{ entry.name }}</text>
+								<text v-if="entry.favorited" class="ledger__journal-fav">★</text>
+							</view>
+							<text v-if="entry.note" class="ledger__journal-note">「{{ entry.note }}」</text>
+							<text v-else class="ledger__journal-blank">— 已收藏 · 尚无札记 —</text>
+						</view>
+					</view>
+				</view>
+				<text v-else class="ledger__journal-hint">街景里点开地标，「☆ 收藏」或「✎ 札记」，这里便记下你的心头好。</text>
+			</view>
+
 			<!-- 末页题跋（心境）-->
 			<view class="ledger__colophon">
 				<view class="ledger__colophon-seal"><text>跋</text></view>
 				<text class="ledger__colophon-text">「{{ mottoText }}」</text>
 			</view>
 		</view>
+
+		<!-- 衣橱（换装系统）-->
+		<OutfitWardrobe :visible="wardrobeOpen" @close="wardrobeOpen = false" @changed="onWardrobeChanged" />
 	</view>
 </template>
 
@@ -201,14 +227,18 @@ import { onShow } from '@dcloudio/uni-app'
 import FallingLeaves from '@/components/FallingLeaves.vue'
 import DailyCheckIn from '@/components/DailyCheckIn.vue'
 import AchievementWall from '@/components/AchievementWall.vue'
+import OutfitWardrobe from '@/components/OutfitWardrobe.vue'
 import { getGameSnapshot, markPageVisit, rememberReturnContext } from '@/common/utils/game-state.js'
 import { syncAchievementUnlocks } from '@/common/utils/achievements.js'
 import { STORAGE_KEYS, getStorage, patchStorageObject } from '@/common/utils/storage.js'
 import { syncAudioSettings, playSFX, SFX } from '@/common/utils/audio.js'
+import { getJournalEntries } from '@/common/utils/journal.js'
 
 const snapshot = ref(getGameSnapshot())
 const settingsOpen = ref(false)
 const settings = ref({ music: true, effect: true })
+const wardrobeOpen = ref(false)
+const journalEntries = ref(getJournalEntries())
 
 /* 设置抽屉与 gameSettings 持久化绑定（此前仅为内存 ref，开关既不读也不写 storage）。 */
 function loadSettings() {
@@ -273,14 +303,23 @@ const currentRankIdx = computed(() => {
 const achievementList = computed(() => {
 	const completed = snapshot.value.progress.questData?.completedQuests || []
 	return [
-		{ title: '票号旧巷', glyph: '票', lit: completed.includes('main-rishengchang') },
-		{ title: '县衙前街', glyph: '衙', lit: completed.includes('main-county-office') },
-		{ title: '市集十字', glyph: '市', lit: completed.includes('main-market-crossing') },
-		{ title: '初入古城', glyph: '入', lit: snapshot.value.progress.discoveredPoiIds?.length > 0 },
-		{ title: '夜话晋小鸦', glyph: '话', lit: !!snapshot.value.runtime?.lastNpcTopic },
-		{ title: '行旅启程', glyph: '行', lit: (snapshot.value.progress.steps || 0) > 0 }
+		{ title: '票号旧巷', glyph: '票', lit: completed.includes('main-rishengchang'), hint: '完成日升昌入城主线点亮' },
+		{ title: '县衙前街', glyph: '衙', lit: completed.includes('main-county-office'), hint: '完成县衙前街主线点亮' },
+		{ title: '市集十字', glyph: '市', lit: completed.includes('main-market-crossing'), hint: '完成市集十字主线点亮' },
+		{ title: '初入古城', glyph: '入', lit: snapshot.value.progress.discoveredPoiIds?.length > 0, hint: '点亮任意一处古城点位' },
+		{ title: '夜话晋小鸦', glyph: '话', lit: !!snapshot.value.runtime?.lastNpcTopic, hint: '与晋小鸦完成一次讲解' },
+		{ title: '行旅启程', glyph: '行', lit: (snapshot.value.progress.steps || 0) > 0, hint: '在街景里迈出第一步' }
 	]
 })
+
+/* 点击勋印查看其点亮条件 / 状态（成就详情见上方「勋印之墙」，此处为行旅里程碑速览）。 */
+function showCrestHint(ach) {
+	uni.showToast({
+		title: ach.lit ? `${ach.title} · 已点亮` : `${ach.title} · ${ach.hint}`,
+		icon: 'none',
+		duration: 2000
+	})
+}
 
 const steleList = computed(() => [
 	{ label: '故事 · 篇', value: storyCount.value },
@@ -296,6 +335,7 @@ onShow(() => {
 	rememberReturnContext('/pages_game/street/street', '/pages/user/user')
 	const sync = syncAchievementUnlocks()
 	snapshot.value = getGameSnapshot()
+	journalEntries.value = getJournalEntries()
 	loadSettings()
 	achvRefreshKey.value++
 	checkInRef.value?.refresh?.()
@@ -308,7 +348,12 @@ onShow(() => {
 })
 
 function tryOutfit() {
-	uni.showToast({ title: '换装系统稍后开放', icon: 'none' })
+	wardrobeOpen.value = true
+}
+
+/* 换装后刷新快照（等级/银钥可能因购买变化），衣橱内自身已即时刷新。 */
+function onWardrobeChanged() {
+	snapshot.value = getGameSnapshot()
 }
 
 function confirmReset() {
@@ -1280,9 +1325,95 @@ function confirmReset() {
 	text-align: center;
 }
 
+/* ===== 册页·其五：心头好与札记 ===== */
+.ledger__page--journal { animation-delay: 0.72s; }
+
+.ledger__journal {
+	display: flex;
+	flex-direction: column;
+	gap: 12rpx;
+	margin-top: 6rpx;
+}
+
+.ledger__journal-item {
+	display: flex;
+	align-items: flex-start;
+	gap: 16rpx;
+	padding: 12rpx 14rpx;
+	background: rgba(255, 250, 240, 0.6);
+	border: 1rpx solid rgba(110, 85, 65, 0.2);
+	border-radius: 6rpx;
+}
+
+.ledger__journal-stamp {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 52rpx;
+	height: 52rpx;
+	flex-shrink: 0;
+	border: 3rpx solid rgba(110, 85, 65, 0.5);
+	border-radius: 6rpx;
+	transform: rotate(-5deg);
+	color: rgba(110, 85, 65, 0.85);
+	font-size: 24rpx;
+	font-weight: 700;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	background: rgba(110, 85, 65, 0.06);
+}
+
+.ledger__journal-stamp--fav {
+	border-color: $py-red;
+	color: $py-red;
+	background: rgba(196, 30, 58, 0.08);
+}
+
+.ledger__journal-body { flex: 1; min-width: 0; }
+
+.ledger__journal-head {
+	display: flex;
+	align-items: center;
+	gap: 10rpx;
+}
+
+.ledger__journal-name {
+	font-size: 23rpx;
+	font-weight: 700;
+	color: #4a2a18;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+	letter-spacing: 2rpx;
+}
+
+.ledger__journal-fav { font-size: 20rpx; color: $py-red; }
+
+.ledger__journal-note {
+	display: block;
+	margin-top: 4rpx;
+	font-size: 21rpx;
+	line-height: 1.7;
+	color: #6b3510;
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+}
+
+.ledger__journal-blank {
+	display: block;
+	margin-top: 4rpx;
+	font-size: 18rpx;
+	color: rgba(110, 85, 65, 0.5);
+}
+
+.ledger__journal-hint {
+	display: block;
+	margin-top: 8rpx;
+	font-size: 19rpx;
+	line-height: 1.7;
+	text-align: center;
+	color: rgba(110, 85, 65, 0.6);
+	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+}
+
 /* 通用动画 */
 @keyframes fadeInUp {
 	0%   { opacity: 0; transform: translateY(20rpx); }
 	100% { opacity: 1; transform: translateY(0); }
-}
-</style>
+}</style>

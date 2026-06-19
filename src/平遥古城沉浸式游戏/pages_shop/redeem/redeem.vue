@@ -138,13 +138,17 @@
 
 				<!-- 操作按钮 -->
 				<view class="redeem-stage__voucher-actions">
-					<view class="redeem-stage__voucher-action" @tap="handleTicketAction('票券已收入行旅账本')">
-						<text>收入账本</text>
+					<view
+						class="redeem-stage__voucher-action"
+						:class="{ 'redeem-stage__voucher-action--done': orderStatus.key !== 'unused' }"
+						@tap="markUsed"
+					>
+						<text>{{ orderStatus.key === 'used' ? '已 核 销' : orderStatus.key === 'expired' ? '已 过 期' : '在 店 核 销' }}</text>
 					</view>
-					<view class="redeem-stage__voucher-action redeem-stage__voucher-action--accent" @tap="handleTicketAction(`已记住 ${orderDetail.merchantName}`)">
+					<view class="redeem-stage__voucher-action redeem-stage__voucher-action--accent" @tap="goMerchant">
 						<text>前往商户</text>
 					</view>
-					<view class="redeem-stage__voucher-action" @tap="handleTicketAction(`商户电话：${orderDetail.merchantPhone}`)">
+					<view class="redeem-stage__voucher-action" @tap="contactMerchant">
 						<text>联系商户</text>
 					</view>
 				</view>
@@ -166,7 +170,8 @@ import { computed, ref } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
 import FallingLeaves from '@/components/FallingLeaves.vue'
 import EmptyOwl from '@/components/EmptyOwl.vue'
-import { getOrderStatus, getRedeemOrderById, getRedeemOrders } from '@/common/data/shop-items.js'
+import { getOrderStatus, getRedeemOrderById, getRedeemOrders, updateRedeemOrderStatus } from '@/common/data/shop-items.js'
+import { playSFX, SFX } from '@/common/utils/audio.js'
 
 const orderDetail = ref(null)
 const requestedOrderId = ref('')
@@ -220,6 +225,56 @@ function loadOrder() {
 
 function handleTicketAction(message) {
 	uni.showToast({ title: message, icon: 'none' })
+}
+// 注：handleTicketAction 已被下列三个真实动作（markUsed / goMerchant / contactMerchant）取代，保留以防其它引用。
+
+/* 在店核销：把凭证状态 unused → used，完成订单生命周期；已核销/过期则提示，不重复操作。 */
+function markUsed() {
+	if (!orderDetail.value) return
+	if (orderStatus.value.key !== 'unused') {
+		uni.showToast({ title: orderStatus.value.key === 'used' ? '此票已核销' : '此票已过期', icon: 'none' })
+		return
+	}
+	uni.showModal({
+		title: '在店核销',
+		content: '确认已在商户出示此码并核销？核销后凭证将标记为「已核销」。',
+		success: (res) => {
+			if (!res.confirm) return
+			const ok = updateRedeemOrderStatus(orderDetail.value.orderId, 'used')
+			if (ok) {
+				playSFX(SFX.COIN)
+				loadOrder()
+				uni.showToast({ title: '已核销 · 路引仍记在账本', icon: 'none' })
+			} else {
+				uni.showToast({ title: '核销失败，请重试', icon: 'none' })
+			}
+		}
+	})
+}
+
+/* 前往商户：把铺名+铺址复制到剪贴板，便于粘贴进地图导航（无内置地图依赖）。 */
+function goMerchant() {
+	if (!orderDetail.value) return
+	const addr = orderDetail.value.address || ''
+	uni.setClipboardData({
+		data: `${orderDetail.value.merchantName} · ${addr}`,
+		success: () => uni.showToast({ title: '铺址已复制，可粘贴到地图导航', icon: 'none' }),
+		fail: () => uni.showToast({ title: addr || '暂无铺址', icon: 'none' })
+	})
+}
+
+/* 联系商户：直接拨号（缺号码或拨号失败时降级为提示）。 */
+function contactMerchant() {
+	if (!orderDetail.value) return
+	const phone = orderDetail.value.merchantPhone || ''
+	if (!phone || phone === '暂未登记') {
+		uni.showToast({ title: '商户暂未登记电话', icon: 'none' })
+		return
+	}
+	uni.makePhoneCall({
+		phoneNumber: phone,
+		fail: () => uni.showToast({ title: `商户电话：${phone}`, icon: 'none' })
+	})
 }
 
 function goBack() {
@@ -915,6 +970,14 @@ function goBack() {
 	background: linear-gradient(135deg, $py-red 0%, #8b1a2e 100%);
 	border-color: rgba(255, 220, 220, 0.45);
 	box-shadow: inset 0 1rpx 0 rgba(255, 220, 220, 0.45), 0 4rpx 10rpx rgba(196, 30, 58, 0.45);
+}
+
+/* 已核销 / 已过期：灰化，提示不可再核销 */
+.redeem-stage__voucher-action--done {
+	background: linear-gradient(135deg, #4a3a2a 0%, #3d2f22 100%);
+	color: rgba(245, 240, 232, 0.5);
+	border-color: rgba(212, 165, 116, 0.18);
+	box-shadow: inset 0 2rpx 6rpx rgba(0, 0, 0, 0.45);
 }
 
 @keyframes scrollUnfurlV {

@@ -244,6 +244,23 @@ export function getRedeemOrderById(orderId) {
 	return getRedeemOrders().find((item) => item.orderId === orderId) || null
 }
 
+/* 更新某张票券的状态（如到店「在店核销」→ 'used'）。完成订单生命周期：unused → used。 */
+export function updateRedeemOrderStatus(orderId, status) {
+	const orders = getRedeemOrders()
+	let changed = false
+	const next = orders.map((order) => {
+		if (order.orderId === orderId) {
+			changed = true
+			return normalizeRedeemOrder({ ...order, status })
+		}
+		return order
+	})
+	if (changed) {
+		setStorage(STORAGE_KEYS.redeemOrders, next)
+	}
+	return changed
+}
+
 export function createRedeemOrder(item, now = new Date()) {
 	const normalizedItem = normalizeShopItem(item)
 	const expireAt = new Date(now.getTime() + normalizedItem.expireHours * 60 * 60 * 1000)

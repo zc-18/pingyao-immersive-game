@@ -43,6 +43,10 @@ const defaultState = {
 		visitedSceneIds: [],
 		npcTalkCount: 0,
 		totalQuestCompleted: 0,
+		ownedCostumes: ['commoner'],
+		equippedCostume: 'commoner',
+		favoritePoiIds: [],
+		journalNotes: {},
 		checkIn: {
 			lastDate: '',
 			streak: 0,
@@ -174,6 +178,17 @@ function normalizeUserProgress(progress = {}) {
 		visitedSceneIds: Array.isArray(progress.visitedSceneIds) ? [...new Set(progress.visitedSceneIds.filter(Boolean))] : fallback.visitedSceneIds,
 		npcTalkCount: Math.max(0, Number(progress.npcTalkCount) || 0),
 		totalQuestCompleted: Math.max(0, Number(progress.totalQuestCompleted) || 0),
+		ownedCostumes: Array.isArray(progress.ownedCostumes)
+			? [...new Set(['commoner', ...progress.ownedCostumes.filter(Boolean)])]
+			: fallback.ownedCostumes,
+		equippedCostume:
+			typeof progress.equippedCostume === 'string' && progress.equippedCostume.trim()
+				? progress.equippedCostume.trim()
+				: fallback.equippedCostume,
+		favoritePoiIds: Array.isArray(progress.favoritePoiIds)
+			? [...new Set(progress.favoritePoiIds.filter(Boolean))]
+			: fallback.favoritePoiIds,
+		journalNotes: isPlainObject(progress.journalNotes) ? progress.journalNotes : fallback.journalNotes,
 		checkIn,
 		unlockedAchievements: Array.isArray(progress.unlockedAchievements)
 			? [...new Set(progress.unlockedAchievements.filter(Boolean))]
@@ -282,6 +297,12 @@ export function patchStorageObject(key, patch = {}) {
 			: key === STORAGE_KEYS.userProgress
 				? normalizeUserProgress(nextValue)
 				: nextValue
+	// 变更检测：值未变化则跳过写入。markPoiVisited / 步数结算 / npcTalk 等高频探索路径会反复 patch 同样的值，
+	// 原先每次都全量序列化 + setStorageSync 落盘，是低端机探索时帧抖动的主因之一。current 与 normalizedValue
+	// 都经同一 normalize（键序一致），JSON 比较可靠；仅当真有变化才写盘。
+	if (isPlainObject(current) && JSON.stringify(current) === JSON.stringify(normalizedValue)) {
+		return normalizedValue
+	}
 	setStorage(key, normalizedValue)
 	return normalizedValue
 }

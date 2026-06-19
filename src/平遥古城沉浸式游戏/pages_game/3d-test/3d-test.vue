@@ -319,10 +319,14 @@ export default {
 		onSceneCmd(newVal, oldVal, ownerInstance, instance) {
 			if (!newVal || !newVal.action) return
 			var action = newVal.action
+			// 跨端取方法上下文：APP 端 renderjs 观察器靠第 4 参 instance 调同级方法；
+			// H5(vue3) 端观察器是组件 Proxy 的方法，方法挂在 this 上、instance 不带方法。
+			// 取「确实带 initAll 的那个」即可两端通用。
+			var ctx = (this && typeof this.initAll === 'function') ? this : instance
 			if (action === 'init') {
-				instance.initAll(newVal.sceneConfig)
+				ctx.initAll(newVal.sceneConfig)
 			} else if (action === 'dispose') {
-				instance.disposeAll()
+				ctx.disposeAll()
 			}
 		},
 

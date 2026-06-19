@@ -53,10 +53,11 @@ export const streetScenes = [
 		heroPoiId: 'county-office',
 		defaultPoiId: 'county-office',
 		nearbyPoiRadius: 90,
-		poiIds: ['county-office', 'mingqing-street'],
+		poiIds: ['county-office', 'mingqing-street', 'zhongtang-courtyard'],
 		poiOverrides: {
 			'county-office': { distance: 86, status: 'nearby', mapPosition: { x: 58, y: 48, depth: 3 } },
-			'mingqing-street': { distance: 132, status: 'route', mapPosition: { x: 44, y: 58, depth: 1 } }
+			'mingqing-street': { distance: 132, status: 'route', mapPosition: { x: 44, y: 58, depth: 1 } },
+			'zhongtang-courtyard': { distance: 168, status: 'discoverable', mapPosition: { x: 26, y: 34, depth: 2 } }
 		},
 		playerStart: { x: 56, y: 72, bearing: 4, useMockLocation: true },
 		recommendedCamera: { distance: 11, polar: 1.05, azimuth: -0.1 },
@@ -95,11 +96,12 @@ export const streetScenes = [
 		heroPoiId: 'confucius-temple',
 		defaultPoiId: 'confucius-temple',
 		nearbyPoiRadius: 105,
-		poiIds: ['confucius-temple', 'vinegar-workshop', 'city-god-temple'],
+		poiIds: ['confucius-temple', 'vinegar-workshop', 'city-god-temple', 'shuanglin-monastery'],
 		poiOverrides: {
 			'confucius-temple': { distance: 96, status: 'discoverable', mapPosition: { x: 42, y: 34, depth: 3 } },
 			'vinegar-workshop': { distance: 146, status: 'quest', mapPosition: { x: 67, y: 54, depth: 1 } },
-			'city-god-temple': { distance: 220, status: 'discoverable', mapPosition: { x: 22, y: 22, depth: 2 } }
+			'city-god-temple': { distance: 220, status: 'discoverable', mapPosition: { x: 22, y: 22, depth: 2 } },
+			'shuanglin-monastery': { distance: 320, status: 'discoverable', mapPosition: { x: 80, y: 30, depth: 3 } }
 		},
 		playerStart: { x: 46, y: 74, bearing: -8, useMockLocation: true },
 		recommendedCamera: { distance: 9.5, polar: 1.02, azimuth: 0.1 },

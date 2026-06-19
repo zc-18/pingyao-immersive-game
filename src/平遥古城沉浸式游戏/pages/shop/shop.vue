@@ -5,7 +5,7 @@
 		<view class="shop-stage__bg-glow"></view>
 
 		<!-- 飘动萤火 -->
-		<FallingLeaves type="firefly" :density="10" />
+		<FallingLeaves type="firefly" :density="6" />
 
 		<!-- 顶部门头：飞檐 + 牌匾 + 灯笼 -->
 		<view class="shop-stage__shopfront">
@@ -247,6 +247,7 @@ import {
 } from '@/common/data/shop-items.js'
 import { markPageVisit, rememberReturnContext } from '@/common/utils/game-state.js'
 import { playSFX, SFX } from '@/common/utils/audio.js'
+import { grantCostumeByShopItem } from '@/common/data/costumes.js'
 
 const activeCategory = ref(shopCategories[0]?.id || 'food')
 const assets = ref(getShopAssets())
@@ -302,16 +303,31 @@ function redeemItem(item) {
 	if (!item || isRedeeming.value || !isEnough(item)) return
 	isRedeeming.value = true
 
+	// 先落单、再扣款：落单抛错则直接退出、绝不扣款，杜绝"扣了银钥却没凭证"的资损（原先先扣后存有此风险）。
+	let order = null
+	try {
+		order = createRedeemOrder(item)
+		saveRedeemOrder(order)
+	} catch (e) {
+		isRedeeming.value = false
+		uni.showToast({ title: '出票失败，请重试', icon: 'none' })
+		return
+	}
+
 	const nextAssets = { ...assets.value, [item.currency]: Math.max(0, (assets.value[item.currency] || 0) - item.price) }
 	assets.value = setShopAssets(nextAssets)
-	const order = createRedeemOrder(item)
-	saveRedeemOrder(order)
 	playSFX(SFX.COIN)
+
+	// 换装体验类商品：兑换即解锁对应虚拟服饰，让线下 O2O 商品在游戏内真正"可穿"（接通购物→换装闭环）。
+	const grantedCostume = grantCostumeByShopItem(item.id)
 	currentItem.value = null
+	if (grantedCostume) {
+		uni.showToast({ title: `解锁新衣「${grantedCostume.name}」· 去「我的·试新衣」试穿`, icon: 'none', duration: 2600 })
+	}
 	setTimeout(() => {
 		isRedeeming.value = false
 		uni.navigateTo({ url: `/pages_shop/redeem/redeem?orderId=${order.orderId}` })
-	}, 280)
+	}, grantedCostume ? 1000 : 280)
 }
 </script>
 
@@ -849,6 +865,8 @@ function redeemItem(item) {
 	padding-top: 6rpx;
 	padding-bottom: 18rpx;
 	transition: transform 0.18s ease;
+	/* 隔离重绘范围：货架内多件商品的浮动/光晕动画不再波及外层布局，减轻多动画并发时的合成压力 */
+	contain: layout paint;
 }
 
 .shop-stage__product:active {
@@ -940,6 +958,7 @@ function redeemItem(item) {
 		inset 0 0 0 2rpx rgba(255, 235, 195, 0.4),
 		0 6rpx 14rpx rgba(0, 0, 0, 0.55);
 	overflow: hidden;
+	will-change: transform;
 	animation: productFloat 3s ease-in-out infinite;
 }
 
