@@ -12,6 +12,9 @@ dist/
 
 # Claude Code 本地配置（个人，不入库）
 .claude/settings.local.json
+.claude/plans/
+.claude/todos/
+.claude/shell-snapshots/
 CLAUDE.local.md
 
 # 系统 / 编辑器临时文件
