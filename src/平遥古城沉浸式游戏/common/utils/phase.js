@@ -87,11 +87,11 @@ const PHASE_CONFIG = {
 		ambientSound: 'nightCrickets',
 		colorHint: 'rgba(140, 170, 220, 0.22)',
 		sky: { top: '#0d1230', bottom: '#2a2444' },
-		fog: { color: '#1a1a32', density: 0.028 },
+		fog: { color: '#1a1a32', density: 0.018 },
 		lighting: {
-			ambient: { color: '#3a3a55', intensity: 0.35 },
-			directional: { color: '#a4b2d8', intensity: 0.55, angle: { x: -2, y: 14, z: 6 } },
-			hemi: { sky: '#1a2444', ground: '#0d0c1c', intensity: 0.3 }
+			ambient: { color: '#3a3a55', intensity: 0.5 },
+			directional: { color: '#a4b2d8', intensity: 0.65, angle: { x: -2, y: 14, z: 6 } },
+			hemi: { sky: '#1a2444', ground: '#0d0c1c', intensity: 0.42 }
 		},
 		bloomStrength: 1.15,
 		exposure: 0.95

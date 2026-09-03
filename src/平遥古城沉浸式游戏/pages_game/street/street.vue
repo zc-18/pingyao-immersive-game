@@ -984,6 +984,7 @@ let ambientLightRef = null
 let directionalLightRef = null
 let hemiLightRef = null
 let player = null
+let ground = null
 let buildings = []
 let poiBeacons = []
 let decorations = []
@@ -1481,7 +1482,7 @@ export default {
 				roughness: 0.92,
 				metalness: 0.08
 			})
-			const ground = new THREE.Mesh(groundGeometry, groundMaterial)
+			ground = new THREE.Mesh(groundGeometry, groundMaterial)
 			ground.rotation.x = -Math.PI / 2
 			ground.receiveShadow = true
 			scene.add(ground)
@@ -2086,6 +2087,52 @@ export default {
 			let isTouching = false
 			let touchStartX = 0
 			let touchStartY = 0
+			const pressedKeys = new Set()
+			const keyDirections = {
+				w: [0, -1],
+				a: [-1, 0],
+				s: [0, 1],
+				d: [1, 0],
+				arrowup: [0, -1],
+				arrowleft: [-1, 0],
+				arrowdown: [0, 1],
+				arrowright: [1, 0]
+			}
+
+			const resetInput = () => {
+				isTouching = false
+				if (pressedKeys.size) {
+					updateKeyboardInput()
+				} else {
+					joystickInput.dx = 0
+					joystickInput.dy = 0
+				}
+			}
+
+			const updateKeyboardInput = () => {
+				let dx = 0
+				let dy = 0
+				pressedKeys.forEach((key) => {
+					const direction = keyDirections[key]
+					if (!direction) return
+					dx += direction[0]
+					dy += direction[1]
+				})
+				if (dx !== 0 && dy !== 0) {
+					const length = Math.sqrt(dx * dx + dy * dy)
+					dx /= length
+					dy /= length
+				}
+				joystickInput.dx = dx
+				joystickInput.dy = dy
+			}
+
+			const updateDragInput = (clientX, clientY) => {
+				const dx = (clientX - touchStartX) / 70
+				const dy = (clientY - touchStartY) / 70
+				joystickInput.dx = Math.max(-1, Math.min(1, dx))
+				joystickInput.dy = Math.max(-1, Math.min(1, dy))
+			}
 
 			const onTouchStart = (event) => {
 				const touch = event.touches[0]
@@ -2093,33 +2140,80 @@ export default {
 					isTouching = true
 					touchStartX = touch.clientX
 					touchStartY = touch.clientY
+					event.preventDefault()
 				}
 			}
 			const onTouchMove = (event) => {
 				if (!isTouching) return
 				const touch = event.touches[0]
-				const dx = (touch.clientX - touchStartX) / 70
-				const dy = (touch.clientY - touchStartY) / 70
-				joystickInput.dx = Math.max(-1, Math.min(1, dx))
-				joystickInput.dy = Math.max(-1, Math.min(1, dy))
+				updateDragInput(touch.clientX, touch.clientY)
+				event.preventDefault()
 			}
 			const onTouchEnd = () => {
-				isTouching = false
-				joystickInput.dx = 0
-				joystickInput.dy = 0
+				resetInput()
 			}
 
-			canvas.addEventListener('touchstart', onTouchStart)
-			canvas.addEventListener('touchmove', onTouchMove)
+			const onMouseDown = (event) => {
+				if (event.button !== 0) return
+				isTouching = true
+				touchStartX = event.clientX
+				touchStartY = event.clientY
+			}
+			const onMouseMove = (event) => {
+				if (!isTouching) return
+				updateDragInput(event.clientX, event.clientY)
+			}
+			const onMouseUp = () => {
+				resetInput()
+			}
+
+			const onKeyDown = (event) => {
+				const key = event.key.toLowerCase()
+				if (!keyDirections[key]) return
+				pressedKeys.add(key)
+				updateKeyboardInput()
+				event.preventDefault()
+			}
+			const onKeyUp = (event) => {
+				const key = event.key.toLowerCase()
+				if (!keyDirections[key]) return
+				pressedKeys.delete(key)
+				updateKeyboardInput()
+				event.preventDefault()
+			}
+			const onWindowBlur = () => {
+				pressedKeys.clear()
+				resetInput()
+			}
+
+			canvas.style.touchAction = 'none'
+			canvas.addEventListener('touchstart', onTouchStart, { passive: false })
+			canvas.addEventListener('touchmove', onTouchMove, { passive: false })
 			canvas.addEventListener('touchend', onTouchEnd)
+			canvas.addEventListener('touchcancel', onTouchEnd)
+			canvas.addEventListener('mousedown', onMouseDown)
+			canvas.addEventListener('mousemove', onMouseMove)
+			canvas.addEventListener('mouseup', onMouseUp)
+			canvas.addEventListener('mouseleave', onMouseUp)
+			window.addEventListener('keydown', onKeyDown)
+			window.addEventListener('keyup', onKeyUp)
+			window.addEventListener('blur', onWindowBlur)
 
 			// 句柄留给 dispose() 解绑：renderer.domElement 切场会重建，但监听挂在常驻容器 #street-canvas 上，必须显式移除。
 			joystickCleanup = () => {
 				canvas.removeEventListener('touchstart', onTouchStart)
 				canvas.removeEventListener('touchmove', onTouchMove)
 				canvas.removeEventListener('touchend', onTouchEnd)
-				joystickInput.dx = 0
-				joystickInput.dy = 0
+				canvas.removeEventListener('touchcancel', onTouchEnd)
+				canvas.removeEventListener('mousedown', onMouseDown)
+				canvas.removeEventListener('mousemove', onMouseMove)
+				canvas.removeEventListener('mouseup', onMouseUp)
+				canvas.removeEventListener('mouseleave', onMouseUp)
+				window.removeEventListener('keydown', onKeyDown)
+				window.removeEventListener('keyup', onKeyUp)
+				window.removeEventListener('blur', onWindowBlur)
+				pressedKeys.clear()
+				resetInput()
 			}
 		},
 		highlightQuestPoi(targetPoiId) {
@@ -2146,6 +2240,20 @@ export default {
 			})
 		},
 		clearScene() {
+			/* 切换街景会重新创建三盏环境灯；先移除旧灯，否则每次切换都会叠加光照并导致画面过曝发白。 */
+			[ambientLightRef, directionalLightRef, hemiLightRef].forEach((light) => {
+				if (light && light.parent) light.parent.remove(light)
+			})
+			ambientLightRef = null
+			directionalLightRef = null
+			hemiLightRef = null
+			if (ground) {
+				scene.remove(ground)
+				if (ground.geometry) ground.geometry.dispose()
+				if (ground.material) ground.material.dispose()
+				ground = null
+			}
+
 			[...buildings, ...poiBeacons, ...decorations].forEach((group) => {
 				scene.remove(group)
 				group.traverse((item) => {
