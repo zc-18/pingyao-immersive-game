@@ -1035,6 +1035,7 @@ let playerSkinData = null
    只在 dispose() 里统一释放，clearScene 不动它们（material.dispose 不级联 texture）。*/
 let textureCache = {}
 let skyTextureCache = {}
+let brocadeTextureLoading = false
 
 /* renderjs → 逻辑层：通过 $ownerInstance.callMethod 回调逻辑层的 handleRenderMsg。
    APP 端逻辑层无共享 window，不能再用 window.dispatchEvent。ownerInstanceRef 在 mounted/onSceneCmd 赋值。
@@ -1083,6 +1084,38 @@ export default {
 			canvas.width = size
 			canvas.height = size
 			return canvas
+		},
+		/* 生成式晋商织锦贴图按需加载：只有高阶服饰会触发，普通玩家首屏不增加下载负担。 */
+		getBrocadeTexture() {
+			if (textureCache.pingyao_brocade) return textureCache.pingyao_brocade
+			if (brocadeTextureLoading || !THREE) return null
+			brocadeTextureLoading = true
+			const generation = assetLoadGeneration
+			new THREE.TextureLoader().load('/static/img/3d/pingyao-brocade-pattern.jpg', (texture) => {
+				brocadeTextureLoading = false
+				if (generation !== assetLoadGeneration || !renderer) {
+					texture.dispose()
+					return
+				}
+				texture.wrapS = THREE.RepeatWrapping
+				texture.wrapT = THREE.RepeatWrapping
+				texture.repeat.set(2.25, 2.25)
+				if (THREE.SRGBColorSpace) texture.colorSpace = THREE.SRGBColorSpace
+				texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy())
+				texture.needsUpdate = true
+				textureCache.pingyao_brocade = texture
+				if (player) {
+					player.traverse((item) => {
+						const materials = Array.isArray(item.material) ? item.material : [item.material]
+						materials.filter(Boolean).forEach((material) => {
+							if (!material.userData?.useBrocade) return
+							material.map = texture
+							material.needsUpdate = true
+						})
+					})
+				}
+			}, undefined, () => { brocadeTextureLoading = false })
+			return null
 		},
 		/* 青砖墙：横向砖块 + 砖缝 + 轻微做旧斑驳 */
 		makeBrickTexture(baseHex, mortarHex) {
@@ -2020,6 +2053,218 @@ export default {
 			})
 		},
 		createPlayer() {
+			try {
+				const skin = playerSkinData || {}
+				const silhouette = skin.silhouette || 'traveler'
+				const presetMap = {
+					traveler: { shoulder: 0.35, torsoTop: 0.29, torsoBottom: 0.35, torsoHeight: 0.88, robeHeight: 0.62, robeBottom: 0.43, sleeveRadius: 0.115, height: 1 },
+					clerk: { shoulder: 0.36, torsoTop: 0.30, torsoBottom: 0.36, torsoHeight: 0.92, robeHeight: 0.82, robeBottom: 0.48, sleeveRadius: 0.125, height: 1.01 },
+					scholar: { shoulder: 0.39, torsoTop: 0.29, torsoBottom: 0.36, torsoHeight: 0.90, robeHeight: 0.90, robeBottom: 0.52, sleeveRadius: 0.17, height: 1.02 },
+					escort: { shoulder: 0.39, torsoTop: 0.34, torsoBottom: 0.35, torsoHeight: 0.84, robeHeight: 0.50, robeBottom: 0.40, sleeveRadius: 0.14, height: 1.03 },
+					merchant: { shoulder: 0.38, torsoTop: 0.33, torsoBottom: 0.39, torsoHeight: 0.94, robeHeight: 0.88, robeBottom: 0.52, sleeveRadius: 0.15, height: 1.01 },
+					festival: { shoulder: 0.43, torsoTop: 0.31, torsoBottom: 0.39, torsoHeight: 0.92, robeHeight: 0.94, robeBottom: 0.57, sleeveRadius: 0.19, height: 1.02 },
+					legend: { shoulder: 0.44, torsoTop: 0.35, torsoBottom: 0.41, torsoHeight: 0.96, robeHeight: 0.92, robeBottom: 0.56, sleeveRadius: 0.18, height: 1.05 }
+				}
+				const shape = presetMap[silhouette] || presetMap.traveler
+				const group = new THREE.Group()
+				group.name = 'pingyao-player-v2'
+				const bodyColor = colorHex(skin.body, 0x8B4513)
+				const robeColor = colorHex(skin.robe, bodyColor)
+				const trimColor = colorHex(skin.trim, 0xD2B48C)
+				const skinColor = colorHex(skin.head, 0xD4A574)
+				const hatColor = colorHex(skin.hat, 0x30251F)
+				const brocadeTexture = skin.pattern === 'brocade' ? this.getBrocadeTexture() : null
+
+				const material = (color, roughness = 0.78, useBrocade = false, extras = {}) => {
+					const mat = new THREE.MeshStandardMaterial({
+						color: useBrocade ? 0xfff4df : color,
+						roughness,
+						metalness: extras.metalness || 0,
+						map: useBrocade ? brocadeTexture : null,
+						flatShading: extras.flatShading !== false,
+						side: extras.side
+					})
+					mat.userData.useBrocade = useBrocade
+					return mat
+				}
+				const clothMat = material(bodyColor, 0.82)
+				const robeMat = material(robeColor, 0.80, skin.pattern === 'brocade')
+				const trimMat = material(trimColor, 0.62, false, { metalness: skin.accent ? 0.12 : 0 })
+				const skinMat = material(skinColor, 0.68, false, { flatShading: false })
+				const hairMat = material(0x241c18, 0.92)
+				const shoeMat = material(silhouette === 'escort' ? 0x171516 : 0x29241F, 0.9)
+				const eyeMat = new THREE.MeshBasicMaterial({ color: 0x241b17 })
+
+				const addMesh = (geometry, mat, x, y, z, parent = group) => {
+					const mesh = new THREE.Mesh(geometry, mat)
+					mesh.position.set(x, y, z)
+					mesh.castShadow = true
+					parent.add(mesh)
+					return mesh
+				}
+
+				/* 躯干与下装均使用有肩腰比例的截锥，消除旧版“圆柱玩偶”轮廓。 */
+				const torsoY = 1.22
+				const torso = addMesh(
+					new THREE.CylinderGeometry(shape.torsoTop, shape.torsoBottom, shape.torsoHeight, 12),
+					clothMat, 0, torsoY, 0
+				)
+				const robeY = 0.63
+				const robe = addMesh(
+					new THREE.CylinderGeometry(shape.torsoBottom * 0.92, shape.robeBottom, shape.robeHeight, 12),
+					robeMat, 0, robeY, 0
+				)
+				if (skin.pattern === 'brocade') robe.userData.costumeTexture = 'brocade'
+
+				const sash = addMesh(new THREE.TorusGeometry(shape.torsoBottom + 0.018, 0.045, 7, 20), trimMat, 0, 0.91, 0)
+				sash.rotation.x = Math.PI / 2
+				/* 交领与前襟用独立镶边建立传统汉服结构，近景旋转时仍有细节。 */
+				;[-1, 1].forEach((side) => {
+					const lapel = addMesh(new THREE.BoxGeometry(0.062, 0.49, 0.035), trimMat, side * 0.075, 1.43, 0.31)
+					lapel.rotation.z = side * 0.40
+				})
+				addMesh(new THREE.BoxGeometry(0.055, 0.48, 0.035), trimMat, -0.02, 1.08, 0.355)
+
+				/* 双段四肢：肩袖/腕袖、裤腿/鞋靴分离，动画仍由原有四个关节组驱动。 */
+				const makeArm = (side) => {
+					const pivot = new THREE.Group()
+					pivot.position.set(side * shape.shoulder, 1.49, 0)
+					group.add(pivot)
+					const sleeveLength = skin.sleeve === 'ceremonial' ? 0.68 : skin.sleeve === 'wide' ? 0.64 : 0.58
+					const upper = addMesh(new THREE.CylinderGeometry(shape.sleeveRadius * 0.82, shape.sleeveRadius, sleeveLength, 9), clothMat, 0, -sleeveLength / 2, 0, pivot)
+					upper.rotation.z = side * 0.04
+					const cuffRadius = skin.sleeve === 'ceremonial' ? shape.sleeveRadius * 1.35 : shape.sleeveRadius * 1.08
+					const cuff = addMesh(new THREE.CylinderGeometry(cuffRadius * 0.88, cuffRadius, 0.18, 9), trimMat, 0, -sleeveLength - 0.07, 0, pivot)
+					if (skin.sleeve === 'braced') cuff.material = material(0x35251c, 0.62, false, { metalness: 0.16 })
+					addMesh(new THREE.SphereGeometry(0.105, 9, 7), skinMat, 0, -sleeveLength - 0.22, 0, pivot)
+					return pivot
+				}
+				const makeLeg = (side) => {
+					const pivot = new THREE.Group()
+					pivot.position.set(side * 0.16, 0.43, 0)
+					group.add(pivot)
+					addMesh(new THREE.CylinderGeometry(0.095, 0.11, 0.48, 8), clothMat, 0, -0.24, 0, pivot)
+					const bootHeight = silhouette === 'escort' ? 0.28 : 0.17
+					addMesh(new THREE.CylinderGeometry(0.115, 0.125, bootHeight, 8), shoeMat, 0, -0.48, 0, pivot)
+					const shoe = addMesh(new THREE.BoxGeometry(0.25, 0.13, 0.37), shoeMat, 0, -0.58, 0.055, pivot)
+					shoe.geometry.translate(0, 0, 0.04)
+					return pivot
+				}
+				const leftLeg = makeLeg(-1)
+				const rightLeg = makeLeg(1)
+				const leftArm = makeArm(-1)
+				const rightArm = makeArm(1)
+
+				/* 头面采用柔和曲面，补上耳、眉眼、鼻与发髻；低面数但不再是无脸球体。 */
+				const head = addMesh(new THREE.SphereGeometry(0.255, 16, 12), skinMat, 0, 1.88, 0)
+				head.scale.set(0.94, 1.08, 0.92)
+				;[-1, 1].forEach((side) => {
+					const ear = addMesh(new THREE.SphereGeometry(0.055, 8, 6), skinMat, side * 0.246, 1.88, 0)
+					ear.scale.set(0.55, 1, 0.55)
+					const eye = addMesh(new THREE.SphereGeometry(0.024, 7, 5), eyeMat, side * 0.088, 1.91, 0.229)
+					eye.scale.set(1, 0.8, 0.42)
+					const brow = addMesh(new THREE.BoxGeometry(0.075, 0.016, 0.018), hairMat, side * 0.088, 1.978, 0.226)
+					brow.rotation.z = side * -0.08
+				})
+				const nose = addMesh(new THREE.ConeGeometry(0.03, 0.075, 7), skinMat, 0, 1.86, 0.258)
+				nose.rotation.x = Math.PI / 2
+				const mouth = addMesh(new THREE.BoxGeometry(0.09, 0.014, 0.018), material(0x8c4d43, 0.8), 0, 1.79, 0.235)
+				mouth.rotation.z = -0.02
+
+				const hairCap = addMesh(new THREE.SphereGeometry(0.265, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.54), hairMat, 0, 2.00, -0.005)
+				hairCap.scale.set(0.96, 0.86, 0.96)
+				const headwear = skin.headwear || 'hair-bun'
+				if (headwear === 'hair-bun') {
+					addMesh(new THREE.SphereGeometry(0.105, 10, 8), hairMat, 0, 2.10, -0.20)
+				} else if (headwear === 'skullcap') {
+					addMesh(new THREE.CylinderGeometry(0.235, 0.265, 0.14, 12), material(hatColor, 0.84), 0, 2.105, 0)
+					addMesh(new THREE.SphereGeometry(0.085, 9, 7), material(hatColor, 0.84), 0, 2.19, 0)
+				} else if (headwear === 'scholar-scarf') {
+					addMesh(new THREE.BoxGeometry(0.43, 0.16, 0.31), material(hatColor, 0.84), 0, 2.12, -0.01)
+					;[-1, 1].forEach((side) => {
+						const tail = addMesh(new THREE.BoxGeometry(0.08, 0.32, 0.055), material(hatColor, 0.88), side * 0.13, 1.99, -0.22)
+						tail.rotation.z = side * 0.12
+					})
+				} else if (headwear === 'guard-cap') {
+					addMesh(new THREE.CylinderGeometry(0.31, 0.31, 0.045, 14), material(hatColor, 0.88), 0, 2.08, 0)
+					addMesh(new THREE.ConeGeometry(0.26, 0.24, 12), material(hatColor, 0.78), 0, 2.22, 0)
+				} else {
+					const cap = addMesh(new THREE.CylinderGeometry(0.22, 0.27, headwear === 'merchant-crown' ? 0.27 : 0.19, 12), material(hatColor, 0.72), 0, 2.15, 0)
+					cap.scale.z = headwear === 'festival-cap' ? 1.08 : 1
+					addMesh(new THREE.SphereGeometry(0.06, 9, 7), trimMat, 0, headwear === 'merchant-crown' ? 2.34 : 2.28, 0)
+				}
+
+				/* 配饰决定职业辨识度，均保持在身体碰撞盒内，不改变移动判定。 */
+				let tassel = null
+				if (skin.accessory === 'satchel') {
+					const bag = addMesh(new THREE.BoxGeometry(0.30, 0.34, 0.16), material(0x51301f, 0.92), 0.39, 0.84, -0.03)
+					bag.rotation.z = -0.08
+					const strap = addMesh(new THREE.TorusGeometry(0.43, 0.022, 5, 20, Math.PI * 1.38), material(0x69452d, 0.9), 0, 1.23, 0)
+					strap.rotation.set(Math.PI / 2, 0.2, -0.72)
+				} else if (skin.accessory === 'ledger' || skin.accessory === 'scroll') {
+					const caseMat = skin.accessory === 'scroll' ? material(0xe2d1aa, 0.9) : material(0x4c2c20, 0.92)
+					const caseMesh = addMesh(new THREE.CylinderGeometry(0.085, 0.085, 0.62, 9), caseMat, 0.37, 0.92, -0.17)
+					caseMesh.rotation.z = 0.16
+				} else if (skin.accessory === 'scabbard') {
+					const scabbard = addMesh(new THREE.CylinderGeometry(0.045, 0.065, 0.92, 8), material(0x241b18, 0.74, false, { metalness: 0.1 }), -0.38, 0.72, -0.08)
+					scabbard.rotation.z = -0.26
+					addMesh(new THREE.BoxGeometry(0.30, 0.055, 0.08), trimMat, -0.49, 1.13, -0.08).rotation.z = -0.26
+				} else if (skin.accessory === 'jade' || skin.accessory === 'seal') {
+					const pendant = addMesh(new THREE.CylinderGeometry(0.09, 0.09, 0.035, skin.accessory === 'seal' ? 4 : 12), material(skin.accessory === 'jade' ? 0x78a58d : trimColor, 0.46, false, { metalness: 0.16 }), 0, 1.08, 0.39)
+					pendant.rotation.x = Math.PI / 2
+				} else if (skin.accessory === 'tassel') {
+					tassel = new THREE.Group()
+					tassel.position.set(0.23, 1.15, 0.37)
+					group.add(tassel)
+					addMesh(new THREE.CylinderGeometry(0.012, 0.012, 0.32, 5), trimMat, 0, -0.16, 0, tassel)
+					addMesh(new THREE.SphereGeometry(0.052, 8, 6), trimMat, 0, -0.34, 0, tassel)
+				}
+
+				if (skin.pattern === 'brocade') {
+					const panelMat = material(0xffffff, 0.68, true)
+					const chestPanel = addMesh(new THREE.BoxGeometry(0.34, 0.48, 0.032), panelMat, 0, 1.28, 0.345)
+					chestPanel.rotation.z = silhouette === 'festival' ? -0.04 : 0
+				}
+				if (silhouette === 'legend') {
+					;[-1, 1].forEach((side) => addMesh(new THREE.BoxGeometry(0.25, 0.075, 0.30), trimMat, side * 0.36, 1.59, 0))
+				}
+
+				const contactShadow = addMesh(
+					new THREE.CircleGeometry(0.52, 20),
+					new THREE.MeshBasicMaterial({ color: 0x17130f, transparent: true, opacity: 0.25, depthWrite: false }),
+					0, 0.012, 0
+				)
+				contactShadow.rotation.x = -Math.PI / 2
+				contactShadow.scale.set(1, 0.58, 1)
+				contactShadow.castShadow = false
+
+				if (skin.accent) {
+					const accentColor = colorHex(skin.accent, 0xFFD700)
+					const halo = addMesh(new THREE.TorusGeometry(0.46, 0.035, 8, 28), new THREE.MeshStandardMaterial({ color: accentColor, emissive: accentColor, emissiveIntensity: 0.62, roughness: 0.5 }), 0, 0.065, 0)
+					halo.rotation.x = Math.PI / 2
+					halo.castShadow = false
+				}
+
+				const spawn = currentWorldLayout?.spawn || { x: 0, z: 13 }
+				group.position.set(spawn.x, 0, spawn.z)
+				group.scale.y = shape.height
+				group.userData = { leftLeg, rightLeg, leftArm, rightArm, body: torso, head, tassel, modelVersion: 2, silhouette }
+				scene.add(group)
+				player = group
+				if (camera && !cameraTargetVec) {
+					cameraTargetVec = new THREE.Vector3(group.position.x, 1.24, group.position.z)
+					cameraPositionVec = new THREE.Vector3()
+					const horizontalDistance = Math.cos(cameraPitch) * cameraDistance
+					cameraPositionVec.set(group.position.x + Math.sin(cameraYaw) * horizontalDistance, 1.2 + Math.sin(cameraPitch) * cameraDistance, group.position.z + Math.cos(cameraYaw) * horizontalDistance)
+					camera.position.copy(cameraPositionVec)
+					camera.lookAt(cameraTargetVec)
+				}
+			} catch (err) {
+				/* 单个高级部件在旧 WebView 不兼容时，保留原低模作为可玩性兜底。 */
+				this.createLegacyPlayer()
+			}
+		},
+		createLegacyPlayer() {
 			// 化身按已装备服饰着色：body/head 必有，robe（长衫下摆）/hat（冠帽）/accent（足部光环）按服饰可选，
 			// 让「换装」在第一视角街景里真实可见。playerSkinData 为 null 时回退默认票号行客配色。
 			const skin = playerSkinData || {}
@@ -2973,6 +3218,13 @@ export default {
 							wasMoving = false
 						}
 					}
+					/* 极轻的呼吸与流苏惯性，让静止角色也保持生命感，不额外创建逐帧对象。 */
+					if (player.userData.body) {
+						player.userData.body.scale.y = 1 + Math.sin(now * 0.0018) * 0.006
+					}
+					if (player.userData.tassel) {
+						player.userData.tassel.rotation.z = Math.sin(walkCycle * 1.35) * Math.min(0.18, speed * 0.035)
+					}
 				}
 
 				if (camera && player) {
@@ -3143,6 +3395,7 @@ export default {
 			Object.keys(skyTextureCache).forEach((k) => { if (skyTextureCache[k]) skyTextureCache[k].dispose() })
 			textureCache = {}
 			skyTextureCache = {}
+			brocadeTextureLoading = false
 			if (resizeHandlerRef) {
 				window.removeEventListener('resize', resizeHandlerRef)
 				resizeHandlerRef = null

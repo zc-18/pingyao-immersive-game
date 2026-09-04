@@ -1,9 +1,9 @@
 // 虚拟服饰 / 换装系统数据 + 逻辑。
 //
 // 每套服饰提供：
-//  - skin：第一视角街景化身（street.vue renderjs createPlayer）使用的纯 JSON 着色参数。
-//    body/head 必填；robe（长衫下摆）/hat（冠帽）/accent（足部发光环）可选。颜色用 #rrggbb 字符串，
-//    renderjs 端用 colorHex() 解析（不能传函数/类，只能传 JSON）。
+//  - skin：街景化身（street.vue renderjs createPlayer）使用的纯 JSON 建模参数。
+//    除 body/head 等配色外，silhouette/headwear/sleeve/accessory 控制轮廓与服饰部件，
+//    pattern 控制生成式衣料贴图。renderjs 只能接收 JSON，不能传函数或 Three.js 实例。
 //  - unlock：解锁方式。
 //      default      初始拥有（人人皆有）
 //      level        达到等级自动拥有（进阶奖励）
@@ -27,7 +27,10 @@ export const COSTUMES = [
 		mark: '布',
 		desc: '初入古城的素布短打，朴素利落，最宜走街串巷。',
 		unlock: { type: 'default' },
-		skin: { body: '#8B4513', head: '#D4A574' }
+		skin: {
+			body: '#8B4513', head: '#D4A574', robe: '#754019', trim: '#D2B48C',
+			silhouette: 'traveler', headwear: 'hair-bun', sleeve: 'narrow', accessory: 'satchel'
+		}
 	},
 	{
 		id: 'ledger-clerk',
@@ -35,7 +38,10 @@ export const COSTUMES = [
 		mark: '账',
 		desc: '票号柜台伙计的青布长衫，袖口还沾着没干透的墨。',
 		unlock: { type: 'silverKey', cost: 80 },
-		skin: { body: '#3f5a6b', head: '#e8cfa6', robe: '#2e4654', hat: '#1f2d36' }
+		skin: {
+			body: '#3f5a6b', head: '#e8cfa6', robe: '#2e4654', hat: '#1f2d36', trim: '#b9c3bd',
+			silhouette: 'clerk', headwear: 'skullcap', sleeve: 'formal', accessory: 'ledger'
+		}
 	},
 	{
 		id: 'scholar-robe',
@@ -43,7 +49,10 @@ export const COSTUMES = [
 		mark: '儒',
 		desc: '文庙书生的月白襕衫，配一方青色纶巾，书卷气十足。',
 		unlock: { type: 'level', level: 2 },
-		skin: { body: '#e9e4d4', head: '#e8cfa6', robe: '#d8d0ba', hat: '#6b7a8f' }
+		skin: {
+			body: '#e9e4d4', head: '#e8cfa6', robe: '#d8d0ba', hat: '#6b7a8f', trim: '#596b78',
+			silhouette: 'scholar', headwear: 'scholar-scarf', sleeve: 'wide', accessory: 'scroll'
+		}
 	},
 	{
 		id: 'escort-garb',
@@ -51,7 +60,10 @@ export const COSTUMES = [
 		mark: '镖',
 		desc: '同兴公镖局的玄色劲装，护腕扎得利落，走夜路也不怵。',
 		unlock: { type: 'silverKey', cost: 150 },
-		skin: { body: '#4a2a18', head: '#caa477', robe: '#2a1810', hat: '#3a2415' }
+		skin: {
+			body: '#4a2a18', head: '#caa477', robe: '#2a1810', hat: '#3a2415', trim: '#a77743',
+			silhouette: 'escort', headwear: 'guard-cap', sleeve: 'braced', accessory: 'scabbard'
+		}
 	},
 	{
 		id: 'merchant-gown',
@@ -59,7 +71,10 @@ export const COSTUMES = [
 		mark: '柜',
 		desc: '大掌柜的酱色团花锦袍，气度沉稳，一看便是当家的人。',
 		unlock: { type: 'level', level: 3 },
-		skin: { body: '#7a3b2e', head: '#e8cfa6', robe: '#5e2a20', hat: '#3a1a14', accent: '#d4a574' }
+		skin: {
+			body: '#7a3b2e', head: '#e8cfa6', robe: '#5e2a20', hat: '#3a1a14', trim: '#d4a574', accent: '#d4a574',
+			silhouette: 'merchant', headwear: 'merchant-cap', sleeve: 'formal', accessory: 'jade', pattern: 'brocade'
+		}
 	},
 	{
 		id: 'lantern-festival',
@@ -67,7 +82,10 @@ export const COSTUMES = [
 		mark: '灯',
 		desc: '灯影长街灯会限定的朱红华服，金线绕身，灯下流光溢彩。',
 		unlock: { type: 'shop', itemId: 'exp-dress-005' },
-		skin: { body: '#c41e3a', head: '#e8cfa6', robe: '#8b1a2e', hat: '#6b1622', accent: '#ffd700' }
+		skin: {
+			body: '#c41e3a', head: '#e8cfa6', robe: '#8b1a2e', hat: '#6b1622', trim: '#f1c76d', accent: '#ffd700',
+			silhouette: 'festival', headwear: 'festival-cap', sleeve: 'ceremonial', accessory: 'tassel', pattern: 'brocade'
+		}
 	},
 	{
 		id: 'jin-merchant-legend',
@@ -75,7 +93,10 @@ export const COSTUMES = [
 		mark: '晋',
 		desc: '走通全程方能加身的晋商传人盛装，金袍玉带，气贯一城商道。',
 		unlock: { type: 'level', level: 5 },
-		skin: { body: '#8b4513', head: '#e8cfa6', robe: '#b8860b', hat: '#6b3510', accent: '#ffe27a' }
+		skin: {
+			body: '#8b4513', head: '#e8cfa6', robe: '#b8860b', hat: '#6b3510', trim: '#ffe3a0', accent: '#ffe27a',
+			silhouette: 'legend', headwear: 'merchant-crown', sleeve: 'ceremonial', accessory: 'seal', pattern: 'brocade'
+		}
 	}
 ]
 
