@@ -254,4 +254,16 @@ onUnmounted(() => {
 		padding: 18rpx 24rpx;
 	}
 }
+
+@media screen and (orientation: landscape) and (max-height: 520px) {
+	.owl-float { right: 12px; bottom: 62px; gap: 8px; }
+	.owl-float__avatar { width: 50px; height: 50px; }
+	.owl-float__inner { inset: 4px; }
+	.owl-float__img { width: 38px; height: 38px; }
+	.owl-float__pulse { inset: -5px; border-width: 1px; }
+	.owl-float__bubble { max-width: 280px; padding: 10px 14px; border-width: 1px; }
+	.owl-float__bubble-name { font-size: 10px; letter-spacing: 3px; }
+	.owl-float__message { margin-top: 3px; font-size: 12px; line-height: 1.55; }
+	.owl-float__close { top: -7px; right: -7px; width: 22px; height: 22px; font-size: 14px; }
+}
 </style>

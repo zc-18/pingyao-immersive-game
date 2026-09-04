@@ -2,8 +2,7 @@
 	<view class="mini-map" :class="{ 'mini-map--collapsed': collapsed }">
 		<view class="mini-map__frame" @tap="toggleCollapse">
 			<view v-if="!collapsed" class="mini-map__canvas">
-				<!-- 道路十字 -->
-				<view class="mini-map__road mini-map__road--h"></view>
+				<!-- 与 3D 世界一致的南北主街走廊 -->
 				<view class="mini-map__road mini-map__road--v"></view>
 
 				<!-- 建筑剪影 -->
@@ -145,22 +144,17 @@ function toggleCollapse() {
 
 .mini-map__road {
 	position: absolute;
-	background: rgba(74, 42, 24, 0.32);
-	border-radius: 999rpx;
-}
-
-.mini-map__road--h {
-	left: 12%;
-	top: 48%;
-	width: 76%;
-	height: 4%;
+	background:
+		linear-gradient(90deg, rgba(74, 42, 24, 0.18), rgba(245, 232, 208, 0.42) 18%, rgba(245, 232, 208, 0.42) 82%, rgba(74, 42, 24, 0.18));
+	border-left: 1rpx solid rgba(74, 42, 24, 0.38);
+	border-right: 1rpx solid rgba(74, 42, 24, 0.38);
 }
 
 .mini-map__road--v {
-	left: 48%;
-	top: 12%;
-	width: 4%;
-	height: 76%;
+	left: 41%;
+	top: 5%;
+	width: 18%;
+	height: 90%;
 }
 
 .mini-map__building {
@@ -300,5 +294,29 @@ function toggleCollapse() {
 	letter-spacing: 4rpx;
 	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
 	text-shadow: 0 1rpx 2rpx rgba(0, 0, 0, 0.55);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.mini-map__frame,
+	.mini-map__poi-pulse,
+	.mini-map__player-pulse {
+		transition: none;
+		animation: none;
+	}
+}
+
+@media screen and (orientation: landscape) and (max-height: 520px) {
+	.mini-map { gap: 3px; }
+	.mini-map__frame { width: 96px; height: 96px; border-width: 2px; }
+	.mini-map--collapsed .mini-map__frame { width: 42px; height: 42px; }
+	.mini-map__poi { width: 7px; height: 7px; border-radius: 2px; }
+	.mini-map__poi-pulse { width: 10px; height: 10px; border-width: 1px; }
+	.mini-map__player { width: 10px; height: 10px; }
+	.mini-map__player-cone { border-left-width: 5px; border-right-width: 5px; border-bottom-width: 10px; }
+	.mini-map__player-stamp { width: 14px; height: 14px; font-size: 8px; border-radius: 2px; }
+	.mini-map__player-pulse { width: 14px; height: 14px; border-width: 1px; }
+	.mini-map__compass { top: 3px; font-size: 9px; }
+	.mini-map__icon { font-size: 16px; }
+	.mini-map__label { font-size: 10px; letter-spacing: 1px; }
 }
 </style>

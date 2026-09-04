@@ -9,3 +9,10 @@ test('夜间街景保留足够的环境光与雾效可见度', () => {
 	assert.ok(night.lighting.hemi.intensity >= 0.4)
 	assert.ok(night.fog.density <= 0.022)
 })
+
+test('各时辰曝光和辉光保持在克制范围内', () => {
+	Object.values(PHASES).forEach((phase) => {
+		assert.ok(phase.exposure >= 0.85 && phase.exposure <= 1.08)
+		assert.ok(phase.bloomStrength >= 0.15 && phase.bloomStrength <= 0.55)
+	})
+})

@@ -165,7 +165,7 @@ defineEmits(['action'])
 	flex-direction: column;
 	align-items: center;
 	gap: 10rpx;
-	animation: fadeInUp 0.6s ease both;
+	animation: hudFadeInUpCentered 0.6s ease both;
 }
 
 .street-hud__plaque {
@@ -594,7 +594,7 @@ defineEmits(['action'])
 	transform: translateX(-50%);
 	width: 86%;
 	max-width: 880rpx;
-	animation: fadeInUp 0.6s ease 0.4s both;
+	animation: hudFadeInUpCentered 0.6s ease 0.4s both;
 }
 
 .street-hud__bs-roll {
@@ -764,7 +764,7 @@ defineEmits(['action'])
 	border: 1rpx solid rgba(212, 165, 116, 0.32);
 	border-radius: 999rpx;
 	backdrop-filter: blur(12rpx);
-	animation: fadeInUp 0.6s ease 0.5s both;
+	animation: hudFadeInUpCentered 0.6s ease 0.5s both;
 }
 
 .street-hud__scene-hint-text {
@@ -780,5 +780,76 @@ defineEmits(['action'])
 @keyframes breathe {
 	0%, 100% { opacity: 0.85; transform: scale(1); }
 	50%      { opacity: 1; transform: scale(1.04); }
+}
+
+@keyframes hudFadeInUpCentered {
+	from { opacity: 0; transform: translate(-50%, 18rpx); }
+	to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* 手机横屏按可用高度重新排布，不沿用会随屏宽放大的 rpx 尺寸。 */
+@media screen and (orientation: landscape) and (max-height: 520px) {
+	.street-hud__plaque-wrap { top: 8px; gap: 4px; }
+	.street-hud__plaque { min-width: 180px; padding: 7px 22px; border-width: 1px; font-size: 14px; letter-spacing: 3px; }
+	.street-hud__plaque::before,
+	.street-hud__plaque::after { top: -5px; width: 14px; height: 9px; border-radius: 2px 2px 0 0; }
+	.street-hud__plaque-ribbon { top: -11px; width: 22px; height: 13px; }
+	.street-hud__quest-tag { font-size: 9px; letter-spacing: 2px; }
+
+	.street-hud__profile { top: 8px; left: 10px; gap: 8px; }
+	.street-hud__avatar { width: 52px; height: 52px; }
+	.street-hud__avatar-inner { inset: 4px; }
+	.street-hud__avatar-char { font-size: 22px; }
+	.street-hud__seal { right: -4px; bottom: -2px; width: 22px; height: 22px; border-width: 1px; border-radius: 3px; }
+	.street-hud__seal::before { inset: 2px; }
+	.street-hud__seal-num { font-size: 11px; }
+	.street-hud__profile-info { gap: 2px; min-width: 88px; max-width: 108px; }
+	.street-hud__role { font-size: 11px; letter-spacing: 1px; }
+	.street-hud__title { font-size: 13px; letter-spacing: 1px; }
+	.street-hud__exp-bar { margin-top: 2px; width: 96px; height: 6px; border-width: 1px; }
+
+	.street-hud__coins { top: 8px; right: 10px; gap: 8px; }
+	.street-hud__coin { width: 42px; height: 42px; }
+	.street-hud__coin-face { inset: 4px; }
+	.street-hud__coin-char { font-size: 12px; }
+	.street-hud__coin-hole { width: 7px; height: 7px; }
+	.street-hud__coin-dot { width: 9px; height: 9px; }
+
+	.street-hud__tracker { top: 58px; right: 10px; width: 190px; }
+	.street-hud__tracker-roll { top: -3px; bottom: -3px; width: 9px; }
+	.street-hud__tracker-roll--l { left: -4px; }
+	.street-hud__tracker-roll--r { right: -4px; }
+	.street-hud__tracker-paper { padding: 7px 12px; }
+	.street-hud__tracker-eyebrow { font-size: 9px; letter-spacing: 3px; }
+	.street-hud__tracker-title { margin-top: 2px; font-size: 13px; letter-spacing: 1px; }
+	.street-hud__tracker-line { margin-top: 4px; font-size: 10px; line-height: 1.35; }
+	.street-hud__tracker-progress { gap: 6px; margin-top: 5px; }
+	.street-hud__tracker-progress-bar { height: 4px; }
+	.street-hud__tracker-pct { font-size: 11px; }
+
+	.street-hud__bonus { top: 70px; left: 10px; gap: 5px; max-width: 180px; padding: 4px 9px 4px 4px; }
+	.street-hud__bonus-stamp { width: 18px; height: 18px; font-size: 11px; }
+	.street-hud__bonus-text { font-size: 10px; letter-spacing: 0; line-height: 1.3; }
+
+	.street-hud__bottom-scroll { bottom: 8px; width: 390px; max-width: calc(100vw - 220px); }
+	.street-hud__bs-roll { top: -3px; bottom: -3px; width: 13px; }
+	.street-hud__bs-roll--l { left: -6px; }
+	.street-hud__bs-roll--r { right: -6px; }
+	.street-hud__bs-roll::before,
+	.street-hud__bs-roll::after { width: 18px; height: 18px; }
+	.street-hud__bs-roll::before { top: -6px; }
+	.street-hud__bs-roll::after { bottom: -6px; }
+	.street-hud__bs-paper { padding: 9px 18px; }
+	.street-hud__bs-cell { gap: 6px; }
+	.street-hud__bs-divider { height: 20px; }
+	.street-hud__bs-icon { width: 22px; height: 22px; }
+	.street-hud__bs-value { font-size: 14px; }
+	.street-hud__bs-label { font-size: 9px; letter-spacing: 1px; }
+	.street-hud__bs-coin { width: 16px; height: 16px; }
+	.street-hud__bs-coin::after { width: 4px; height: 4px; }
+	.street-hud__bs-seal-char { font-size: 11px; }
+
+	.street-hud__scene-hint { bottom: 58px; max-width: 52%; padding: 6px 14px; border-width: 1px; }
+	.street-hud__scene-hint-text { font-size: 11px; letter-spacing: 1px; }
 }
 </style>

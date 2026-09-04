@@ -29,12 +29,12 @@ const PHASE_CONFIG = {
 		sky: { top: '#f3c79e', bottom: '#fce5c5' },
 		fog: { color: '#f3c79e', density: 0.014 },
 		lighting: {
-			ambient: { color: '#fce0c0', intensity: 0.55 },
-			directional: { color: '#ffd99a', intensity: 1.15, angle: { x: 8, y: 18, z: 8 } },
-			hemi: { sky: '#fce5c5', ground: '#a6987f', intensity: 0.4 }
+			ambient: { color: '#f3d3ad', intensity: 0.42 },
+			directional: { color: '#ffd18c', intensity: 0.95, angle: { x: 8, y: 18, z: 8 } },
+			hemi: { sky: '#ebd3b6', ground: '#867866', intensity: 0.3 }
 		},
-		bloomStrength: 0.55,
-		exposure: 1.18
+		bloomStrength: 0.22,
+		exposure: 0.94
 	},
 	noon: {
 		key: 'noon',
@@ -49,12 +49,12 @@ const PHASE_CONFIG = {
 		sky: { top: '#d7c0a2', bottom: '#f6ead7' },
 		fog: { color: '#e0caa8', density: 0.012 },
 		lighting: {
-			ambient: { color: '#f5f0e8', intensity: 0.62 },
-			directional: { color: '#fff0c6', intensity: 1.35, angle: { x: 14, y: 22, z: 6 } },
-			hemi: { sky: '#f6ead7', ground: '#9e9e8e', intensity: 0.45 }
+			ambient: { color: '#ddd5c8', intensity: 0.38 },
+			directional: { color: '#f6ddb0', intensity: 0.92, angle: { x: 14, y: 22, z: 6 } },
+			hemi: { sky: '#ded5c6', ground: '#77766f', intensity: 0.3 }
 		},
-		bloomStrength: 0.45,
-		exposure: 1.25
+		bloomStrength: 0.16,
+		exposure: 0.88
 	},
 	dusk: {
 		key: 'dusk',
@@ -69,12 +69,12 @@ const PHASE_CONFIG = {
 		sky: { top: '#b8633a', bottom: '#f3a86c' },
 		fog: { color: '#c47c4f', density: 0.022 },
 		lighting: {
-			ambient: { color: '#f5c79a', intensity: 0.5 },
-			directional: { color: '#ff9a55', intensity: 1.25, angle: { x: 4, y: 8, z: 10 } },
-			hemi: { sky: '#f3a86c', ground: '#7a4a32', intensity: 0.5 }
+			ambient: { color: '#d59d73', intensity: 0.42 },
+			directional: { color: '#ee8f50', intensity: 1, angle: { x: 4, y: 8, z: 10 } },
+			hemi: { sky: '#d99060', ground: '#60402f', intensity: 0.36 }
 		},
-		bloomStrength: 0.85,
-		exposure: 1.15
+		bloomStrength: 0.3,
+		exposure: 0.9
 	},
 	night: {
 		key: 'night',
@@ -93,8 +93,8 @@ const PHASE_CONFIG = {
 			directional: { color: '#a4b2d8', intensity: 0.65, angle: { x: -2, y: 14, z: 6 } },
 			hemi: { sky: '#1a2444', ground: '#0d0c1c', intensity: 0.42 }
 		},
-		bloomStrength: 1.15,
-		exposure: 0.95
+		bloomStrength: 0.44,
+		exposure: 0.86
 	}
 }
 

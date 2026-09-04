@@ -17,3 +17,23 @@ test('街景为桌面端注册鼠标拖拽输入', () => {
 	assert.match(streetSource, /addEventListener\(['"]mousemove['"]\s*,/)
 	assert.match(streetSource, /addEventListener\(['"]mouseup['"]\s*,/)
 })
+
+test('街景支持双区触控视角、滚轮缩放和相机相对移动', () => {
+	assert.match(streetSource, /moveTouchId/)
+	assert.match(streetSource, /lookTouchId/)
+	assert.match(streetSource, /addEventListener\(['"]wheel['"]\s*,/)
+	assert.match(streetSource, /cameraYaw/)
+	assert.match(streetSource, /roadBounds/)
+	assert.match(streetSource, /cameraBounds/)
+})
+
+test('街景按真实移动距离计步并按帧率调整像素比', () => {
+	assert.match(streetSource, /stepDistanceCarry\s*\+=\s*movedDistance/)
+	assert.match(streetSource, /renderer\.setPixelRatio\(renderPixelRatio\)/)
+	assert.match(streetSource, /fps < 36 && renderer\.shadowMap\.enabled/)
+})
+
+test('水墨屋脊使用内向全景筒覆盖环视边缘', () => {
+	assert.match(streetSource, /CylinderGeometry\(46, 46, 32/)
+	assert.match(streetSource, /THREE\.BackSide/)
+})

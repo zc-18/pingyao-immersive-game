@@ -7,6 +7,11 @@
 		<!-- 上方暗角光层（暮色 / 夜灯笼） -->
 		<view class="street-stage__vignette"></view>
 
+		<!-- 左半屏触控移动反馈；renderjs 仅更新位置与摇杆帽偏移，不参与 Vue 响应式渲染。 -->
+		<view id="street-move-pad" class="street-stage__move-pad" aria-hidden="true">
+			<view id="street-move-knob" class="street-stage__move-knob"></view>
+		</view>
+
 		<!-- 飘落物（按时辰可切换：banyan / cherry / snow / firefly）-->
 		<FallingLeaves :type="seasonType" :density="seasonDensity" />
 
@@ -22,7 +27,7 @@
 				:player-rotation="playerHeading"
 				:buildings="miniMapBuildings"
 				:pois="miniMapPois"
-				:map-size="60"
+				:map-size="54"
 				:label="currentStreet.title"
 			/>
 		</view>
@@ -188,6 +193,7 @@ import { getContextualNpcCue } from '@/common/utils/npc-cue.js'
 import { getEquippedCostumeSkin } from '@/common/data/costumes.js'
 import { loadingTips, poiDeepLines } from '@/common/data/culture-tips.js'
 import { toggleFavoritePoi, isFavoritePoi, getJournalNote, setJournalNote } from '@/common/utils/journal.js'
+import { buildStreetWorldLayout } from '@/common/utils/street-world.js'
 import MiniMap from '@/components/MiniMap.vue'
 import OutfitWardrobe from '@/components/OutfitWardrobe.vue'
 
@@ -221,7 +227,7 @@ const questTargetPoiId = ref('')
 const pendingSceneAfterClaim = ref('')
 const plaqueFlipping = ref(false)
 const currentPhase = ref(getCurrentPhase())
-const playerWorldPos = ref({ x: 0, z: 10 })
+const playerWorldPos = ref({ x: 0, z: 13 })
 const playerHeading = ref(0)
 const wardrobeOpen = ref(false)
 const journalTick = ref(0) // 收藏/札记写入后自增，驱动 poiFavorited/poiNote 重算（数据在 storage，非响应式）
@@ -302,30 +308,28 @@ const questTrackerData = computed(() => {
 const currentRoleBonus = computed(() => trackedQuest.value?.roleBonus?.[userProfile.value.roleId]?.desc || '')
 const interactionCard = computed(() => activePoi.value ? { label: activePoi.value.status === 'quest' ? `查看${activePoi.value.name}` : `走近${activePoi.value.name}` } : null)
 
-/* 迷你地图：从 renderjs 同款换算反推世界坐标 */
+/* 逻辑层与 renderjs 共用同一份街巷世界坐标，避免画面和迷你地图各算一套。 */
+const streetWorldLayout = computed(() => buildStreetWorldLayout(currentStreet.value, streetPois.value))
+
 const miniMapBuildings = computed(() => {
-	return (currentStreet.value.buildings || []).map((b) => {
-		const leftPercent = parseFloat(b.left) / 100
-		const depth = b.depth || 1
-		return {
-			id: b.id,
-			x: (leftPercent - 0.5) * 48,
-			z: -6 - depth * 3,
-			width: 4.3,
-			depth: 3.1
-		}
-	})
+	return streetWorldLayout.value.facades.map((building) => ({
+		id: building.id,
+		x: building.x,
+		z: building.z,
+		width: building.depth,
+		depth: building.width
+	}))
 })
 
 const miniMapPois = computed(() => {
-	return streetPois.value.map((p) => {
-		const mapPos = p.mapPosition || { x: 50, y: 50 }
+	return streetWorldLayout.value.pois.map((placement) => {
+		const poi = streetPois.value.find((item) => item.id === placement.id) || placement
 		return {
-			id: p.id,
-			x: (mapPos.x / 100 - 0.5) * 48,
-			z: (mapPos.y / 100 - 0.5) * 28,
-			isQuest: p.id === questTargetPoiId.value || p.status === 'quest',
-			isHot: p.status === 'hot'
+			id: placement.id,
+			x: placement.x,
+			z: placement.z,
+			isQuest: placement.id === questTargetPoiId.value || poi.status === 'quest',
+			isHot: poi.status === 'hot'
 		}
 	})
 })
@@ -368,13 +372,16 @@ function buildScenePayload() {
 		questTargetPoiId: questTargetPoiId.value,
 		phase: serializePhase(currentPhase.value),
 		effectsEnabled: readEffectsEnabled(),
-		playerSkin: getEquippedCostumeSkin(userProfile.value.roleId)
+		playerSkin: getEquippedCostumeSkin(userProfile.value.roleId),
+		worldLayout: streetWorldLayout.value
 	}
 }
 
 watch(currentStreet, (street) => {
 	activePoiId.value = ''
 	nearActivePoiId.value = ''            // 切换街景后清空贴靠态，否则新街景的 approach 预告被旧 poiId 门控住而哑火
+	playerWorldPos.value = { ...streetWorldLayout.value.spawn }
+	playerHeading.value = 0
 	setCurrentStreetScene(street.id, { sceneMode: 'story' })
 	plaqueFlipping.value = true
 	setTimeout(() => { plaqueFlipping.value = false }, 600)
@@ -863,7 +870,7 @@ function flushSteps(force = false) {
 }
 
 function handlePlayerMove(detail) {
-	// steps 为 renderjs 节流上报时累计的移动帧数；显式传入即按其计（含 0），未传入按 1 兜底——保证步数总量与逐帧上报时一致。
+	// steps 为 renderjs 按实际移动距离（约 0.72m/步）累计的步数；显式传入即按其计（含 0），未传入按 1 兜底。
 	const stepDelta = (detail && detail.steps !== undefined) ? Math.max(0, Number(detail.steps) || 0) : 1
 	pendingStepDelta += stepDelta
 	flushSteps(false)
@@ -985,24 +992,37 @@ let directionalLightRef = null
 let hemiLightRef = null
 let player = null
 let ground = null
+let environment = []
 let buildings = []
 let poiBeacons = []
 let decorations = []
+let lanternLights = []
 let particles = null
 let animationId = null
 let isInitialized = false
 let lastTime = Date.now()
 let joystickInput = { dx: 0, dy: 0 }
-/* 移动上报节流：累计移动帧数（即步数增量），每 ~110ms 汇报一次，避免每帧 emit 以 ~60次/秒 轰炸
-   渲染层↔逻辑层桥（callMethod）并触发 MiniMap 每帧重渲。步数总量与朝向解算保持不变。 */
+let movementVelocity = { x: 0, z: 0 }
+let stepDistanceCarry = 0
 let moveStepAccum = 0
 let lastMoveEmit = 0
 let wasMoving = false
 let currentPhaseData = null
+let currentWorldLayout = null
 let ownerInstanceRef = null
 let resizeHandlerRef = null
-/* 复用对象，杜绝每帧分配：相机跟随目标向量（原先 animate 每帧 new THREE.Vector3，60fps 下每分钟 ~3600 次分配 → GC 抖动）。*/
 let cameraTargetVec = null
+let cameraPositionVec = null
+let cameraYaw = 0
+let cameraYawCenter = 0
+let cameraPitch = 0.38
+let cameraDistance = 7.8
+let walkCycle = 0
+let renderPixelRatio = 1
+let qualitySampleStartedAt = 0
+let qualityFrameCount = 0
+let qualityAdjusted = false
+let assetLoadGeneration = 0
 /* 摇杆监听清理句柄：createJoystick 绑定时赋值，dispose/reinit 时调用，避免重复进入时监听堆叠（僵尸监听泄漏）。*/
 let joystickCleanup = null
 /* 画面特效（Bloom 后处理）总开关：由逻辑层依 gameSettings.enableEffect 下发。关闭则直接渲染、跳过 composer，
@@ -1217,7 +1237,82 @@ export default {
 				const tex = new THREE.CanvasTexture(canvas)
 				tex.wrapS = THREE.RepeatWrapping
 				tex.wrapT = THREE.RepeatWrapping
-				tex.repeat.set(8, 8)
+				tex.repeat.set(5, 16)
+				tex.colorSpace = THREE.SRGBColorSpace
+				if (renderer && renderer.capabilities) tex.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy())
+				tex.needsUpdate = true
+				return tex
+			})
+		},
+		/* 夯土地面：街道两侧压暗，避免整屏都铺同一块青石纹理。 */
+		makeEarthTexture() {
+			return this.getTexture('packed_earth', () => {
+				const size = 512
+				const canvas = this.makeCanvas(size)
+				const ctx = canvas.getContext('2d')
+				ctx.fillStyle = '#665d4f'
+				ctx.fillRect(0, 0, size, size)
+				for (let i = 0; i < 420; i++) {
+					const shade = 72 + Math.floor(Math.random() * 42)
+					ctx.fillStyle = `rgba(${shade},${shade - 5},${shade - 12},${0.05 + Math.random() * 0.1})`
+					ctx.beginPath()
+					ctx.arc(Math.random() * size, Math.random() * size, 1 + Math.random() * 5, 0, Math.PI * 2)
+					ctx.fill()
+				}
+				const tex = new THREE.CanvasTexture(canvas)
+				tex.wrapS = THREE.RepeatWrapping
+				tex.wrapT = THREE.RepeatWrapping
+				tex.repeat.set(7, 10)
+				tex.colorSpace = THREE.SRGBColorSpace
+				tex.needsUpdate = true
+				return tex
+			})
+		},
+		makeSignTexture(label, style) {
+			const safeLabel = String(label || '古城人家').slice(0, 8)
+			return this.getTexture('sign_' + style + '_' + safeLabel, () => {
+				const canvas = document.createElement('canvas')
+				canvas.width = 512
+				canvas.height = 192
+				const ctx = canvas.getContext('2d')
+				const red = style === 'temple' || style === 'gate' ? '#7e2527' : '#48281b'
+				ctx.fillStyle = red
+				ctx.fillRect(0, 0, canvas.width, canvas.height)
+				ctx.strokeStyle = '#c9a45f'
+				ctx.lineWidth = 12
+				ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20)
+				ctx.strokeStyle = 'rgba(255,232,180,0.42)'
+				ctx.lineWidth = 3
+				ctx.strokeRect(25, 25, canvas.width - 50, canvas.height - 50)
+				ctx.fillStyle = '#f2ddb0'
+				ctx.textAlign = 'center'
+				ctx.textBaseline = 'middle'
+				ctx.font = safeLabel.length > 5 ? '700 54px KaiTi, STKaiti, serif' : '700 66px KaiTi, STKaiti, serif'
+				ctx.fillText(safeLabel, canvas.width / 2, canvas.height / 2 + 3)
+				const tex = new THREE.CanvasTexture(canvas)
+				tex.colorSpace = THREE.SRGBColorSpace
+				tex.needsUpdate = true
+				return tex
+			})
+		},
+		makePoiLabelTexture(label) {
+			const safeLabel = String(label || '古城点位').slice(0, 8)
+			return this.getTexture('poi_label_' + safeLabel, () => {
+				const canvas = document.createElement('canvas')
+				canvas.width = 512
+				canvas.height = 128
+				const ctx = canvas.getContext('2d')
+				ctx.fillStyle = 'rgba(24,16,11,0.9)'
+				ctx.fillRect(8, 12, 496, 104)
+				ctx.strokeStyle = 'rgba(224,190,118,0.9)'
+				ctx.lineWidth = 5
+				ctx.strokeRect(13, 17, 486, 94)
+				ctx.fillStyle = '#f3dfb2'
+				ctx.textAlign = 'center'
+				ctx.textBaseline = 'middle'
+				ctx.font = '700 48px KaiTi, STKaiti, serif'
+				ctx.fillText(safeLabel, 256, 65)
+				const tex = new THREE.CanvasTexture(canvas)
 				tex.colorSpace = THREE.SRGBColorSpace
 				tex.needsUpdate = true
 				return tex
@@ -1227,7 +1322,8 @@ export default {
 		makeSkyTexture(topHex, bottomHex, withStars) {
 			const key = 'sky_' + topHex + '_' + bottomHex + (withStars ? '_star' : '')
 			if (skyTextureCache[key]) return skyTextureCache[key]
-			const w = 256
+			/* 2:1 画布匹配横屏，避免小星点被背景纹理横向拉成白色椭圆。 */
+			const w = 1024
 			const h = 512
 			const canvas = document.createElement('canvas')
 			canvas.width = w
@@ -1240,25 +1336,13 @@ export default {
 			ctx.fillRect(0, 0, w, h)
 			if (withStars) {
 				// 仅在上半部撒星，避免压到地平线
-				for (let i = 0; i < 110; i++) {
+				for (let i = 0; i < 150; i++) {
 					const sx = Math.random() * w
-					const sy = Math.random() * h * 0.55
-					const r = Math.random() < 0.85 ? 0.6 + Math.random() * 0.8 : 1.4 + Math.random() * 1.0
-					ctx.fillStyle = `rgba(255, 250, 235, ${0.45 + Math.random() * 0.5})`
+					const sy = Math.random() * h * 0.62
+					const r = Math.random() < 0.92 ? 0.35 + Math.random() * 0.55 : 0.9 + Math.random() * 0.55
+					ctx.fillStyle = `rgba(228, 224, 202, ${0.28 + Math.random() * 0.42})`
 					ctx.beginPath()
 					ctx.arc(sx, sy, r, 0, Math.PI * 2)
-					ctx.fill()
-				}
-				// 少量带光晕的亮星
-				for (let i = 0; i < 6; i++) {
-					const sx = Math.random() * w
-					const sy = Math.random() * h * 0.4
-					const halo = ctx.createRadialGradient(sx, sy, 0, sx, sy, 6)
-					halo.addColorStop(0, 'rgba(255, 248, 220, 0.9)')
-					halo.addColorStop(1, 'rgba(255, 248, 220, 0)')
-					ctx.fillStyle = halo
-					ctx.beginPath()
-					ctx.arc(sx, sy, 6, 0, Math.PI * 2)
 					ctx.fill()
 				}
 			}
@@ -1409,28 +1493,38 @@ export default {
 			const width = container.clientWidth || window.innerWidth
 			const height = container.clientHeight || window.innerHeight
 			scene = new THREE.Scene()
+			currentWorldLayout = data.worldLayout || null
 
 			const phase = data.phase || null
 			const fallbackSky = colorHex(data.streetData.sceneTone?.skyTop, 0xD7C0A2)
 			const skyColor = phase ? colorHex(phase.sky?.top, fallbackSky) : fallbackSky
 			const fogColor = phase ? colorHex(phase.fog?.color, skyColor) : skyColor
-			const fogDensity = phase?.fog?.density || data.streetData.ambience?.fogDensity || 0.02
+			const fogDensity = phase?.fog?.density ?? data.streetData.ambience?.fogDensity ?? 0.02
 
 			/* 渐变天空（夜晚带星空），替代单色背景 */
 			currentPhaseData = phase
 			this.refreshSky(phase, data.streetData.sceneTone?.skyTop, data.streetData.sceneTone?.skyBottom)
 			scene.fog = new THREE.FogExp2(fogColor, fogDensity)
 
-			camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 100)
-			camera.position.set(0, 5, 10)
+			const wideLandscape = width / Math.max(1, height) > 1.85
+			camera = new THREE.PerspectiveCamera(wideLandscape ? 52 : 58, width / height, 0.1, 130)
+			camera.position.set(0, 4.4, 12)
+			cameraYawCenter = Number(data.streetData.recommendedCamera?.azimuth || 0)
+			cameraYaw = cameraYawCenter
+			cameraPitch = 0.38
+			cameraDistance = Math.max(6.8, Math.min(9, Number(data.streetData.recommendedCamera?.distance || 10) * 0.76))
 
+			const compactDevice = Math.min(width, height) <= 520 || /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent || '')
+			renderPixelRatio = Math.min(window.devicePixelRatio || 1, compactDevice ? 1.25 : 1.6)
 			renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
 			renderer.setSize(width, height)
-			renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-			renderer.shadowMap.enabled = true
+			renderer.setPixelRatio(renderPixelRatio)
+			renderer.shadowMap.enabled = !compactDevice
 			renderer.shadowMap.type = THREE.PCFSoftShadowMap
+			if ('outputColorSpace' in renderer) renderer.outputColorSpace = THREE.SRGBColorSpace
+			else renderer.outputEncoding = THREE.sRGBEncoding
 			renderer.toneMapping = THREE.ACESFilmicToneMapping
-			renderer.toneMappingExposure = phase?.exposure || 1.15
+			renderer.toneMappingExposure = phase?.exposure ?? 1.05
 			renderer.domElement.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;'
 			container.appendChild(renderer.domElement)
 
@@ -1442,7 +1536,8 @@ export default {
 				try {
 					composer = new THREE.EffectComposer(renderer)
 					composer.addPass(new THREE.RenderPass(scene, camera))
-					bloomPassRef = new THREE.UnrealBloomPass(new THREE.Vector2(width, height), phase?.bloomStrength || 0.85, 0.5, 0.6)
+					if (typeof composer.setPixelRatio === 'function') composer.setPixelRatio(renderPixelRatio)
+					bloomPassRef = new THREE.UnrealBloomPass(new THREE.Vector2(width, height), phase?.bloomStrength ?? 0.45, 0.28, 0.78)
 					composer.addPass(bloomPassRef)
 				} catch (err) {
 					composer = null
@@ -1463,6 +1558,12 @@ export default {
 			}
 
 			currentPhaseData = phase
+			qualitySampleStartedAt = performance.now()
+			qualityFrameCount = 0
+			qualityAdjusted = false
+			movementVelocity.x = 0
+			movementVelocity.z = 0
+			stepDistanceCarry = 0
 			this.loadScene(data)
 			emit('render-stage', '点亮街景…')
 			this.createJoystick()
@@ -1474,18 +1575,11 @@ export default {
 			this.clearScene()
 
 			const phase = data.phase || currentPhaseData
-
-			const groundGeometry = new THREE.PlaneGeometry(60, 60, 24, 24)
-			const groundMaterial = new THREE.MeshStandardMaterial({
-				color: colorHex(data.streetData.ambience?.groundColor, 0x9e9e8e),
-				map: this.makeStoneGroundTexture(),
-				roughness: 0.92,
-				metalness: 0.08
-			})
-			ground = new THREE.Mesh(groundGeometry, groundMaterial)
-			ground.rotation.x = -Math.PI / 2
-			ground.receiveShadow = true
-			scene.add(ground)
+			currentWorldLayout = data.worldLayout || currentWorldLayout
+			cameraYawCenter = Number(data.streetData.recommendedCamera?.azimuth || 0)
+			cameraYaw = cameraYawCenter
+			cameraPitch = 0.38
+			cameraDistance = Math.max(6.8, Math.min(9, Number(data.streetData.recommendedCamera?.distance || 10) * 0.76))
 
 			const ambColor = phase?.lighting?.ambient?.color
 			const ambIntensity = phase?.lighting?.ambient?.intensity
@@ -1498,6 +1592,15 @@ export default {
 			const angle = phase?.lighting?.directional?.angle || { x: 12, y: 16, z: 10 }
 			directionalLightRef.position.set(angle.x, angle.y, angle.z)
 			directionalLightRef.castShadow = true
+			directionalLightRef.shadow.mapSize.set(Math.min(window.innerWidth, window.innerHeight) <= 520 ? 1024 : 2048, Math.min(window.innerWidth, window.innerHeight) <= 520 ? 1024 : 2048)
+			directionalLightRef.shadow.camera.left = -24
+			directionalLightRef.shadow.camera.right = 24
+			directionalLightRef.shadow.camera.top = 28
+			directionalLightRef.shadow.camera.bottom = -26
+			directionalLightRef.shadow.camera.near = 0.5
+			directionalLightRef.shadow.camera.far = 70
+			directionalLightRef.shadow.bias = -0.00035
+			directionalLightRef.shadow.normalBias = 0.025
 			scene.add(directionalLightRef)
 
 			/* 半球光：天 / 地双色补光，让 Low-Poly 国风更柔 */
@@ -1512,9 +1615,10 @@ export default {
 			hemiLightRef.position.set(0, 24, 0)
 			scene.add(hemiLightRef)
 
-			this.createBuildings(data.streetData)
-			this.createPoiBeacons(data.pois, data.streetData)
-			this.createDecorations(data.streetData)
+			this.createStreetEnvironment(data.streetData, currentWorldLayout)
+			this.createBuildings(data.streetData, currentWorldLayout)
+			this.createPoiBeacons(data.pois, data.streetData, currentWorldLayout)
+			this.createDecorations(data.streetData, currentWorldLayout)
 			this.createParticles(phase)
 			this.createPlayer()
 			this.highlightQuestPoi(data.questTargetPoiId)
@@ -1522,191 +1626,395 @@ export default {
 			if (phase) this.applyPhase(phase)
 			emit('render-progress', 100)
 		},
-		createBuildings(streetData) {
-			(streetData.buildings || []).forEach((building) => {
-				const leftPercent = parseFloat(building.left) / 100
-				const x = (leftPercent - 0.5) * 48
-				const depth = building.depth || 1
-				const z = -6 - depth * 3
-				const group = new THREE.Group()
+		createStreetEnvironment(streetData, worldLayout) {
+			const earthMaterial = new THREE.MeshStandardMaterial({
+				color: colorHex(streetData.ambience?.groundColor, 0x827969),
+				map: this.makeEarthTexture(),
+				roughness: 1,
+				metalness: 0
+			})
+			ground = new THREE.Mesh(new THREE.PlaneGeometry(56, 72), earthMaterial)
+			ground.rotation.x = -Math.PI / 2
+			ground.position.set(0, -0.04, -7)
+			ground.receiveShadow = true
+			scene.add(ground)
 
-				const bodyGeometry = new THREE.BoxGeometry(4.3, 3.2 + depth * 0.2, 3.1)
-				/* 青砖墙纹理：庙宇/城门偏暖砖，民居/商铺偏青灰砖 */
-				const warmStyle = building.style === 'gate' || building.style === 'temple'
-				const brickBase = warmStyle ? '#b89a72' : '#9aa093'
-				const brickTex = this.makeBrickTexture(brickBase, '#5b5247')
+			const road = new THREE.Mesh(
+				new THREE.BoxGeometry(9.3, 0.12, 59),
+				new THREE.MeshStandardMaterial({
+					color: 0x8f8d84,
+					map: this.makeStoneGroundTexture(),
+					roughness: 0.96,
+					metalness: 0.02
+				})
+			)
+			road.position.set(0, 0.02, -6.5)
+			road.receiveShadow = true
+			scene.add(road)
+			environment.push(road)
+
+			;[-1, 1].forEach((side) => {
+				const gutter = new THREE.Mesh(
+					new THREE.BoxGeometry(0.42, 0.08, 59),
+					new THREE.MeshStandardMaterial({ color: 0x34342f, roughness: 1 })
+				)
+				gutter.position.set(side * 4.82, 0.01, -6.5)
+				gutter.receiveShadow = true
+				scene.add(gutter)
+				environment.push(gutter)
+
+				const curb = new THREE.Mesh(
+					new THREE.BoxGeometry(0.24, 0.2, 59),
+					new THREE.MeshStandardMaterial({ color: 0x79796f, roughness: 0.98 })
+				)
+				curb.position.set(side * 4.56, 0.08, -6.5)
+				curb.receiveShadow = true
+				scene.add(curb)
+				environment.push(curb)
+			})
+
+			/* 街道尽端门楼建立视觉锚点，避免道路直接掉进雾里。 */
+			const gate = new THREE.Group()
+			const gateWallMat = new THREE.MeshStandardMaterial({
+				color: 0xd0c0a4,
+				map: this.makeBrickTexture('#988a75', '#524a40'),
+				roughness: 0.94
+			})
+			const gateWoodMat = new THREE.MeshStandardMaterial({
+				color: 0xffffff,
+				map: this.makeWoodTexture('#47271b'),
+				roughness: 0.84
+			})
+			;[-1, 1].forEach((side) => {
+				const pier = new THREE.Mesh(new THREE.BoxGeometry(2.4, 4.8, 2), gateWallMat)
+				pier.position.set(side * 3.45, 2.4, 0)
+				pier.castShadow = true
+				pier.receiveShadow = true
+				gate.add(pier)
+			})
+			const lintel = new THREE.Mesh(new THREE.BoxGeometry(9.2, 0.72, 1.65), gateWoodMat)
+			lintel.position.y = 4.55
+			lintel.castShadow = true
+			gate.add(lintel)
+			this.addPitchedRoof(gate, 10.1, 2.6, 4.9, '#342d2b')
+			const gateSign = new THREE.Mesh(
+				new THREE.PlaneGeometry(2.7, 0.84),
+				new THREE.MeshBasicMaterial({ map: this.makeSignTexture(streetData.title || '平遥古城', 'gate'), transparent: true, toneMapped: false })
+			)
+			gateSign.position.set(0, 4.55, 1.02)
+			gate.add(gateSign)
+			gate.position.set(0, 0, -28.2)
+			scene.add(gate)
+			environment.push(gate)
+
+			/* 生成式水墨屋脊只作受雾效影响的远景层，近景建筑与碰撞仍全部由 3D 几何承担。 */
+			const phaseKey = currentPhaseData?.key || 'noon'
+			const backdropTints = { dawn: 0xB59678, noon: 0x8F8A80, dusk: 0x765044, night: 0x31384A }
+			const backdropMaterial = new THREE.MeshBasicMaterial({
+				color: backdropTints[phaseKey] || backdropTints.noon,
+				map: textureCache.pingyao_roofline || null,
+				transparent: true,
+				opacity: phaseKey === 'night' ? 0.48 : 0.42,
+				depthWrite: false,
+				fog: true,
+				toneMapped: false,
+				blending: THREE.MultiplyBlending
+			})
+			const backdrop = new THREE.Mesh(
+				new THREE.CylinderGeometry(46, 46, 32, 64, 1, true),
+				backdropMaterial
+			)
+			backdrop.material.side = THREE.BackSide
+			backdrop.position.set(0, 12, -7)
+			backdrop.rotation.y = Math.PI
+			backdrop.userData.isRooflineBackdrop = true
+			backdrop.renderOrder = -1
+			scene.add(backdrop)
+			environment.push(backdrop)
+
+			if (!textureCache.pingyao_roofline) {
+				const generation = assetLoadGeneration
+				new THREE.TextureLoader().load('/static/img/3d/pingyao-roofline-panorama.webp', (texture) => {
+					if (generation !== assetLoadGeneration || !renderer) {
+						texture.dispose()
+						return
+					}
+					texture.colorSpace = THREE.SRGBColorSpace
+					texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy())
+					texture.needsUpdate = true
+					textureCache.pingyao_roofline = texture
+					environment.forEach((item) => {
+						if (item.userData?.isRooflineBackdrop && item.material) {
+							item.material.map = texture
+							item.material.needsUpdate = true
+						}
+					})
+				}, undefined, () => {})
+			}
+		},
+		getBuildingPalette(style) {
+			const palettes = {
+				gate: { brick: '#8f7357', mortar: '#443c35', wall: 0xb99e79, wood: '#4b1e19', roof: '#292220', accent: 0x832827 },
+				tower: { brick: '#777169', mortar: '#3e3a36', wall: 0xa79b88, wood: '#42241b', roof: '#292827', accent: 0x842c28 },
+				temple: { brick: '#937c65', mortar: '#483f38', wall: 0xbcaa8e, wood: '#53241c', roof: '#2d2825', accent: 0x902a27 },
+				bank: { brick: '#747b75', mortar: '#41443f', wall: 0xa8aa9e, wood: '#43271d', roof: '#282a2a', accent: 0x742422 },
+				shop: { brick: '#7c807b', mortar: '#41443f', wall: 0xaaa79c, wood: '#4a2a1d', roof: '#2c2d2d', accent: 0x942f2b },
+				craft: { brick: '#887461', mortar: '#473e37', wall: 0xae9c84, wood: '#4a291c', roof: '#2e2b2a', accent: 0x792a24 },
+				food: { brick: '#8b7561', mortar: '#493f37', wall: 0xb19d83, wood: '#50281b', roof: '#302b28', accent: 0x923128 },
+				wall: { brick: '#79786f', mortar: '#41413c', wall: 0x9f9b8f, wood: '#43271d', roof: '#2d2d2d', accent: 0x772a25 },
+				courtyard: { brick: '#7b7e78', mortar: '#41443f', wall: 0xa5a398, wood: '#45281d', roof: '#292b2b', accent: 0x812b27 }
+			}
+			return palettes[style] || palettes.courtyard
+		},
+		addPitchedRoof(group, width, depth, baseY, roofHex) {
+			const roofMaterial = new THREE.MeshStandardMaterial({
+				color: 0xffffff,
+				map: this.makeRoofTexture(roofHex),
+				roughness: 0.96,
+				metalness: 0,
+				flatShading: true
+			})
+			const pitch = 0.44
+			;[-1, 1].forEach((side) => {
+				const plane = new THREE.Mesh(new THREE.BoxGeometry(width + 0.9, 0.14, depth * 0.64), roofMaterial)
+				plane.position.set(0, baseY + 0.45, side * depth * 0.27)
+				plane.rotation.x = side > 0 ? pitch : -pitch
+				plane.castShadow = true
+				plane.receiveShadow = true
+				group.add(plane)
+			})
+			const ridge = new THREE.Mesh(
+				new THREE.CylinderGeometry(0.1, 0.1, width + 1.05, 8),
+				new THREE.MeshStandardMaterial({ color: 0x292a2a, roughness: 0.92 })
+			)
+			ridge.rotation.z = Math.PI / 2
+			ridge.position.y = baseY + 1.0
+			ridge.castShadow = true
+			group.add(ridge)
+		},
+		createBuildings(streetData, worldLayout) {
+			const facades = worldLayout?.facades || []
+			facades.forEach((building) => {
+				const group = new THREE.Group()
+				const palette = this.getBuildingPalette(building.style)
 				const bodyMaterial = new THREE.MeshStandardMaterial({
-					color: building.style === 'gate' ? 0xe8dcc4 : building.style === 'temple' ? 0xf0e6d4 : 0xe6ddcc,
-					map: brickTex,
-					roughness: 0.92,
+					color: palette.wall,
+					map: this.makeBrickTexture(palette.brick, palette.mortar),
+					roughness: 0.95,
+					metalness: 0,
 					flatShading: true
 				})
-				const body = new THREE.Mesh(bodyGeometry, bodyMaterial)
-				body.position.y = 1.6
+				const body = new THREE.Mesh(new THREE.BoxGeometry(building.width, building.height, building.depth), bodyMaterial)
+				body.position.y = building.height / 2 + 0.16
 				body.castShadow = true
 				body.receiveShadow = true
 				group.add(body)
 
-				const roofGeometry = new THREE.ConeGeometry(3.1, 1.3, 4)
-				const roofMaterial = new THREE.MeshStandardMaterial({
-					color: building.style === 'gate' ? 0xb89a86 : 0xcfcfcf,
-					map: this.makeRoofTexture(building.style === 'gate' ? '#5a3a2b' : '#3d3d3d'),
-					roughness: 0.92,
-					flatShading: true
-				})
-				const roof = new THREE.Mesh(roofGeometry, roofMaterial)
-				roof.position.y = 3.9 + depth * 0.1
-				roof.rotation.y = Math.PI / 4
-				group.add(roof)
-
-				/* 灯笼 - 提升发光 */
-				const lantern = new THREE.Mesh(
-					new THREE.SphereGeometry(0.26, 10, 10),
-					new THREE.MeshStandardMaterial({
-						color: 0xC41E3A,
-						emissive: 0xC41E3A,
-						emissiveIntensity: building.poiId ? 0.95 : 0.45
-					})
+				const plinth = new THREE.Mesh(
+					new THREE.BoxGeometry(building.width + 0.22, 0.32, building.depth + 0.18),
+					new THREE.MeshStandardMaterial({ color: 0x747267, roughness: 1 })
 				)
-				lantern.position.set(1.4, 2.4, 1.55)
-				group.add(lantern)
+				plinth.position.y = 0.16
+				plinth.receiveShadow = true
+				group.add(plinth)
 
-				/* 程序化建筑细节：门框 / 木格窗 / 檐下斗拱 / 正脊 */
-				this.addBuildingDetails(group, building, depth)
+				this.addPitchedRoof(group, building.width, building.depth, building.height + 0.16, palette.roof)
+				this.addBuildingDetails(group, building, palette)
 
-				group.position.set(x, 0, z)
+				if (building.style === 'tower' || building.style === 'gate') {
+					const upper = new THREE.Mesh(
+						new THREE.BoxGeometry(building.width * 0.55, 1.15, building.depth * 0.72),
+						bodyMaterial
+					)
+					upper.position.y = building.height + 1.45
+					upper.castShadow = true
+					group.add(upper)
+					this.addPitchedRoof(group, building.width * 0.68, building.depth * 0.8, building.height + 2.0, palette.roof)
+				}
+
+				group.position.set(building.x, 0, building.z)
+				group.rotation.y = building.rotationY
 				group.userData = { buildingId: building.id, poiId: building.poiId || '', type: building.style || 'building' }
 				scene.add(group)
 				buildings.push(group)
 			})
 		},
-		/* 给单栋建筑 group 追加几何细节（全部 add 进 group，随 clearScene 一起回收） */
-		addBuildingDetails(group, building, depth) {
-			const bodyH = 3.2 + depth * 0.2
-			const halfW = 2.15
-			const frontZ = 1.56  // body 半深 3.1/2 ≈ 1.55，贴在朝玩家正面
-			const woodTex = this.makeWoodTexture('#5a3320')
-			const frameMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: woodTex, roughness: 0.85, flatShading: true })
+		addBuildingDetails(group, building, palette) {
+			const width = building.width
+			const height = building.height
+			const depth = building.depth
+			const frontZ = depth / 2 + 0.025
+			const woodTex = this.makeWoodTexture(palette.wood)
+			const frameMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: woodTex, roughness: 0.86, flatShading: true })
+			const doorW = building.style === 'gate' ? 2.1 : 1.25
+			const doorH = Math.min(2.35, height * 0.62)
+			const doorMat = new THREE.MeshStandardMaterial({ color: 0x4a291c, map: woodTex, roughness: 0.88, side: THREE.DoubleSide })
+			const door = new THREE.Mesh(new THREE.PlaneGeometry(doorW, doorH), doorMat)
+			door.position.set(0, doorH / 2 + 0.18, frontZ + 0.02)
+			group.add(door)
 
-			/* 门框 + 门洞（朝玩家正面，居中偏下） */
-			const doorW = 1.1
-			const doorH = Math.min(2.0, bodyH * 0.62)
-			const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(doorW + 0.34, doorH + 0.28, 0.16), frameMat)
-			doorFrame.position.set(0, doorH / 2 + 0.05, frontZ)
-			group.add(doorFrame)
-			const doorPanel = new THREE.Mesh(
-				new THREE.PlaneGeometry(doorW, doorH),
-				new THREE.MeshStandardMaterial({ color: 0x3a2415, map: woodTex, roughness: 0.8, side: THREE.DoubleSide, flatShading: true })
+			const threshold = new THREE.Mesh(
+				new THREE.BoxGeometry(doorW + 0.52, 0.16, 0.46),
+				new THREE.MeshStandardMaterial({ color: 0x68665e, roughness: 1 })
 			)
-			doorPanel.position.set(0, doorH / 2 + 0.05, frontZ + 0.09)
-			group.add(doorPanel)
-			// 门钉/门环点缀
-			const knob = new THREE.Mesh(
-				new THREE.SphereGeometry(0.07, 8, 8),
-				new THREE.MeshStandardMaterial({ color: 0xC9A227, emissive: 0x3a2c00, roughness: 0.4, metalness: 0.6 })
-			)
-			knob.position.set(0.22, doorH / 2 + 0.05, frontZ + 0.12)
-			group.add(knob)
+			threshold.position.set(0, 0.2, frontZ + 0.18)
+			threshold.receiveShadow = true
+			group.add(threshold)
 
-			/* 木格窗：正面门两侧各一扇，夜里靠 emissive 透光（userData.isWindowGlow） */
-			const latticeTex = this.makeLatticeTexture('#6b3a1c')
-			const winSize = 0.95
-			const winY = Math.min(bodyH * 0.7, doorH + 0.55)
-			const winMatBase = () => new THREE.MeshStandardMaterial({
-				color: 0xffffff,
-				map: latticeTex,
-				emissive: 0xffcf85,
-				emissiveMap: latticeTex,
-				emissiveIntensity: 0.0,
-				roughness: 0.7,
-				side: THREE.DoubleSide,
-				flatShading: true
+			if (building.style === 'gate' || building.style === 'bank') {
+				const studMaterial = new THREE.MeshStandardMaterial({ color: 0xb08a45, roughness: 0.58, metalness: 0.3 })
+				;[-1, 1].forEach((column) => {
+					;[0.7, 1.25, 1.8].forEach((y) => {
+						const stud = new THREE.Mesh(new THREE.SphereGeometry(0.045, 6, 5), studMaterial)
+						stud.position.set(column * doorW * 0.27, Math.min(y, doorH - 0.18), frontZ + 0.06)
+						group.add(stud)
+					})
+				})
+			}
+
+			;[-1, 1].forEach((side) => {
+				const post = new THREE.Mesh(new THREE.BoxGeometry(0.16, doorH + 0.28, 0.18), frameMat)
+				post.position.set(side * (doorW / 2 + 0.09), doorH / 2 + 0.18, frontZ + 0.01)
+				post.castShadow = true
+				group.add(post)
 			})
-			;[-1, 1].forEach((sign) => {
-				const win = new THREE.Mesh(new THREE.PlaneGeometry(winSize, winSize), winMatBase())
-				win.position.set(sign * 1.25, winY, frontZ + 0.02)
+			const doorLintel = new THREE.Mesh(new THREE.BoxGeometry(doorW + 0.48, 0.18, 0.2), frameMat)
+			doorLintel.position.set(0, doorH + 0.27, frontZ + 0.01)
+			group.add(doorLintel)
+
+			const latticeTex = this.makeLatticeTexture('#60351f')
+			const winW = Math.min(1.28, width * 0.15)
+			const winH = 1.05
+			;[-1, 1].forEach((side) => {
+				const winMaterial = new THREE.MeshStandardMaterial({
+					color: 0xf4e5c6,
+					map: latticeTex,
+					emissive: 0xffc777,
+					emissiveMap: latticeTex,
+					emissiveIntensity: 0,
+					roughness: 0.78,
+					side: THREE.DoubleSide
+				})
+				const win = new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), winMaterial)
+				win.position.set(side * width * 0.28, Math.min(height * 0.6, 2.25), frontZ + 0.025)
 				win.userData.isWindowGlow = true
 				group.add(win)
-				// 窗楣木条
-				const lintel = new THREE.Mesh(new THREE.BoxGeometry(winSize + 0.2, 0.12, 0.14), frameMat)
-				lintel.position.set(sign * 1.25, winY + winSize / 2 + 0.12, frontZ)
-				group.add(lintel)
 			})
 
-			/* 檐下斗拱：屋檐下沿一排小木块 */
-			const eaveY = bodyH + 0.42
-			const dougongMat = new THREE.MeshStandardMaterial({ color: 0x7a4a2c, map: woodTex, roughness: 0.85, flatShading: true })
-			for (let i = -2; i <= 2; i++) {
-				const dg = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.26, 0.34), dougongMat)
-				dg.position.set(i * 0.85, eaveY, frontZ - 0.1)
-				group.add(dg)
+			const sign = new THREE.Mesh(
+				new THREE.PlaneGeometry(Math.min(3.2, width * 0.42), 0.82),
+				new THREE.MeshBasicMaterial({ map: this.makeSignTexture(building.label, building.style), transparent: true, toneMapped: false })
+			)
+			sign.position.set(0, Math.min(height - 0.45, doorH + 0.92), frontZ + 0.055)
+			sign.renderOrder = 2
+			group.add(sign)
+
+			const eaveY = height + 0.05
+			for (let i = -3; i <= 3; i += 1) {
+				const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.24, 0.42), frameMat)
+				bracket.position.set(i * (width * 0.12), eaveY, frontZ - 0.05)
+				bracket.castShadow = true
+				group.add(bracket)
 			}
-			// 檐枋横木（贯穿正面屋檐）
-			const beam = new THREE.Mesh(new THREE.BoxGeometry(halfW * 2 + 0.3, 0.22, 0.26), frameMat)
-			beam.position.set(0, eaveY + 0.22, frontZ - 0.06)
+			const beam = new THREE.Mesh(new THREE.BoxGeometry(width + 0.35, 0.2, 0.22), frameMat)
+			beam.position.set(0, eaveY + 0.18, frontZ - 0.04)
+			beam.castShadow = true
 			group.add(beam)
 
-			/* 正脊：屋顶顶端一根脊，配两端小脊兽 */
-			const ridge = new THREE.Mesh(
-				new THREE.BoxGeometry(2.4, 0.16, 0.16),
-				new THREE.MeshStandardMaterial({ color: 0x2c2c2c, roughness: 0.9, flatShading: true })
-			)
-			ridge.position.set(0, 4.7 + depth * 0.1, 0)
-			ridge.rotation.y = Math.PI / 4
-			group.add(ridge)
+			;[-1, 1].forEach((side) => {
+				const lantern = new THREE.Mesh(
+					new THREE.CylinderGeometry(0.2, 0.25, 0.55, 12),
+					new THREE.MeshStandardMaterial({
+						color: palette.accent,
+						emissive: palette.accent,
+						emissiveIntensity: building.poiId ? 0.78 : 0.32,
+						roughness: 0.55
+					})
+				)
+				lantern.position.set(side * Math.min(width * 0.25, 1.8), Math.min(height - 0.6, 2.65), frontZ + 0.18)
+				lantern.userData.isBuildingLantern = true
+				group.add(lantern)
+			})
 		},
-		createPoiBeacons(pois, streetData) {
-			(pois || []).forEach((poi) => {
-				const mapPos = poi.mapPosition
-				const x = (mapPos.x / 100 - 0.5) * 48
-				const z = (mapPos.y / 100 - 0.5) * 28
+		createPoiBeacons(pois, streetData, worldLayout) {
+			const placements = worldLayout?.pois || []
+			;(pois || []).forEach((poi, index) => {
+				const placement = placements.find((item) => item.id === poi.id) || {
+					x: index % 2 === 0 ? -2.6 : 2.6,
+					z: 4 - index * 7.5
+				}
+				const x = placement.x
+				const z = placement.z
 
 				const group = new THREE.Group()
+				const baseColor = poi.status === 'quest' ? 0xC99224 : 0xB98C4A
 
-				/* 地面光圈（金色光柱底盘）*/
-				const ringGeometry = new THREE.TorusGeometry(1.05, 0.14, 12, 24)
+				/* 低矮印章式地标：保留可发现性，但不再用四米高光柱遮挡建筑。 */
+				const ringGeometry = new THREE.TorusGeometry(0.72, 0.07, 10, 28)
 				const ringMaterial = new THREE.MeshStandardMaterial({
-					color: poi.status === 'quest' ? 0xFFD700 : 0xD4A574,
-					emissive: poi.status === 'quest' ? 0xFFD700 : 0xD4A574,
-					emissiveIntensity: poi.status === 'quest' ? 1.2 : 0.7,
+					color: baseColor,
+					emissive: baseColor,
+					emissiveIntensity: poi.status === 'quest' ? 0.72 : 0.34,
+					roughness: 0.58,
 					flatShading: true
 				})
 				const ring = new THREE.Mesh(ringGeometry, ringMaterial)
 				ring.rotation.x = Math.PI / 2
-				ring.position.y = 0.12
+				ring.position.y = 0.1
+				ring.userData = { poiPart: 'ring', baseColor, baseEmissive: baseColor, baseIntensity: poi.status === 'quest' ? 0.72 : 0.34 }
 				group.add(ring)
 
-				/* 漂浮印章（八面体）*/
+				/* 漂浮印章：尺寸克制，任务目标才使用更强的金色。 */
 				const crystal = new THREE.Mesh(
-					new THREE.OctahedronGeometry(0.46, 0),
+					new THREE.OctahedronGeometry(0.3, 0),
 					new THREE.MeshStandardMaterial({
-						color: poi.status === 'quest' ? 0xC41E3A : 0xfff3d2,
-						emissive: poi.status === 'quest' ? 0xC41E3A : parseInt((streetData.ambience?.accentColor || '#d4a574').replace('#', '0x')),
-						emissiveIntensity: poi.status === 'quest' ? 1.0 : 0.6,
+						color: poi.status === 'quest' ? 0xA62E32 : 0xE6CF9F,
+						emissive: baseColor,
+						emissiveIntensity: poi.status === 'quest' ? 0.7 : 0.3,
+						roughness: 0.5,
 						flatShading: true
 					})
 				)
-				crystal.position.y = 1.1
+				crystal.position.y = 0.82
+				crystal.userData = {
+					poiPart: 'crystal',
+					baseColor: poi.status === 'quest' ? 0xA62E32 : 0xE6CF9F,
+					baseEmissive: baseColor,
+					baseIntensity: poi.status === 'quest' ? 0.7 : 0.3
+				}
 				group.add(crystal)
 
-				/* 体积光柱（从地面升起）*/
-				const beam = new THREE.Mesh(
-					new THREE.CylinderGeometry(0.25, 0.85, 4, 12, 1, true),
-					new THREE.MeshBasicMaterial({
-						color: poi.status === 'quest' ? 0xFFD700 : 0xD4A574,
-						transparent: true,
-						opacity: 0.18,
-						side: THREE.DoubleSide
-					})
-				)
-				beam.position.y = 2.0
-				group.add(beam)
+				const label = new THREE.Sprite(new THREE.SpriteMaterial({
+					map: this.makePoiLabelTexture(poi.name),
+					transparent: true,
+					depthWrite: false,
+					depthTest: true,
+					toneMapped: false
+				}))
+				label.position.y = 2.05
+				label.scale.set(3.2, 0.8, 1)
+				label.renderOrder = 3
+				group.add(label)
 
 				group.position.set(x, 0, z)
-				/* 预置 nearHinted：出生点(0,0,10)附近(<8)的信标视为“已在身边”，不在加载首帧弹由远及近预告
+				/* 预置 nearHinted：出生点附近(<8)的信标视为“已在身边”，不在加载首帧弹由远及近预告
 				   （否则瞬间盖掉入城/任务引导语）；玩家走远(>=9)再回来才会触发。*/
-				const spawnDist = Math.sqrt(x * x + (z - 10) * (z - 10))
-				group.userData = { poiId: poi.id, type: 'poi', isHighlighted: poi.status === 'quest', entered: false, nearHinted: spawnDist < 8 }
+				const spawn = worldLayout?.spawn || { x: 0, z: 13 }
+				const spawnDist = Math.sqrt((x - spawn.x) * (x - spawn.x) + (z - spawn.z) * (z - spawn.z))
+				const trigger = placement.trigger || { discoveryRadius: 7.2, interactionRadius: 3, exitRadius: 3.5, resetRadius: 8.2 }
+				group.userData = {
+					poiId: poi.id,
+					type: 'poi',
+					baseColor,
+					crystal,
+					ring,
+					label,
+					trigger,
+					proximityState: spawnDist < trigger.discoveryRadius ? 'near' : 'far',
+					isHighlighted: poi.status === 'quest',
+					entered: false,
+					nearHinted: spawnDist < trigger.discoveryRadius
+				}
 				scene.add(group)
 				poiBeacons.push(group)
 			})
@@ -1716,14 +2024,64 @@ export default {
 			// 让「换装」在第一视角街景里真实可见。playerSkinData 为 null 时回退默认票号行客配色。
 			const skin = playerSkinData || {}
 			const group = new THREE.Group()
+			const bodyColor = colorHex(skin.body, 0x8B4513)
+			const clothMaterial = new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.76, flatShading: true })
+			const shoeMaterial = new THREE.MeshStandardMaterial({ color: 0x29241F, roughness: 0.9, flatShading: true })
 
 			const body = new THREE.Mesh(
 				new THREE.CylinderGeometry(0.32, 0.38, 1.2, 8),
-				new THREE.MeshStandardMaterial({ color: colorHex(skin.body, 0x8B4513), roughness: 0.72, flatShading: true })
+				clothMaterial
 			)
-			body.position.y = 0.6
+			body.position.y = 1.02
 			body.castShadow = true
 			group.add(body)
+
+			const contactShadow = new THREE.Mesh(
+				new THREE.CircleGeometry(0.52, 18),
+				new THREE.MeshBasicMaterial({ color: 0x17130f, transparent: true, opacity: 0.24, depthWrite: false })
+			)
+			contactShadow.rotation.x = -Math.PI / 2
+			contactShadow.position.y = 0.012
+			contactShadow.scale.set(1, 0.58, 1)
+			group.add(contactShadow)
+
+			const sash = new THREE.Mesh(
+				new THREE.TorusGeometry(0.355, 0.045, 6, 16),
+				new THREE.MeshStandardMaterial({ color: 0x37241a, roughness: 0.82, flatShading: true })
+			)
+			sash.rotation.x = Math.PI / 2
+			sash.position.y = 0.9
+			group.add(sash)
+
+			const collar = new THREE.Mesh(
+				new THREE.TorusGeometry(0.255, 0.045, 6, 14, Math.PI * 1.25),
+				new THREE.MeshStandardMaterial({ color: 0xe0c59a, roughness: 0.82, flatShading: true })
+			)
+			collar.rotation.set(Math.PI / 2, 0, -Math.PI * 0.12)
+			collar.position.set(0, 1.58, -0.02)
+			group.add(collar)
+
+			/* 四肢使用关节组作为旋转轴，行走时只旋转关节，不改世界坐标。 */
+			const makeLimb = (x, y, length, radius, material, isLeg) => {
+				const pivot = new THREE.Group()
+				pivot.position.set(x, y, 0)
+				const limb = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius * 1.08, length, 7), material)
+				limb.position.y = -length / 2
+				limb.castShadow = true
+				pivot.add(limb)
+				if (isLeg) {
+					const shoe = new THREE.Mesh(new THREE.BoxGeometry(radius * 2.3, 0.14, 0.34), shoeMaterial)
+					shoe.position.set(0, -length + 0.02, -0.07)
+					shoe.castShadow = true
+					pivot.add(shoe)
+				}
+				group.add(pivot)
+				return pivot
+			}
+			const leftLeg = makeLimb(-0.17, 0.54, 0.58, 0.12, clothMaterial, true)
+			const rightLeg = makeLimb(0.17, 0.54, 0.58, 0.12, clothMaterial, true)
+			const leftArm = makeLimb(-0.39, 1.43, 0.68, 0.1, clothMaterial, false)
+			const rightArm = makeLimb(0.39, 1.43, 0.68, 0.1, clothMaterial, false)
 
 			/* 长衫下摆：装备含 robe 时加一圈锥形裙摆，远看即知换了身衣裳 */
 			if (skin.robe) {
@@ -1731,7 +2089,7 @@ export default {
 					new THREE.ConeGeometry(0.52, 0.95, 10, 1, true),
 					new THREE.MeshStandardMaterial({ color: colorHex(skin.robe, colorHex(skin.body, 0x8B4513)), roughness: 0.7, side: THREE.DoubleSide, flatShading: true })
 				)
-				robe.position.y = 0.5
+				robe.position.y = 0.78
 				group.add(robe)
 			}
 
@@ -1739,8 +2097,19 @@ export default {
 				new THREE.SphereGeometry(0.26, 10, 8),
 				new THREE.MeshStandardMaterial({ color: colorHex(skin.head, 0xD4A574), roughness: 0.6, flatShading: true })
 			)
-			head.position.y = 1.42
+			head.position.y = 1.82
+			head.castShadow = true
 			group.add(head)
+
+			if (!skin.hat) {
+				const hairCap = new THREE.Mesh(
+					new THREE.SphereGeometry(0.268, 10, 5, 0, Math.PI * 2, 0, Math.PI * 0.52),
+					new THREE.MeshStandardMaterial({ color: 0x30251f, roughness: 0.9, flatShading: true })
+				)
+				hairCap.position.y = 1.96
+				hairCap.castShadow = true
+				group.add(hairCap)
+			}
 
 			/* 冠帽：装备含 hat 时戴一顶（账房瓜皮帽 / 镖师笠帽 / 书生纶巾等以颜色区分） */
 			if (skin.hat) {
@@ -1748,7 +2117,8 @@ export default {
 					new THREE.ConeGeometry(0.3, 0.32, 10),
 					new THREE.MeshStandardMaterial({ color: colorHex(skin.hat, 0x2c2c2c), roughness: 0.6, flatShading: true })
 				)
-				hat.position.y = 1.74
+				hat.position.y = 2.13
+				hat.castShadow = true
 				group.add(hat)
 			}
 
@@ -1763,9 +2133,28 @@ export default {
 				group.add(halo)
 			}
 
-			group.position.set(0, 0, 10)
+			const spawn = currentWorldLayout?.spawn || { x: 0, z: 13 }
+			group.position.set(spawn.x, 0, spawn.z)
+			group.userData.leftLeg = leftLeg
+			group.userData.rightLeg = rightLeg
+			group.userData.leftArm = leftArm
+			group.userData.rightArm = rightArm
+			group.userData.body = body
+			group.userData.head = head
 			scene.add(group)
 			player = group
+			if (camera && !cameraTargetVec) {
+				cameraTargetVec = new THREE.Vector3(group.position.x, 1.24, group.position.z)
+				cameraPositionVec = new THREE.Vector3()
+				const horizontalDistance = Math.cos(cameraPitch) * cameraDistance
+				cameraPositionVec.set(
+					group.position.x + Math.sin(cameraYaw) * horizontalDistance,
+					1.2 + Math.sin(cameraPitch) * cameraDistance,
+					group.position.z + Math.cos(cameraYaw) * horizontalDistance
+				)
+				camera.position.copy(cameraPositionVec)
+				camera.lookAt(cameraTargetVec)
+			}
 		},
 		/* 热换装：按新皮肤重建玩家化身，不重载整场景；保留当前所在位置（不把玩家弹回出生点）。 */
 		reskinPlayer(skin) {
@@ -1783,30 +2172,25 @@ export default {
 			this.createPlayer()
 			if (prevPos && player) player.position.set(prevPos.x, prevPos.y, prevPos.z)
 		},
-		createDecorations(streetData) {
-			/* 沿玩家可视区域均匀放置装饰物：石灯 / 古槐 / 旗幡 / 鼓 / 盆栽 / 石阶 / 招幌 / 风铃 */
-			const decorPlan = [
-				{ kind: 'lantern-post', x: -14, z: 4 },
-				{ kind: 'lantern-post', x: 14, z: 4 },
-				{ kind: 'tree', x: -10, z: -2 },
-				{ kind: 'tree', x: 10, z: -2 },
-				{ kind: 'banner', x: -6, z: 1 },
-				{ kind: 'banner', x: 6, z: 1 },
-				{ kind: 'drum', x: 0, z: 7 },
-				{ kind: 'potted', x: -3.4, z: 5.5 },
-				{ kind: 'potted', x: 3.4, z: 5.5 },
-				{ kind: 'stone-step', x: -8.5, z: 3 },
-				{ kind: 'stone-step', x: 8.5, z: 3 },
-				{ kind: 'hanging-sign', x: -11.5, z: 1.5 },
-				{ kind: 'hanging-sign', x: 11.5, z: 1.5 },
-				{ kind: 'wind-chime', x: -14, z: 4 },
-				{ kind: 'wind-chime', x: 14, z: 4 }
+		createDecorations(streetData, worldLayout) {
+			/* 所有街区共用坐标模型，但以主题陈设建立票号、县衙、书院、市集、灯街的辨识度。 */
+			const fallbackDecorPlan = [
+				{ kind: 'lantern-post', x: -5.15, z: 10, side: -1 },
+				{ kind: 'lantern-post', x: 5.15, z: 10, side: 1 },
+				{ kind: 'banner', x: -5.25, z: 2.5, side: -1 },
+				{ kind: 'hanging-sign', x: 5.25, z: 0.5, side: 1 },
+				{ kind: 'potted', x: -5.18, z: -4, side: -1 },
+				{ kind: 'stone-step', x: 5.22, z: -5, side: 1 },
+				{ kind: 'wind-chime', x: -5.55, z: 6, side: -1 },
+				{ kind: 'wind-chime', x: 5.55, z: -7, side: 1 }
 			]
+			const decorPlan = worldLayout?.setPieces?.length ? worldLayout.setPieces : fallbackDecorPlan
 
 			decorPlan.forEach((d) => {
 				const group = new THREE.Group()
 
 				if (d.kind === 'lantern-post') {
+					const reach = -d.side * 0.72
 					const post = new THREE.Mesh(
 						new THREE.CylinderGeometry(0.08, 0.1, 2.6, 6),
 						new THREE.MeshStandardMaterial({ color: 0x4a2a18, roughness: 0.9, flatShading: true })
@@ -1820,7 +2204,7 @@ export default {
 						new THREE.MeshStandardMaterial({ color: 0x4a2a18, roughness: 0.9, flatShading: true })
 					)
 					arm.rotation.z = Math.PI / 2
-					arm.position.set(0.4, 2.55, 0)
+					arm.position.set(reach * 0.5, 2.55, 0)
 					group.add(arm)
 
 					const lantern = new THREE.Mesh(
@@ -1832,15 +2216,20 @@ export default {
 							flatShading: true
 						})
 					)
-					lantern.position.set(0.8, 2.35, 0)
+					lantern.position.set(reach, 2.35, 0)
 					group.add(lantern)
 					// 灯穗
 					const tassel = new THREE.Mesh(
 						new THREE.ConeGeometry(0.06, 0.24, 6),
 						new THREE.MeshStandardMaterial({ color: 0xE8B84B, emissive: 0x4a3200, roughness: 0.6, flatShading: true })
 					)
-					tassel.position.set(0.8, 1.95, 0)
+					tassel.position.set(reach, 1.95, 0)
 					group.add(tassel)
+					const glow = new THREE.PointLight(0xffa85a, 0, 7.5, 2)
+					glow.position.set(reach, 2.35, 0)
+					glow.castShadow = false
+					group.add(glow)
+					lanternLights.push(glow)
 					group.userData.isLantern = true
 				} else if (d.kind === 'tree') {
 					const trunk = new THREE.Mesh(
@@ -1973,6 +2362,131 @@ export default {
 					clapper.position.y = 1.98
 					group.add(clapper)
 					group.userData.isWindChime = true
+				} else if (d.kind === 'ledger-chest') {
+					const chestMat = new THREE.MeshStandardMaterial({ color: 0x4b2c1d, roughness: 0.86, flatShading: true })
+					const brassMat = new THREE.MeshStandardMaterial({ color: 0x9d7939, roughness: 0.5, metalness: 0.38 })
+					const chest = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.62, 0.72), chestMat)
+					chest.position.y = 0.38
+					chest.castShadow = true
+					group.add(chest)
+					;[-0.42, 0.42].forEach((x) => {
+						const band = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.68, 0.76), brassMat)
+						band.position.set(x, 0.4, 0)
+						group.add(band)
+					})
+					const lock = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.2, 0.08), brassMat)
+					lock.position.set(0, 0.38, 0.4)
+					group.add(lock)
+				} else if (d.kind === 'stone-lion') {
+					const stoneMat = new THREE.MeshStandardMaterial({ color: 0x76766f, roughness: 1, flatShading: true })
+					const base = new THREE.Mesh(new THREE.BoxGeometry(0.88, 0.28, 0.78), stoneMat)
+					base.position.y = 0.14
+					base.receiveShadow = true
+					group.add(base)
+					const body = new THREE.Mesh(new THREE.SphereGeometry(0.32, 8, 6), stoneMat)
+					body.scale.set(0.9, 1.25, 0.8)
+					body.position.y = 0.58
+					body.castShadow = true
+					group.add(body)
+					const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.27, 1), stoneMat)
+					head.position.set(0, 1.02, -d.side * 0.06)
+					head.castShadow = true
+					group.add(head)
+					;[-1, 1].forEach((side) => {
+						const paw = new THREE.Mesh(new THREE.SphereGeometry(0.11, 6, 5), stoneMat)
+						paw.position.set(side * 0.22, 0.38, -d.side * 0.25)
+						group.add(paw)
+					})
+				} else if (d.kind === 'stele') {
+					const stoneMat = new THREE.MeshStandardMaterial({ color: 0x686963, roughness: 1, flatShading: true })
+					const base = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.32, 0.72), stoneMat)
+					base.position.y = 0.16
+					group.add(base)
+					const slab = new THREE.Mesh(new THREE.BoxGeometry(0.82, 1.55, 0.2), stoneMat)
+					slab.position.y = 1.06
+					slab.castShadow = true
+					group.add(slab)
+					const cap = new THREE.Mesh(new THREE.BoxGeometry(1.02, 0.16, 0.34), stoneMat)
+					cap.position.y = 1.88
+					group.add(cap)
+				} else if (d.kind === 'book-stall') {
+					const woodMat = new THREE.MeshStandardMaterial({ color: 0x513120, roughness: 0.9, flatShading: true })
+					const top = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.14, 0.82), woodMat)
+					top.position.y = 0.88
+					top.castShadow = true
+					group.add(top)
+					;[-1, 1].forEach((x) => {
+						const leg = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.82, 0.62), woodMat)
+						leg.position.set(x * 0.68, 0.42, 0)
+						group.add(leg)
+					})
+					const bookColors = [0x6d2b28, 0x40594f, 0xb28a4a, 0x49433c]
+					for (let i = 0; i < 5; i += 1) {
+						const book = new THREE.Mesh(
+							new THREE.BoxGeometry(0.3, 0.05 + (i % 2) * 0.02, 0.48),
+							new THREE.MeshStandardMaterial({ color: bookColors[i % bookColors.length], roughness: 0.9 })
+						)
+						book.position.set(-0.58 + i * 0.28, 0.99 + (i % 2) * 0.035, 0)
+						group.add(book)
+					}
+				} else if (d.kind === 'market-stall') {
+					const woodMat = new THREE.MeshStandardMaterial({ color: 0x4b2c1d, roughness: 0.9, flatShading: true })
+					const clothMat = new THREE.MeshStandardMaterial({ color: 0x8c302a, roughness: 0.9, side: THREE.DoubleSide })
+					const counter = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.18, 0.9), woodMat)
+					counter.position.y = 0.82
+					counter.castShadow = true
+					group.add(counter)
+					;[-1, 1].forEach((x) => {
+						const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 2.25, 6), woodMat)
+						pole.position.set(x * 0.78, 1.2, 0)
+						group.add(pole)
+					})
+					const canopy = new THREE.Mesh(new THREE.BoxGeometry(2.15, 0.1, 1.18), clothMat)
+					canopy.rotation.z = -d.side * 0.06
+					canopy.position.y = 2.18
+					canopy.castShadow = true
+					group.add(canopy)
+					;[-0.5, 0, 0.5].forEach((x, index) => {
+						const crate = new THREE.Mesh(
+							new THREE.BoxGeometry(0.34, 0.28 + index * 0.04, 0.34),
+							new THREE.MeshStandardMaterial({ color: index === 1 ? 0x9a7040 : 0x69513a, roughness: 0.94 })
+						)
+						crate.position.set(x, 1.05, 0)
+						group.add(crate)
+					})
+				} else if (d.kind === 'jar-stack') {
+					const jarColors = [0x6f4b34, 0x8a5c38, 0x55483b]
+					;[-0.34, 0, 0.34].forEach((x, index) => {
+						const jar = new THREE.Mesh(
+							new THREE.SphereGeometry(0.28 + index * 0.03, 10, 7),
+							new THREE.MeshStandardMaterial({ color: jarColors[index], roughness: 0.92, flatShading: true })
+						)
+						jar.scale.y = 1.25
+						jar.position.set(x, 0.35 + index * 0.03, 0)
+						jar.castShadow = true
+						group.add(jar)
+					})
+				} else if (d.kind === 'lantern-string') {
+					const cable = new THREE.Mesh(
+						new THREE.CylinderGeometry(0.018, 0.018, 9, 5),
+						new THREE.MeshStandardMaterial({ color: 0x31231d, roughness: 0.92 })
+					)
+					cable.rotation.z = Math.PI / 2
+					cable.position.y = 4.25
+					group.add(cable)
+					for (let i = -3; i <= 3; i += 1) {
+						const lantern = new THREE.Mesh(
+							new THREE.CylinderGeometry(0.18, 0.22, 0.45, 10),
+							new THREE.MeshStandardMaterial({ color: 0xb73531, emissive: 0x8a1f1f, emissiveIntensity: 0.32, roughness: 0.56 })
+						)
+						lantern.position.set(i * 1.28, 3.88 - Math.abs(i) * 0.025, 0)
+						group.add(lantern)
+					}
+					const glow = new THREE.PointLight(0xff9d55, 0, 8.5, 2)
+					glow.position.set(0, 3.8, 0)
+					group.add(glow)
+					lanternLights.push(glow)
+					group.userData.isLanternString = true
 				}
 
 				group.position.set(d.x, 0, d.z)
@@ -2018,23 +2532,23 @@ export default {
 			this.refreshSky(phase)
 			if (scene.fog) {
 				scene.fog.color = new THREE.Color(colorHex(phase.fog?.color, skyColor))
-				scene.fog.density = phase.fog?.density || scene.fog.density
+				scene.fog.density = phase.fog?.density ?? scene.fog.density
 			}
 
 			if (ambientLightRef) {
 				ambientLightRef.color = new THREE.Color(colorHex(phase.lighting?.ambient?.color, 0xF5F0E8))
-				ambientLightRef.intensity = phase.lighting?.ambient?.intensity || 0.55
+				ambientLightRef.intensity = phase.lighting?.ambient?.intensity ?? 0.55
 			}
 			if (directionalLightRef) {
 				directionalLightRef.color = new THREE.Color(colorHex(phase.lighting?.directional?.color, 0xffd77f))
-				directionalLightRef.intensity = phase.lighting?.directional?.intensity || 1.25
+				directionalLightRef.intensity = phase.lighting?.directional?.intensity ?? 1.25
 				const angle = phase.lighting?.directional?.angle
 				if (angle) directionalLightRef.position.set(angle.x, angle.y, angle.z)
 			}
 			if (hemiLightRef) {
 				hemiLightRef.color = new THREE.Color(colorHex(phase.lighting?.hemi?.sky, 0xf6ead7))
 				hemiLightRef.groundColor = new THREE.Color(colorHex(phase.lighting?.hemi?.ground, 0x6e5541))
-				hemiLightRef.intensity = phase.lighting?.hemi?.intensity || 0.42
+				hemiLightRef.intensity = phase.lighting?.hemi?.intensity ?? 0.42
 			}
 			if (bloomPassRef && typeof phase.bloomStrength === 'number') {
 				bloomPassRef.strength = phase.bloomStrength
@@ -2042,21 +2556,30 @@ export default {
 			if (renderer && typeof phase.exposure === 'number') {
 				renderer.toneMappingExposure = phase.exposure
 			}
+			const backdropTints = { dawn: 0xB59678, noon: 0x8F8A80, dusk: 0x765044, night: 0x31384A }
+			environment.forEach((item) => {
+				if (!item.userData?.isRooflineBackdrop || !item.material) return
+				item.material.color.setHex(backdropTints[phase.key] || backdropTints.noon)
+				item.material.opacity = phase.key === 'night' ? 0.48 : 0.42
+			})
 
 			/* 灯笼 / 旗幡 / 招幌：夜间增强发光 */
 			const lit = phase.lanternsLit
+			lanternLights.forEach((light) => {
+				light.intensity = lit ? (phase.key === 'night' ? 0.72 : 0.42) : 0.04
+			})
 			decorations.forEach((group) => {
-				if (group.userData?.isLantern) {
+				if (group.userData?.isLantern || group.userData?.isLanternString) {
 					group.traverse((mesh) => {
 						if (mesh.isMesh && mesh.material && mesh.material.emissive) {
-							mesh.material.emissiveIntensity = lit ? 1.4 : 0.55
+							mesh.material.emissiveIntensity = lit ? 0.95 : 0.28
 						}
 					})
 				}
 				if (group.userData?.isBanner || group.userData?.isSign) {
 					group.traverse((mesh) => {
 						if (mesh.isMesh && mesh.material && mesh.material.emissive) {
-							mesh.material.emissiveIntensity = lit ? 0.45 : 0.18
+							mesh.material.emissiveIntensity = lit ? 0.3 : 0.1
 						}
 					})
 				}
@@ -2068,7 +2591,7 @@ export default {
 		/* 根据时辰调整建筑木格窗的透光强度（晨/午暗、昏微亮、夜最亮） */
 		updateWindowGlow(phase) {
 			const key = phase?.key
-			const glow = key === 'night' ? 1.15 : key === 'dusk' ? 0.6 : 0.0
+			const glow = key === 'night' ? 0.68 : key === 'dusk' ? 0.34 : 0.0
 			buildings.forEach((group) => {
 				group.traverse((mesh) => {
 					if (mesh.isMesh && mesh.userData?.isWindowGlow && mesh.material) {
@@ -2081,13 +2604,21 @@ export default {
 			const canvas = document.getElementById('street-canvas')
 			if (!canvas) return
 
-			// reinit 时先解绑上一轮，避免触摸监听重复堆叠（僵尸监听）。
 			if (joystickCleanup) { joystickCleanup(); joystickCleanup = null }
-
-			let isTouching = false
-			let touchStartX = 0
-			let touchStartY = 0
+			const movePad = document.getElementById('street-move-pad')
+			const moveKnob = document.getElementById('street-move-knob')
 			const pressedKeys = new Set()
+			let moveTouchId = null
+			let lookTouchId = null
+			let moveOriginX = 0
+			let moveOriginY = 0
+			let touchMoveX = 0
+			let touchMoveY = 0
+			let lookLastX = 0
+			let lookLastY = 0
+			let mouseLooking = false
+			let mouseLastX = 0
+			let mouseLastY = 0
 			const keyDirections = {
 				w: [0, -1],
 				a: [-1, 0],
@@ -2099,17 +2630,7 @@ export default {
 				arrowright: [1, 0]
 			}
 
-			const resetInput = () => {
-				isTouching = false
-				if (pressedKeys.size) {
-					updateKeyboardInput()
-				} else {
-					joystickInput.dx = 0
-					joystickInput.dy = 0
-				}
-			}
-
-			const updateKeyboardInput = () => {
+			const getKeyboardVector = () => {
 				let dx = 0
 				let dy = 0
 				pressedKeys.forEach((key) => {
@@ -2118,102 +2639,207 @@ export default {
 					dx += direction[0]
 					dy += direction[1]
 				})
-				if (dx !== 0 && dy !== 0) {
-					const length = Math.sqrt(dx * dx + dy * dy)
+				const length = Math.sqrt(dx * dx + dy * dy)
+				if (length > 1) {
 					dx /= length
 					dy /= length
 				}
-				joystickInput.dx = dx
-				joystickInput.dy = dy
+				return { dx, dy }
 			}
 
-			const updateDragInput = (clientX, clientY) => {
-				const dx = (clientX - touchStartX) / 70
-				const dy = (clientY - touchStartY) / 70
-				joystickInput.dx = Math.max(-1, Math.min(1, dx))
-				joystickInput.dy = Math.max(-1, Math.min(1, dy))
+			const syncMoveInput = () => {
+				if (moveTouchId !== null) {
+					joystickInput.dx = touchMoveX
+					joystickInput.dy = touchMoveY
+					return
+				}
+				const keyboard = getKeyboardVector()
+				joystickInput.dx = keyboard.dx
+				joystickInput.dy = keyboard.dy
+			}
+
+			const showMoveFeedback = (clientX, clientY) => {
+				if (!movePad) return
+				const bounds = canvas.getBoundingClientRect()
+				movePad.style.left = (clientX - bounds.left) + 'px'
+				movePad.style.top = (clientY - bounds.top) + 'px'
+				movePad.style.opacity = '1'
+			}
+
+			const hideMoveFeedback = () => {
+				if (movePad) movePad.style.opacity = '0'
+				if (moveKnob) moveKnob.style.transform = 'translate(-50%, -50%)'
+			}
+
+			const updateTouchMove = (clientX, clientY) => {
+				const maxRadius = Math.max(44, Math.min(72, window.innerHeight * 0.16))
+				let dx = clientX - moveOriginX
+				let dy = clientY - moveOriginY
+				const length = Math.sqrt(dx * dx + dy * dy)
+				if (length > maxRadius) {
+					dx = dx / length * maxRadius
+					dy = dy / length * maxRadius
+				}
+				touchMoveX = dx / maxRadius
+				touchMoveY = dy / maxRadius
+				if (moveKnob) moveKnob.style.transform = `translate(-50%, -50%) translate(${dx}px, ${dy}px)`
+				syncMoveInput()
+			}
+
+			const rotateCamera = (dx, dy, sensitivity) => {
+				cameraYaw = Math.max(cameraYawCenter - 1.05, Math.min(cameraYawCenter + 1.05, cameraYaw - dx * sensitivity))
+				cameraPitch = Math.max(0.16, Math.min(0.72, cameraPitch + dy * sensitivity * 0.72))
+			}
+
+			const getTouch = (list, id) => {
+				for (let i = 0; i < list.length; i += 1) {
+					if (list[i].identifier === id) return list[i]
+				}
+				return null
 			}
 
 			const onTouchStart = (event) => {
-				const touch = event.touches[0]
-				if (touch.clientX < window.innerWidth * 0.4 && touch.clientY > window.innerHeight * 0.5) {
-					isTouching = true
-					touchStartX = touch.clientX
-					touchStartY = touch.clientY
-					event.preventDefault()
+				const bounds = canvas.getBoundingClientRect()
+				let handled = false
+				for (let i = 0; i < event.changedTouches.length; i += 1) {
+					const touch = event.changedTouches[i]
+					const inMoveZone = touch.clientX < bounds.left + bounds.width * 0.46 && touch.clientY > bounds.top + bounds.height * 0.34
+					if (inMoveZone && moveTouchId === null) {
+						moveTouchId = touch.identifier
+						moveOriginX = touch.clientX
+						moveOriginY = touch.clientY
+						touchMoveX = 0
+						touchMoveY = 0
+						showMoveFeedback(touch.clientX, touch.clientY)
+						handled = true
+					} else if (lookTouchId === null && touch.clientX >= bounds.left + bounds.width * 0.42) {
+						lookTouchId = touch.identifier
+						lookLastX = touch.clientX
+						lookLastY = touch.clientY
+						handled = true
+					}
 				}
+				if (handled) event.preventDefault()
 			}
 			const onTouchMove = (event) => {
-				if (!isTouching) return
-				const touch = event.touches[0]
-				updateDragInput(touch.clientX, touch.clientY)
-				event.preventDefault()
+				let handled = false
+				if (moveTouchId !== null) {
+					const touch = getTouch(event.touches, moveTouchId)
+					if (touch) {
+						updateTouchMove(touch.clientX, touch.clientY)
+						handled = true
+					}
+				}
+				if (lookTouchId !== null) {
+					const touch = getTouch(event.touches, lookTouchId)
+					if (touch) {
+						rotateCamera(touch.clientX - lookLastX, touch.clientY - lookLastY, 0.0052)
+						lookLastX = touch.clientX
+						lookLastY = touch.clientY
+						handled = true
+					}
+				}
+				if (handled) event.preventDefault()
 			}
-			const onTouchEnd = () => {
-				resetInput()
+			const onTouchEnd = (event) => {
+				for (let i = 0; i < event.changedTouches.length; i += 1) {
+					const id = event.changedTouches[i].identifier
+					if (id === moveTouchId) {
+						moveTouchId = null
+						touchMoveX = 0
+						touchMoveY = 0
+						hideMoveFeedback()
+						syncMoveInput()
+					}
+					if (id === lookTouchId) lookTouchId = null
+				}
 			}
 
 			const onMouseDown = (event) => {
 				if (event.button !== 0) return
-				isTouching = true
-				touchStartX = event.clientX
-				touchStartY = event.clientY
+				mouseLooking = true
+				mouseLastX = event.clientX
+				mouseLastY = event.clientY
+				canvas.style.cursor = 'grabbing'
 			}
 			const onMouseMove = (event) => {
-				if (!isTouching) return
-				updateDragInput(event.clientX, event.clientY)
+				if (!mouseLooking) return
+				rotateCamera(event.clientX - mouseLastX, event.clientY - mouseLastY, 0.0058)
+				mouseLastX = event.clientX
+				mouseLastY = event.clientY
 			}
 			const onMouseUp = () => {
-				resetInput()
+				mouseLooking = false
+				canvas.style.cursor = 'grab'
+			}
+			const onWheel = (event) => {
+				cameraDistance = Math.max(5.6, Math.min(10, cameraDistance + event.deltaY * 0.008))
+				event.preventDefault()
 			}
 
 			const onKeyDown = (event) => {
 				const key = event.key.toLowerCase()
 				if (!keyDirections[key]) return
+				const tag = event.target && event.target.tagName
+				if (tag === 'INPUT' || tag === 'TEXTAREA') return
 				pressedKeys.add(key)
-				updateKeyboardInput()
+				syncMoveInput()
 				event.preventDefault()
 			}
 			const onKeyUp = (event) => {
 				const key = event.key.toLowerCase()
 				if (!keyDirections[key]) return
 				pressedKeys.delete(key)
-				updateKeyboardInput()
+				syncMoveInput()
 				event.preventDefault()
 			}
 			const onWindowBlur = () => {
 				pressedKeys.clear()
-				resetInput()
+				moveTouchId = null
+				lookTouchId = null
+				mouseLooking = false
+				touchMoveX = 0
+				touchMoveY = 0
+				hideMoveFeedback()
+				syncMoveInput()
 			}
 
 			canvas.style.touchAction = 'none'
+			canvas.style.cursor = 'grab'
 			canvas.addEventListener('touchstart', onTouchStart, { passive: false })
 			canvas.addEventListener('touchmove', onTouchMove, { passive: false })
 			canvas.addEventListener('touchend', onTouchEnd)
 			canvas.addEventListener('touchcancel', onTouchEnd)
 			canvas.addEventListener('mousedown', onMouseDown)
-			canvas.addEventListener('mousemove', onMouseMove)
-			canvas.addEventListener('mouseup', onMouseUp)
-			canvas.addEventListener('mouseleave', onMouseUp)
+			canvas.addEventListener('wheel', onWheel, { passive: false })
+			window.addEventListener('mousemove', onMouseMove)
+			window.addEventListener('mouseup', onMouseUp)
 			window.addEventListener('keydown', onKeyDown)
 			window.addEventListener('keyup', onKeyUp)
 			window.addEventListener('blur', onWindowBlur)
 
-			// 句柄留给 dispose() 解绑：renderer.domElement 切场会重建，但监听挂在常驻容器 #street-canvas 上，必须显式移除。
 			joystickCleanup = () => {
 				canvas.removeEventListener('touchstart', onTouchStart)
 				canvas.removeEventListener('touchmove', onTouchMove)
 				canvas.removeEventListener('touchend', onTouchEnd)
 				canvas.removeEventListener('touchcancel', onTouchEnd)
 				canvas.removeEventListener('mousedown', onMouseDown)
-				canvas.removeEventListener('mousemove', onMouseMove)
-				canvas.removeEventListener('mouseup', onMouseUp)
-				canvas.removeEventListener('mouseleave', onMouseUp)
+				canvas.removeEventListener('wheel', onWheel)
+				window.removeEventListener('mousemove', onMouseMove)
+				window.removeEventListener('mouseup', onMouseUp)
 				window.removeEventListener('keydown', onKeyDown)
 				window.removeEventListener('keyup', onKeyUp)
 				window.removeEventListener('blur', onWindowBlur)
 				pressedKeys.clear()
-				resetInput()
+				moveTouchId = null
+				lookTouchId = null
+				mouseLooking = false
+				touchMoveX = 0
+				touchMoveY = 0
+				hideMoveFeedback()
+				joystickInput.dx = 0
+				joystickInput.dy = 0
+				canvas.style.cursor = ''
 			}
 		},
 		highlightQuestPoi(targetPoiId) {
@@ -2221,18 +2847,16 @@ export default {
 				const isTarget = beacon.userData.poiId === targetPoiId
 				beacon.userData.isHighlighted = isTarget
 				beacon.traverse((mesh) => {
-					if (mesh.isMesh && mesh.material) {
+					if (mesh.isMesh && mesh.material && mesh.userData?.poiPart) {
 						if (isTarget) {
 							if (mesh.material.color) mesh.material.color.setHex(0xFFD700)
 							if (mesh.material.emissive) mesh.material.emissive.setHex(0xFFD700)
-							mesh.material.emissiveIntensity = 1.2
+							mesh.material.emissiveIntensity = 0.86
 						} else {
-							// color 复位移出 emissive 门控：体积光柱 beam 是 MeshBasicMaterial（只有 .color、无 .emissive），
-							// 旧写法 else if (emissive) 会跳过它，导致取消高亮后旧目标光柱卡在金色 0xFFD700。
-							if (mesh.material.color) mesh.material.color.setHex(0xD4A574)
+							if (mesh.material.color) mesh.material.color.setHex(mesh.userData.baseColor)
 							if (mesh.material.emissive) {
-								mesh.material.emissive.setHex(0xD4A574)
-								mesh.material.emissiveIntensity = 0.7
+								mesh.material.emissive.setHex(mesh.userData.baseEmissive)
+								mesh.material.emissiveIntensity = mesh.userData.baseIntensity
 							}
 						}
 					}
@@ -2240,100 +2864,167 @@ export default {
 			})
 		},
 		clearScene() {
-			/* 切换街景会重新创建三盏环境灯；先移除旧灯，否则每次切换都会叠加光照并导致画面过曝发白。 */
+			const disposeObject = (object) => {
+				if (!object) return
+				if (scene) scene.remove(object)
+				object.traverse((item) => {
+					if (item.geometry) item.geometry.dispose()
+					if (Array.isArray(item.material)) item.material.forEach((material) => material && material.dispose())
+					else if (item.material) item.material.dispose()
+				})
+			}
+
+			/* 换幕前移除灯光与阴影贴图，防止叠灯导致过曝。 */
 			[ambientLightRef, directionalLightRef, hemiLightRef].forEach((light) => {
-				if (light && light.parent) light.parent.remove(light)
+				if (!light) return
+				if (light.shadow?.map) light.shadow.map.dispose()
+				if (scene) scene.remove(light)
 			})
 			ambientLightRef = null
 			directionalLightRef = null
 			hemiLightRef = null
-			if (ground) {
-				scene.remove(ground)
-				if (ground.geometry) ground.geometry.dispose()
-				if (ground.material) ground.material.dispose()
-				ground = null
-			}
+			disposeObject(ground)
+			ground = null
 
-			[...buildings, ...poiBeacons, ...decorations].forEach((group) => {
-				scene.remove(group)
-				group.traverse((item) => {
-					if (item.geometry) item.geometry.dispose()
-					if (item.material) item.material.dispose()
-				})
-			})
+			;[...environment, ...buildings, ...poiBeacons, ...decorations].forEach(disposeObject)
+			environment = []
 			buildings = []
 			poiBeacons = []
 			decorations = []
+			lanternLights = []
 
-			if (particles) {
-				scene.remove(particles)
-				if (particles.geometry) particles.geometry.dispose()
-				if (particles.material) particles.material.dispose()
-				particles = null
-			}
+			disposeObject(particles)
+			particles = null
 
-			/* 玩家化身每次 loadScene 都会 createPlayer 重建；若不在此移除旧 player，
-			   切换街景后旧化身会残留并逐次叠加（视觉重影 + 几何/材质泄漏）。比照 particles 一并清理。*/
-			if (player) {
-				scene.remove(player)
-				player.traverse((item) => {
-					if (item.geometry) item.geometry.dispose()
-					if (item.material) item.material.dispose()
-				})
-				player = null
-			}
+			disposeObject(player)
+			player = null
+			movementVelocity.x = 0
+			movementVelocity.z = 0
+			walkCycle = 0
 		},
 		startAnimation() {
-			// 幂等：先取消可能残留的上一轮 rAF，确保任何路径（含极端竞态）下都只有一个动画循环，杜绝孤儿循环空转。
 			if (animationId) { cancelAnimationFrame(animationId); animationId = null }
+			lastTime = performance.now()
+			lastMoveEmit = lastTime
+			qualitySampleStartedAt = lastTime
+			qualityFrameCount = 0
 			const animate = () => {
 				animationId = requestAnimationFrame(animate)
-				const now = Date.now()
-				const deltaTime = (now - lastTime) / 1000
+				const now = performance.now()
+				const deltaTime = Math.min(0.05, Math.max(0.001, (now - lastTime) / 1000))
 				lastTime = now
 
-				const moving = player && (joystickInput.dx !== 0 || joystickInput.dy !== 0)
-				if (moving) {
-					player.position.x = Math.max(-18, Math.min(18, player.position.x + joystickInput.dx * 4 * deltaTime))
-					player.position.z = Math.max(-18, Math.min(16, player.position.z + joystickInput.dy * 4 * deltaTime))
-					moveStepAccum += 1
-					// 节流上报：累计步数、每 ~150ms 汇报一次（含步数增量 steps），桥调用 ~60→~6.7 次/秒、MiniMap 同比少重渲，
-					// 步数总量与朝向解算不变（停步时补发最终坐标+残余步数）。
-					if (now - lastMoveEmit >= 150) {
-						emit('player-move', { x: player.position.x, z: player.position.z, steps: moveStepAccum })
-						moveStepAccum = 0
-						lastMoveEmit = now
+				if (player) {
+					const inputLength = Math.min(1, Math.sqrt(joystickInput.dx * joystickInput.dx + joystickInput.dy * joystickInput.dy))
+					const desiredX = (joystickInput.dx * Math.cos(cameraYaw) + joystickInput.dy * Math.sin(cameraYaw)) * 4.15
+					const desiredZ = (-joystickInput.dx * Math.sin(cameraYaw) + joystickInput.dy * Math.cos(cameraYaw)) * 4.15
+					const velocityResponse = 1 - Math.exp(-(inputLength > 0.02 ? 11 : 7) * deltaTime)
+					movementVelocity.x += (desiredX - movementVelocity.x) * velocityResponse
+					movementVelocity.z += (desiredZ - movementVelocity.z) * velocityResponse
+
+					const previousX = player.position.x
+					const previousZ = player.position.z
+					const bounds = currentWorldLayout?.roadBounds || { xMin: -4.15, xMax: 4.15, zMin: -23, zMax: 15 }
+					player.position.x = Math.max(bounds.xMin, Math.min(bounds.xMax, player.position.x + movementVelocity.x * deltaTime))
+					player.position.z = Math.max(bounds.zMin, Math.min(bounds.zMax, player.position.z + movementVelocity.z * deltaTime))
+					if (player.position.x === bounds.xMin || player.position.x === bounds.xMax) movementVelocity.x = 0
+					if (player.position.z === bounds.zMin || player.position.z === bounds.zMax) movementVelocity.z = 0
+
+					const movedX = player.position.x - previousX
+					const movedZ = player.position.z - previousZ
+					const movedDistance = Math.sqrt(movedX * movedX + movedZ * movedZ)
+					const speed = Math.sqrt(movementVelocity.x * movementVelocity.x + movementVelocity.z * movementVelocity.z)
+					const moving = movedDistance > 0.0004 && speed > 0.045
+					if (moving) {
+						const wantedRotation = Math.atan2(movementVelocity.x, movementVelocity.z)
+						let rotationDelta = (wantedRotation - player.rotation.y + Math.PI) % (Math.PI * 2) - Math.PI
+						if (rotationDelta < -Math.PI) rotationDelta += Math.PI * 2
+						player.rotation.y += rotationDelta * (1 - Math.exp(-12 * deltaTime))
+
+						walkCycle += speed * deltaTime * 4.6
+						const swing = Math.sin(walkCycle) * Math.min(0.62, speed * 0.14)
+						player.userData.leftLeg.rotation.x = swing
+						player.userData.rightLeg.rotation.x = -swing
+						player.userData.leftArm.rotation.x = -swing * 0.78
+						player.userData.rightArm.rotation.x = swing * 0.78
+						player.position.y = Math.abs(Math.sin(walkCycle * 2)) * 0.035
+
+						stepDistanceCarry += movedDistance
+						while (stepDistanceCarry >= 0.72) {
+							moveStepAccum += 1
+							stepDistanceCarry -= 0.72
+						}
+						if (now - lastMoveEmit >= 140) {
+							emit('player-move', { x: player.position.x, z: player.position.z, steps: moveStepAccum })
+							moveStepAccum = 0
+							lastMoveEmit = now
+						}
+						wasMoving = true
+					} else {
+						const settle = 1 - Math.exp(-10 * deltaTime)
+						player.userData.leftLeg.rotation.x += (0 - player.userData.leftLeg.rotation.x) * settle
+						player.userData.rightLeg.rotation.x += (0 - player.userData.rightLeg.rotation.x) * settle
+						player.userData.leftArm.rotation.x += (0 - player.userData.leftArm.rotation.x) * settle
+						player.userData.rightArm.rotation.x += (0 - player.userData.rightArm.rotation.x) * settle
+						player.position.y += (0 - player.position.y) * settle
+						if (wasMoving && speed < 0.08) {
+							emit('player-move', { x: player.position.x, z: player.position.z, steps: moveStepAccum })
+							moveStepAccum = 0
+							wasMoving = false
+						}
 					}
-					wasMoving = true
-				} else if (wasMoving) {
-					// 刚停下：补发最终坐标 + 残余步数，避免短促移动（<110ms）丢步或 MiniMap 停在旧位。
-					if (player) emit('player-move', { x: player.position.x, z: player.position.z, steps: moveStepAccum })
-					moveStepAccum = 0
-					wasMoving = false
 				}
 
 				if (camera && player) {
-					const target = player.position
 					if (!cameraTargetVec) cameraTargetVec = new THREE.Vector3()
-					cameraTargetVec.set(target.x + 0.2, target.y + 6, target.z + 9)
-					camera.position.lerp(cameraTargetVec, 0.08)
-					camera.lookAt(target.x, target.y + 1.3, target.z - 5)
+					if (!cameraPositionVec) cameraPositionVec = new THREE.Vector3()
+					const horizontalDistance = Math.cos(cameraPitch) * cameraDistance
+					cameraPositionVec.set(
+						player.position.x + Math.sin(cameraYaw) * horizontalDistance,
+						1.2 + Math.sin(cameraPitch) * cameraDistance,
+						player.position.z + Math.cos(cameraYaw) * horizontalDistance
+					)
+					const cameraBounds = currentWorldLayout?.cameraBounds
+					if (cameraBounds) {
+						cameraPositionVec.x = Math.max(cameraBounds.xMin, Math.min(cameraBounds.xMax, cameraPositionVec.x))
+						cameraPositionVec.z = Math.max(cameraBounds.zMin, Math.min(cameraBounds.zMax, cameraPositionVec.z))
+					}
+					camera.position.lerp(cameraPositionVec, 1 - Math.exp(-8.5 * deltaTime))
+					cameraTargetVec.set(player.position.x, player.position.y + 1.24, player.position.z)
+					camera.lookAt(cameraTargetVec)
 				}
 
-				poiBeacons.forEach((beacon) => {
-					beacon.position.y = beacon.userData.isHighlighted ? 0.2 + Math.sin(now * 0.003) * 0.18 : 0.06
-					beacon.rotation.y += deltaTime * (beacon.userData.isHighlighted ? 1.2 : 0.4)
+				poiBeacons.forEach((beacon, index) => {
+					const highlighted = beacon.userData.isHighlighted
+					const crystal = beacon.userData.crystal
+					const ring = beacon.userData.ring
+					const label = beacon.userData.label
+					const trigger = beacon.userData.trigger
+					const distanceToPlayer = player
+						? Math.hypot(player.position.x - beacon.position.x, player.position.z - beacon.position.z)
+						: Number.POSITIVE_INFINITY
+					if (crystal) {
+						crystal.position.y = 0.82 + Math.sin(now * 0.0024 + index) * (highlighted ? 0.12 : 0.06)
+						crystal.rotation.y += deltaTime * (highlighted ? 1.35 : 0.55)
+					}
+					if (ring) {
+						const pulse = 1 + Math.sin(now * 0.0022 + index) * (highlighted ? 0.08 : 0.025)
+						ring.scale.set(pulse, pulse, pulse)
+					}
+					if (label?.material) {
+						const targetOpacity = highlighted || distanceToPlayer <= (trigger?.discoveryRadius || 7.2) + 1.4 ? 1 : 0
+						label.material.opacity += (targetOpacity - label.material.opacity) * (1 - Math.exp(-8 * deltaTime))
+						label.visible = label.material.opacity > 0.035
+					}
 				})
 
-				/* 装饰物：旗幡轻晃，灯笼微呼吸，招幌摇曳，风铃轻摆 */
+				/* 檐下软装只做小幅摆动，避免整根灯柱缩放造成漂浮感。 */
 				decorations.forEach((group, idx) => {
 					if (group.userData?.isBanner) {
 						group.rotation.y = Math.sin(now * 0.0012 + idx) * 0.18
 					}
 					if (group.userData?.isLantern) {
-						const scale = 1 + Math.sin(now * 0.002 + idx) * 0.04
-						group.scale.set(scale, scale, scale)
-						group.rotation.z = Math.sin(now * 0.0014 + idx) * 0.05
+						group.rotation.z = Math.sin(now * 0.0014 + idx) * 0.012
 					}
 					if (group.userData?.isSign) {
 						group.rotation.z = Math.sin(now * 0.0016 + idx) * 0.08
@@ -2368,22 +3059,61 @@ export default {
 
 				if (player) {
 					poiBeacons.forEach((beacon) => {
-						const distance = player.position.distanceTo(beacon.position)
-						if (distance < 3.2 && !beacon.userData.entered) {
-							beacon.userData.entered = true
-							emit('poi-enter', beacon.userData.poiId)
-						} else if (distance >= 3.2 && beacon.userData.entered) {
-							beacon.userData.entered = false
-							emit('poi-leave', beacon.userData.poiId)
+						const dx = player.position.x - beacon.position.x
+						const dz = player.position.z - beacon.position.z
+						const distance = Math.sqrt(dx * dx + dz * dz)
+						const trigger = beacon.userData.trigger
+						const previousState = beacon.userData.proximityState || 'far'
+						let nextState = previousState
+						if (previousState === 'active') {
+							if (distance >= trigger.exitRadius) nextState = distance < trigger.resetRadius ? 'near' : 'far'
+						} else if (previousState === 'near') {
+							if (distance <= trigger.interactionRadius) nextState = 'active'
+							else if (distance >= trigger.resetRadius) nextState = 'far'
+						} else if (distance <= trigger.interactionRadius) {
+							nextState = 'active'
+						} else if (distance <= trigger.discoveryRadius) {
+							nextState = 'near'
 						}
-						/* 外圈预告：进入 3.2~8 区间发一次 poi-near（由远及近的浮空提示），离开 9 复位（带迟滞） */
-						if (distance >= 3.2 && distance < 8 && !beacon.userData.nearHinted) {
-							beacon.userData.nearHinted = true
-							emit('poi-near', beacon.userData.poiId)
-						} else if (distance >= 9 && beacon.userData.nearHinted) {
-							beacon.userData.nearHinted = false
+
+						if (nextState !== previousState) {
+							if (nextState === 'active') emit('poi-enter', beacon.userData.poiId)
+							else if (previousState === 'active') emit('poi-leave', beacon.userData.poiId)
+							if (nextState === 'near' && previousState === 'far') emit('poi-near', beacon.userData.poiId)
+							beacon.userData.proximityState = nextState
+							beacon.userData.entered = nextState === 'active'
+							beacon.userData.nearHinted = nextState !== 'far'
 						}
 					})
+				}
+
+				qualityFrameCount += 1
+				const qualityElapsed = now - qualitySampleStartedAt
+				if (renderer && qualityElapsed >= 3500) {
+					const fps = qualityFrameCount * 1000 / qualityElapsed
+					const compact = Math.min(window.innerWidth, window.innerHeight) <= 520
+					const maxRatio = Math.min(window.devicePixelRatio || 1, compact ? 1.25 : 1.6)
+					let nextRatio = renderPixelRatio
+					if (fps < 43) nextRatio = Math.max(0.85, renderPixelRatio - 0.16)
+					else if (fps > 57) nextRatio = Math.min(maxRatio, renderPixelRatio + 0.08)
+					if (Math.abs(nextRatio - renderPixelRatio) >= 0.05) {
+						renderPixelRatio = nextRatio
+						renderer.setPixelRatio(renderPixelRatio)
+						if (composer && typeof composer.setPixelRatio === 'function') composer.setPixelRatio(renderPixelRatio)
+						const renderContainer = renderer.domElement?.parentElement
+						const width = renderContainer?.clientWidth || window.innerWidth
+						const height = renderContainer?.clientHeight || window.innerHeight
+						renderer.setSize(width, height)
+						if (composer) composer.setSize(width, height)
+						qualityAdjusted = true
+					}
+					if (fps < 36 && renderer.shadowMap.enabled) {
+						renderer.shadowMap.enabled = false
+						renderer.shadowMap.needsUpdate = false
+						qualityAdjusted = true
+					}
+					qualitySampleStartedAt = now
+					qualityFrameCount = 0
 				}
 
 				if (composer) composer.render()
@@ -2393,9 +3123,21 @@ export default {
 		},
 		dispose() {
 			if (animationId) cancelAnimationFrame(animationId)
+			animationId = null
+			assetLoadGeneration += 1
 			// 解绑摇杆触摸监听（挂在常驻容器 #street-canvas 上，不随 canvas 重建而清，必须显式移除）。
 			if (joystickCleanup) { joystickCleanup(); joystickCleanup = null }
 			this.clearScene()
+			if (bloomPassRef && typeof bloomPassRef.dispose === 'function') bloomPassRef.dispose()
+			if (composer) {
+				if (typeof composer.dispose === 'function') composer.dispose()
+				else {
+					if (composer.renderTarget1) composer.renderTarget1.dispose()
+					if (composer.renderTarget2) composer.renderTarget2.dispose()
+				}
+			}
+			composer = null
+			bloomPassRef = null
 			/* 释放程序化纹理缓存（共享纹理不在 clearScene 里清，统一在此释放） */
 			Object.keys(textureCache).forEach((k) => { if (textureCache[k]) textureCache[k].dispose() })
 			Object.keys(skyTextureCache).forEach((k) => { if (skyTextureCache[k]) skyTextureCache[k].dispose() })
@@ -2416,12 +3158,25 @@ export default {
 			scene = null
 			camera = null
 			renderer = null
-			composer = null
-			bloomPassRef = null
 			ambientLightRef = null
 			directionalLightRef = null
 			hemiLightRef = null
 			player = null
+			environment = []
+			buildings = []
+			poiBeacons = []
+			decorations = []
+			lanternLights = []
+			cameraTargetVec = null
+			cameraPositionVec = null
+			currentWorldLayout = null
+			movementVelocity = { x: 0, z: 0 }
+			joystickInput = { dx: 0, dy: 0 }
+			moveStepAccum = 0
+			stepDistanceCarry = 0
+			wasMoving = false
+			qualityFrameCount = 0
+			qualityAdjusted = false
 			isInitialized = false
 			currentPhaseData = null
 		}
@@ -2447,6 +3202,38 @@ export default {
 	height: 100%;
 }
 
+.street-stage__move-pad {
+	position: absolute;
+	left: 14%;
+	top: 72%;
+	z-index: 12;
+	width: 136rpx;
+	height: 136rpx;
+	border: 2rpx solid rgba(232, 210, 169, 0.42);
+	border-radius: 50%;
+	background: rgba(24, 18, 14, 0.28);
+	box-shadow: inset 0 0 24rpx rgba(0, 0, 0, 0.35), 0 8rpx 22rpx rgba(0, 0, 0, 0.22);
+	backdrop-filter: blur(4rpx);
+	transform: translate(-50%, -50%);
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.12s ease;
+}
+
+.street-stage__move-knob {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	width: 58rpx;
+	height: 58rpx;
+	border: 2rpx solid rgba(245, 232, 208, 0.72);
+	border-radius: 50%;
+	background: rgba(126, 45, 39, 0.76);
+	box-shadow: 0 5rpx 14rpx rgba(0, 0, 0, 0.38);
+	transform: translate(-50%, -50%);
+	will-change: transform;
+}
+
 /* 暗角光层 */
 .street-stage__vignette {
 	position: absolute;
@@ -2461,7 +3248,7 @@ export default {
 .street-stage__switch {
 	position: absolute;
 	left: 24rpx;
-	right: 24rpx;
+	right: 160px;
 	top: 50%;
 	transform: translateY(-50%);
 	display: flex;
@@ -2762,7 +3549,7 @@ export default {
 .street-stage__rightcorner {
 	position: absolute;
 	right: 24rpx;
-	top: calc(env(safe-area-inset-top) + 24rpx);
+	top: calc(env(safe-area-inset-top) + 176px);
 	z-index: 14;
 	display: flex;
 	flex-direction: column;
@@ -2821,5 +3608,37 @@ export default {
 
 .street-stage__minimap {
 	pointer-events: auto;
+}
+
+@media screen and (orientation: landscape) and (max-height: 520px) {
+	.street-stage__move-pad { width: 96px; height: 96px; border-width: 1px; }
+	.street-stage__move-knob { width: 42px; height: 42px; border-width: 1px; }
+
+	.street-stage__rightcorner {
+		top: 155px;
+		right: 10px;
+		flex-direction: row;
+		align-items: flex-start;
+		gap: 6px;
+	}
+	.street-stage__phase { gap: 2px; min-width: 60px; padding: 5px 7px 6px; border-width: 1px; }
+	.street-stage__phase::before { inset: 2px; }
+	.street-stage__phase-label { font-size: 15px; letter-spacing: 2px; }
+	.street-stage__phase-caption { font-size: 8px; letter-spacing: 1px; white-space: nowrap; }
+
+	.street-stage__switch { left: 10px; right: 230px; }
+	.street-stage__switch-arrow { width: 40px; height: 40px; border-width: 1px; font-size: 22px; }
+
+	.street-stage__poi-paper {
+		width: min(640px, calc(100vw - 80px));
+		max-width: none;
+		max-height: calc(100vh - 24px);
+		padding: 20px 24px;
+		overflow-y: auto;
+	}
+	.street-stage__poi-name { font-size: 24px; letter-spacing: 3px; }
+	.street-stage__poi-desc { margin-top: 12px; font-size: 14px; line-height: 1.55; }
+	.street-stage__poi-story { margin-top: 12px; padding: 10px 14px; }
+	.street-stage__poi-footer { margin-top: 14px; }
 }
 </style>
