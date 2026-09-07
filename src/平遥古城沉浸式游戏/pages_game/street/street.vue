@@ -72,7 +72,8 @@
 		/>
 
 		<!-- POI 详情（卷轴样式）-->
-		<view v-if="activePoi" class="street-stage__poi-overlay" @tap="closePoi">
+		<view v-if="activePoi" class="street-stage__poi-overlay">
+			<view class="street-stage__poi-backdrop" @tap="closePoi"></view>
 			<view class="street-stage__poi-paper" @tap.stop>
 				<view class="street-stage__poi-roll street-stage__poi-roll--top"></view>
 				<view class="street-stage__poi-roll street-stage__poi-roll--bot"></view>
@@ -104,15 +105,18 @@
 
 				<view class="street-stage__poi-footer">
 					<view class="street-stage__poi-tools">
-						<view class="street-stage__poi-tool" :class="{ 'street-stage__poi-tool--on': poiFavorited }" @tap="toggleFav">
+						<view class="street-stage__poi-tool" :class="{ 'street-stage__poi-tool--on': poiFavorited }" @tap.stop="toggleFav">
 							<text>{{ poiFavorited ? '★ 收藏' : '☆ 收藏' }}</text>
 						</view>
-						<view class="street-stage__poi-tool" @tap="editNote">
+						<view class="street-stage__poi-tool" @tap.stop="editNote">
 							<text>{{ poiNote ? '✎ 改札记' : '✎ 札记' }}</text>
 						</view>
 					</view>
-					<view class="street-stage__poi-action" @tap="playPoiTopic">
+					<view class="street-stage__poi-action" @tap.stop="playPoiTopic">
 						<text>继续讲解 ›</text>
+					</view>
+					<view class="street-stage__poi-action street-stage__poi-investigate" @tap.stop="handleSceneInteraction">
+						<text>查看线索</text>
 					</view>
 				</view>
 
@@ -133,7 +137,7 @@
 		/>
 
 		<!-- 街景内衣橱：从 HUD「行囊」唤起，换装即时热切换到 3D 化身 -->
-		<OutfitWardrobe :visible="wardrobeOpen" @close="wardrobeOpen = false" @changed="onStreetWardrobeChanged" />
+		<OutfitWardrobe :visible="wardrobeOpen" compact-landscape @close="wardrobeOpen = false" @changed="onStreetWardrobeChanged" />
 
 		<!-- 街景切换器（牌匾翻转）-->
 		<view class="street-stage__switch">
@@ -149,7 +153,7 @@
 
 <script setup>
 import { computed, getCurrentInstance, onMounted, onUnmounted, ref, watch } from 'vue'
-import { onLoad } from '@dcloudio/uni-app'
+import { onLoad, onHide, onShow } from '@dcloudio/uni-app'
 import StreetHud from '@/components/StreetHud.vue'
 import NpcOwl from '@/components/NpcOwl.vue'
 import InteractionButton from '@/components/InteractionButton.vue'
@@ -194,6 +198,7 @@ import { getEquippedCostumeSkin } from '@/common/data/costumes.js'
 import { loadingTips, poiDeepLines } from '@/common/data/culture-tips.js'
 import { toggleFavoritePoi, isFavoritePoi, getJournalNote, setJournalNote } from '@/common/utils/journal.js'
 import { buildStreetWorldLayout } from '@/common/utils/street-world.js'
+import { lockGameLandscape, releaseOrientationLock } from '@/common/utils/orientation.js'
 import MiniMap from '@/components/MiniMap.vue'
 import OutfitWardrobe from '@/components/OutfitWardrobe.vue'
 
@@ -903,6 +908,7 @@ function playEntranceAnimation() {
 
 onLoad(() => {
 	try {
+		lockGameLandscape()
 		// 身份守卫：街景是主线核心场景，必须已择身份才可进入。无 roleId 直接进来（深链 / 异常重置）会让化身退化为「客」、
 		// 角色加成与支线全部失效。无身份则退回启动页重新择身份。
 		const guardProfile = getStorage(STORAGE_KEYS.userProfile, {})
@@ -958,6 +964,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+	releaseOrientationLock()
 	uni.showTabBar()
 	flushSteps(true)
 	stopWatchPhase()
@@ -965,6 +972,9 @@ onUnmounted(() => {
 	clearLoadWatchdog()
 	clearEntryTimers()
 })
+
+onHide(() => { flushSteps(true); sendToRenderjs('pause') })
+onShow(() => { sendToRenderjs('resume') })
 
 /* 显式暴露给 renderjs 的 $ownerInstance.callMethod('handleRenderMsg') 调用：
    确保 Vue3 <script setup> 下回传通道可达，不依赖编译器隐式暴露（否则 render-ready 可能永远到不了逻辑层）。 */
@@ -987,6 +997,9 @@ let camera = null
 let renderer = null
 let composer = null
 let bloomPassRef = null
+let fxaaPassRef = null
+let gradePassRef = null
+let environmentTarget = null
 let ambientLightRef = null
 let directionalLightRef = null
 let hemiLightRef = null
@@ -996,8 +1009,16 @@ let environment = []
 let buildings = []
 let poiBeacons = []
 let decorations = []
+let decorationBatchRoot = null
 let lanternLights = []
 let particles = null
+let ambientActors = []
+let animationMixers = []
+let phaseTransition = null
+let calligraphyReady = false
+let calligraphyLoading = null
+let playerModelGeneration = 0
+let playerModelBufferCache = null
 let animationId = null
 let isInitialized = false
 let lastTime = Date.now()
@@ -1007,6 +1028,7 @@ let stepDistanceCarry = 0
 let moveStepAccum = 0
 let lastMoveEmit = 0
 let wasMoving = false
+let lastPlayerMotionAt = 0
 let currentPhaseData = null
 let currentWorldLayout = null
 let ownerInstanceRef = null
@@ -1023,6 +1045,15 @@ let qualitySampleStartedAt = 0
 let qualityFrameCount = 0
 let qualityAdjusted = false
 let assetLoadGeneration = 0
+let bootGeneration = 0
+let pagePaused = false
+let visibilityHandlerRef = null
+let contextLostHandlerRef = null
+let contextRestoredHandlerRef = null
+let bloomSuppressed = false
+let lanternLightSources = []
+let lastLightUpdate = 0
+let sceneMaterialPool = new Map()
 /* 摇杆监听清理句柄：createJoystick 绑定时赋值，dispose/reinit 时调用，避免重复进入时监听堆叠（僵尸监听泄漏）。*/
 let joystickCleanup = null
 /* 画面特效（Bloom 后处理）总开关：由逻辑层依 gameSettings.enableEffect 下发。关闭则直接渲染、跳过 composer，
@@ -1030,12 +1061,44 @@ let joystickCleanup = null
 let effectsEnabled = true
 /* 化身皮肤：由逻辑层依已装备服饰下发（body/head/hat 颜色等），createPlayer 据此着色玩家化身。null 则用默认配色。*/
 let playerSkinData = null
+const loadedScriptUrls = Object.create(null)
+const pendingScriptLoads = Object.create(null)
+
+/* 动态资源不能使用 `/static/...`：APP 云打包后页面运行在包内 file:// WebView，
+   前导斜杠会指向设备文件系统根目录。优先将资源解析到 `_www`，H5 则相对 document.baseURI。 */
+function getAssetCandidates(src) {
+	const clean = String(src || '').replace(/^\/+/, '')
+	const candidates = []
+	const add = (value) => {
+		if (value && candidates.indexOf(value) === -1) candidates.push(value)
+	}
+
+	try {
+		const bridge = typeof plus !== 'undefined' ? plus : window.plus
+		if (bridge && bridge.io && typeof bridge.io.convertLocalFileSystemURL === 'function') {
+			add(bridge.io.convertLocalFileSystemURL('_www/' + clean))
+		}
+	} catch (_) {}
+
+	try { add(new URL(clean, document.baseURI || window.location.href).href) } catch (_) {}
+	if (/^https?:$/.test(window.location.protocol || '')) add('/' + clean)
+	add(clean)
+	return candidates
+}
+
+function resolveAssetUrl(src) {
+	return getAssetCandidates(src)[0] || src
+}
 
 /* 程序化纹理缓存：跨场景复用，避免每次 loadScene 重复生成上传 GPU。
    只在 dispose() 里统一释放，clearScene 不动它们（material.dispose 不级联 texture）。*/
 let textureCache = {}
 let skyTextureCache = {}
 let brocadeTextureLoading = false
+let rooflineTextureLoading = false
+
+const PLAYER_MODEL_PATH = 'static/models/pingyao-character.glb'
+const CALLIGRAPHY_FAMILY = 'PingyaoBrush'
 
 /* renderjs → 逻辑层：通过 $ownerInstance.callMethod 回调逻辑层的 handleRenderMsg。
    APP 端逻辑层无共享 window，不能再用 window.dispatchEvent。ownerInstanceRef 在 mounted/onSceneCmd 赋值。
@@ -1072,6 +1135,155 @@ export default {
 		this.dispose()
 	},
 	methods: {
+		setColorTexture(texture) {
+			if ('colorSpace' in texture) texture.colorSpace = THREE.SRGBColorSpace
+			else texture.encoding = THREE.sRGBEncoding
+			return texture
+		},
+		readBinaryAsset(src) {
+			const candidates = getAssetCandidates(src)
+			const bridge = typeof plus !== 'undefined' ? plus : (typeof window !== 'undefined' ? window.plus : null)
+			if (bridge?.io?.resolveLocalFileSystemURL) {
+				return new Promise((resolve, reject) => {
+					const tryCandidate = (index, lastError) => {
+						if (index >= candidates.length) { reject(lastError || new Error(src + ' 读取失败')); return }
+						bridge.io.resolveLocalFileSystemURL(candidates[index], (entry) => {
+							entry.file((file) => {
+								const reader = new FileReader()
+								reader.onload = () => resolve(reader.result)
+								reader.onerror = () => tryCandidate(index + 1, reader.error)
+								reader.readAsArrayBuffer(file)
+							}, (error) => tryCandidate(index + 1, error))
+						}, (error) => tryCandidate(index + 1, error))
+					}
+					tryCandidate(0)
+				})
+			}
+			return (async () => {
+				let lastError = null
+				for (const url of candidates) {
+					try {
+						const response = await fetch(url)
+						if (!response.ok) throw new Error('HTTP ' + response.status)
+						return await response.arrayBuffer()
+					} catch (error) { lastError = error }
+				}
+				throw lastError || new Error(src + ' 读取失败')
+			})()
+		},
+		loadCalligraphyFont() {
+			if (calligraphyReady) return Promise.resolve(true)
+			if (calligraphyLoading) return calligraphyLoading
+			calligraphyLoading = (async () => {
+				if (typeof FontFace === 'undefined' || !document.fonts) return false
+				const face = new FontFace(CALLIGRAPHY_FAMILY, `url(${resolveAssetUrl('static/fonts/MaShanZheng-Pingyao.woff2')})`, { style: 'normal', weight: '400' })
+				await face.load()
+				document.fonts.add(face)
+				await document.fonts.ready
+				calligraphyReady = true
+				return true
+			})().catch(() => false).finally(() => { calligraphyLoading = null })
+			return calligraphyLoading
+		},
+		createEnvironmentMap() {
+			if (!renderer || !scene || !THREE.RoomEnvironment) return
+			try {
+				if (environmentTarget) environmentTarget.dispose()
+				const pmrem = new THREE.PMREMGenerator(renderer)
+				pmrem.compileEquirectangularShader()
+				environmentTarget = pmrem.fromScene(new THREE.RoomEnvironment(), 0.04)
+				scene.environment = environmentTarget.texture
+				pmrem.dispose()
+			} catch (_) { scene.environment = null }
+		},
+		applyEnvironmentIntensity(root, intensity) {
+			root?.traverse((item) => {
+				const materials = Array.isArray(item.material) ? item.material : [item.material]
+				materials.filter(Boolean).forEach((material) => {
+					if ('envMapIntensity' in material) material.envMapIntensity = intensity
+				})
+			})
+		},
+		// World-space UVs keep brick and tile dimensions independent of facade size.
+		mapSurfaceUV(geometry, scaleU, scaleV) {
+			const pos = geometry.attributes.position
+			const normal = geometry.attributes.normal
+			const uv = geometry.attributes.uv
+			if (!uv) return geometry
+			for (let i = 0; i < pos.count; i++) {
+				const nx = Math.abs(normal.getX(i)), ny = Math.abs(normal.getY(i))
+				const u = nx > 0.5 ? pos.getZ(i) : pos.getX(i)
+				const v = ny > 0.5 ? pos.getZ(i) : pos.getY(i)
+				uv.setXY(i, u / scaleU, v / scaleV)
+			}
+			uv.needsUpdate = true
+			return geometry
+		},
+		// Scene-owned batches: phase-sensitive windows stay separate from opaque walls.
+		batchStaticRoots(roots) {
+			const removedGeometries = new Set(), removedMaterials = new Set()
+			roots.filter((root) => root.isGroup).forEach((root) => {
+				root.updateMatrixWorld(true)
+				const inverse = root.matrixWorld.clone().invert()
+				const buckets = new Map()
+				root.traverse((mesh) => {
+					const m = mesh.material
+					if (!mesh.isMesh || !m || Array.isArray(m) || m.transparent || mesh.isInstancedMesh) return
+					const materialKey = JSON.stringify([m.type, m.color?.getHex(), m.emissive?.getHex(), m.emissiveIntensity,
+						m.map?.uuid, m.emissiveMap?.uuid, m.roughness, m.metalness, m.side, m.flatShading, m.toneMapped,
+						Boolean(mesh.userData.isWindowGlow), Boolean(mesh.userData.isBuildingLantern)])
+					if (!sceneMaterialPool.has(materialKey)) sceneMaterialPool.set(materialKey, m)
+					const key = materialKey + ':' + mesh.castShadow + ':' + mesh.receiveShadow
+					if (!buckets.has(key)) buckets.set(key, { material: sceneMaterialPool.get(materialKey), meshes: [] })
+					buckets.get(key).meshes.push(mesh)
+				})
+				buckets.forEach(({ material, meshes }) => {
+					const positions = [], normals = [], uvs = []
+					meshes.forEach((mesh) => {
+						const g = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone()
+						g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inverse, mesh.matrixWorld))
+						positions.push(...g.attributes.position.array)
+						normals.push(...g.attributes.normal.array)
+						if (g.attributes.uv) uvs.push(...g.attributes.uv.array)
+						else uvs.push(...new Float32Array(g.attributes.position.count * 2))
+						g.dispose()
+						removedGeometries.add(mesh.geometry)
+						removedMaterials.add(mesh.material)
+						mesh.removeFromParent()
+					})
+					const geometry = new THREE.BufferGeometry()
+					geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+					geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
+					geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+					geometry.computeBoundingSphere()
+					const batch = new THREE.Mesh(geometry, material)
+					batch.castShadow = meshes[0].castShadow
+					batch.receiveShadow = meshes[0].receiveShadow
+					batch.userData = { ...meshes[0].userData }
+					root.add(batch)
+				})
+			})
+			const liveMaterials = new Set(), liveGeometries = new Set()
+			scene.traverse((mesh) => {
+				if (mesh.geometry) liveGeometries.add(mesh.geometry)
+				;(Array.isArray(mesh.material) ? mesh.material : [mesh.material]).filter(Boolean).forEach((m) => liveMaterials.add(m))
+			})
+			removedGeometries.forEach((g) => { if (!liveGeometries.has(g)) g.dispose() })
+			removedMaterials.forEach((m) => { if (!liveMaterials.has(m)) m.dispose() })
+		},
+		syncBloomSize() {
+			if (!renderer || !bloomPassRef) return
+			const size = renderer.getSize(new THREE.Vector2())
+			const compact = Math.min(size.x, size.y) <= 520
+			bloomPassRef.setSize(Math.max(1, Math.floor(size.x * renderPixelRatio * (compact ? 0.5 : 0.75))), Math.max(1, Math.floor(size.y * renderPixelRatio * (compact ? 0.5 : 0.75))))
+		},
+		pauseRendering() {
+			if (animationId) cancelAnimationFrame(animationId)
+			animationId = null
+			joystickInput = { dx: 0, dy: 0 }
+			movementVelocity.x = 0
+			movementVelocity.z = 0
+		},
 		/* ===== 程序化纹理工具（CanvasTexture，零外部图片） ===== */
 		getTexture(key, factory) {
 			if (textureCache[key]) return textureCache[key]
@@ -1091,16 +1303,16 @@ export default {
 			if (brocadeTextureLoading || !THREE) return null
 			brocadeTextureLoading = true
 			const generation = assetLoadGeneration
-			new THREE.TextureLoader().load('/static/img/3d/pingyao-brocade-pattern.jpg', (texture) => {
-				brocadeTextureLoading = false
+			new THREE.TextureLoader().load(resolveAssetUrl('static/img/3d/pingyao-brocade-pattern.jpg'), (texture) => {
 				if (generation !== assetLoadGeneration || !renderer) {
 					texture.dispose()
 					return
 				}
+				brocadeTextureLoading = false
 				texture.wrapS = THREE.RepeatWrapping
 				texture.wrapT = THREE.RepeatWrapping
 				texture.repeat.set(2.25, 2.25)
-				if (THREE.SRGBColorSpace) texture.colorSpace = THREE.SRGBColorSpace
+				this.setColorTexture(texture)
 				texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy())
 				texture.needsUpdate = true
 				textureCache.pingyao_brocade = texture
@@ -1114,7 +1326,7 @@ export default {
 						})
 					})
 				}
-			}, undefined, () => { brocadeTextureLoading = false })
+			}, undefined, () => { if (generation === assetLoadGeneration) brocadeTextureLoading = false })
 			return null
 		},
 		/* 青砖墙：横向砖块 + 砖缝 + 轻微做旧斑驳 */
@@ -1151,7 +1363,7 @@ export default {
 				const tex = new THREE.CanvasTexture(canvas)
 				tex.wrapS = THREE.RepeatWrapping
 				tex.wrapT = THREE.RepeatWrapping
-				tex.colorSpace = THREE.SRGBColorSpace
+				this.setColorTexture(tex)
 				tex.needsUpdate = true
 				return tex
 			})
@@ -1181,7 +1393,7 @@ export default {
 				const tex = new THREE.CanvasTexture(canvas)
 				tex.wrapS = THREE.RepeatWrapping
 				tex.wrapT = THREE.RepeatWrapping
-				tex.colorSpace = THREE.SRGBColorSpace
+				this.setColorTexture(tex)
 				tex.needsUpdate = true
 				return tex
 			})
@@ -1208,7 +1420,7 @@ export default {
 				const tex = new THREE.CanvasTexture(canvas)
 				tex.wrapS = THREE.RepeatWrapping
 				tex.wrapT = THREE.RepeatWrapping
-				tex.colorSpace = THREE.SRGBColorSpace
+				this.setColorTexture(tex)
 				tex.needsUpdate = true
 				return tex
 			})
@@ -1233,7 +1445,7 @@ export default {
 					ctx.beginPath(); ctx.moveTo(0, i * step); ctx.lineTo(size, i * step); ctx.stroke()
 				}
 				const tex = new THREE.CanvasTexture(canvas)
-				tex.colorSpace = THREE.SRGBColorSpace
+				this.setColorTexture(tex)
 				tex.needsUpdate = true
 				return tex
 			})
@@ -1271,7 +1483,7 @@ export default {
 				tex.wrapS = THREE.RepeatWrapping
 				tex.wrapT = THREE.RepeatWrapping
 				tex.repeat.set(5, 16)
-				tex.colorSpace = THREE.SRGBColorSpace
+				this.setColorTexture(tex)
 				if (renderer && renderer.capabilities) tex.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy())
 				tex.needsUpdate = true
 				return tex
@@ -1296,9 +1508,43 @@ export default {
 				tex.wrapS = THREE.RepeatWrapping
 				tex.wrapT = THREE.RepeatWrapping
 				tex.repeat.set(7, 10)
-				tex.colorSpace = THREE.SRGBColorSpace
+				this.setColorTexture(tex)
 				tex.needsUpdate = true
 				return tex
+			})
+		},
+		makeLanternGlowTexture() {
+			return this.getTexture('lantern_glow', () => {
+				const canvas = this.makeCanvas(128), ctx = canvas.getContext('2d')
+				const gradient = ctx.createRadialGradient(64, 64, 2, 64, 64, 62)
+				gradient.addColorStop(0, 'rgba(245,240,232,.95)')
+				gradient.addColorStop(0.22, 'rgba(212,165,116,.62)')
+				gradient.addColorStop(1, 'rgba(196,30,58,0)')
+				ctx.fillStyle = gradient; ctx.fillRect(0, 0, 128, 128)
+				const texture = new THREE.CanvasTexture(canvas); this.setColorTexture(texture); return texture
+			})
+		},
+		makeInkLayerTexture(kind) {
+			return this.getTexture('ink_layer_' + kind, () => {
+				const canvas = document.createElement('canvas'); canvas.width = 1024; canvas.height = 256
+				const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, canvas.width, canvas.height)
+				ctx.fillStyle = kind === 'mountain' ? 'rgba(79,78,73,.72)' : 'rgba(48,48,46,.76)'
+				ctx.beginPath(); ctx.moveTo(0, 256)
+				for (let x = 0; x <= 1024; x += 48) {
+					const y = kind === 'mountain' ? 110 + Math.sin(x * 0.021) * 34 + Math.sin(x * 0.008) * 28 : 162 - (x % 192 < 96 ? 24 : 0)
+					ctx.lineTo(x, y)
+				}
+				ctx.lineTo(1024, 256); ctx.closePath(); ctx.fill()
+				const texture = new THREE.CanvasTexture(canvas); texture.wrapS = THREE.RepeatWrapping; return texture
+			})
+		},
+		makeCloudTexture() {
+			return this.getTexture('ink_cloud', () => {
+				const canvas = this.makeCanvas(128), ctx = canvas.getContext('2d')
+				const gradient = ctx.createRadialGradient(64, 64, 6, 64, 64, 58)
+				gradient.addColorStop(0, 'rgba(245,240,232,.45)'); gradient.addColorStop(0.55, 'rgba(245,240,232,.18)'); gradient.addColorStop(1, 'rgba(245,240,232,0)')
+				ctx.save(); ctx.scale(1, 0.42); ctx.fillStyle = gradient; ctx.fillRect(0, 0, 128, 300); ctx.restore()
+				return new THREE.CanvasTexture(canvas)
 			})
 		},
 		makeSignTexture(label, style) {
@@ -1320,10 +1566,11 @@ export default {
 				ctx.fillStyle = '#f2ddb0'
 				ctx.textAlign = 'center'
 				ctx.textBaseline = 'middle'
-				ctx.font = safeLabel.length > 5 ? '700 54px KaiTi, STKaiti, serif' : '700 66px KaiTi, STKaiti, serif'
+				const brush = calligraphyReady ? CALLIGRAPHY_FAMILY + ', ' : ''
+				ctx.font = safeLabel.length > 5 ? `400 58px ${brush}KaiTi, STKaiti, serif` : `400 72px ${brush}KaiTi, STKaiti, serif`
 				ctx.fillText(safeLabel, canvas.width / 2, canvas.height / 2 + 3)
 				const tex = new THREE.CanvasTexture(canvas)
-				tex.colorSpace = THREE.SRGBColorSpace
+				this.setColorTexture(tex)
 				tex.needsUpdate = true
 				return tex
 			})
@@ -1343,10 +1590,10 @@ export default {
 				ctx.fillStyle = '#f3dfb2'
 				ctx.textAlign = 'center'
 				ctx.textBaseline = 'middle'
-				ctx.font = '700 48px KaiTi, STKaiti, serif'
+				ctx.font = `400 52px ${calligraphyReady ? CALLIGRAPHY_FAMILY + ', ' : ''}KaiTi, STKaiti, serif`
 				ctx.fillText(safeLabel, 256, 65)
 				const tex = new THREE.CanvasTexture(canvas)
-				tex.colorSpace = THREE.SRGBColorSpace
+				this.setColorTexture(tex)
 				tex.needsUpdate = true
 				return tex
 			})
@@ -1380,7 +1627,7 @@ export default {
 				}
 			}
 			const tex = new THREE.CanvasTexture(canvas)
-			tex.colorSpace = THREE.SRGBColorSpace
+			this.setColorTexture(tex)
 			tex.needsUpdate = true
 			skyTextureCache[key] = tex
 			return tex
@@ -1433,6 +1680,12 @@ export default {
 					ctx.applyPhase(data.phase)
 				} else if (action === 'reskinPlayer') {
 					ctx.reskinPlayer(data.playerSkin)
+				} else if (action === 'pause') {
+					pagePaused = true
+					ctx.pauseRendering()
+				} else if (action === 'resume') {
+					pagePaused = false
+					if (renderer && !document.hidden) ctx.startAnimation()
 				}
 			} catch (err) {
 				// 观察器内任何同步抛错都转成终态信号，避免逻辑层永远收不到 ready/error 而卡「张望」。
@@ -1440,23 +1693,55 @@ export default {
 			}
 		},
 		loadScript(src) {
-			return new Promise((resolve, reject) => {
-				const script = document.createElement('script')
-				let settled = false
-				const done = (fn, arg) => { if (!settled) { settled = true; clearTimeout(timer); fn(arg) } }
-				// 超时兜底：<script> 既不 onload 也不 onerror（APP 云打包后 /static 路径异常）时不至于永久挂起。
-				const timer = setTimeout(() => done(reject, new Error(src + ' 加载超时')), 8000)
-				script.src = src
-				script.onload = () => done(resolve)
-				script.onerror = () => done(reject, new Error(src + ' 加载失败'))
-				document.head.appendChild(script)
-			})
+			if (loadedScriptUrls[src]) return Promise.resolve()
+			if (pendingScriptLoads[src]) return pendingScriptLoads[src]
+
+			const candidates = getAssetCandidates(src)
+			pendingScriptLoads[src] = (async () => {
+				let lastError = null
+				for (let i = 0; i < candidates.length; i++) {
+					const url = candidates[i]
+					try {
+						await new Promise((resolve, reject) => {
+							const script = document.createElement('script')
+							let settled = false
+							const done = (fn, arg) => {
+								if (settled) return
+								settled = true
+								clearTimeout(timer)
+								fn(arg)
+							}
+							const timer = setTimeout(() => {
+								script.remove()
+								done(reject, new Error(url + ' 加载超时'))
+							}, 6000)
+							script.src = url
+							script.onload = () => done(resolve)
+							script.onerror = () => {
+								script.remove()
+								done(reject, new Error(url + ' 加载失败'))
+							}
+							document.head.appendChild(script)
+						})
+						loadedScriptUrls[src] = true
+						return
+					} catch (error) {
+						lastError = error
+					}
+				}
+				throw lastError || new Error(src + ' 加载失败')
+			})()
+
+			return pendingScriptLoads[src].finally(() => { delete pendingScriptLoads[src] })
 		},
 		async bootScene(data) {
+			const generation = ++bootGeneration
 			try {
 				// 快速路径：reinit / 二次进入时 window.THREE 及后处理类已就位，跳过 7 个 <script> 的重复注入，加速恢复。
 				if (window.THREE && window.THREE.EffectComposer && window.THREE.RenderPass && window.THREE.UnrealBloomPass) {
 					THREE = window.THREE
+					await this.loadCalligraphyFont()
+					if (generation !== bootGeneration) return
 					emit('render-progress', 70)
 					emit('render-stage', '渲染环境就绪 · 搭建街景…')
 					this.initScene(data)
@@ -1467,17 +1752,18 @@ export default {
 				// 致 THREE.RenderPass/ShaderPass 为 undefined，随后 new THREE.EffectComposer() 内部 new THREE.ShaderPass 再崩。
 				// 旧顺序把 ShaderPass/RenderPass 排在 EffectComposer 之前，是 3D 必崩的第二处根因。
 				const libs = [
-					'/static/libs/three.min.js',
-					'/static/libs/CopyShader.js',
-					'/static/libs/LuminosityHighPassShader.js',
-					'/static/libs/EffectComposer.js',
-					'/static/libs/RenderPass.js',
-					'/static/libs/ShaderPass.js',
-					'/static/libs/UnrealBloomPass.js'
+					'static/libs/three.min.js',
+					'static/libs/CopyShader.js',
+					'static/libs/LuminosityHighPassShader.js',
+					'static/libs/EffectComposer.js',
+					'static/libs/RenderPass.js',
+					'static/libs/ShaderPass.js',
+					'static/libs/UnrealBloomPass.js'
 				]
 				for (let i = 0; i < libs.length; i++) {
 					emit('render-stage', '加载 3D 引擎库 ' + (i + 1) + '/' + libs.length + '…')
 					await this.loadScript(libs[i])
+					if (generation !== bootGeneration) return
 					emit('render-progress', Math.round(((i + 1) / libs.length) * 70))
 				}
 				THREE = window.THREE
@@ -1492,6 +1778,13 @@ export default {
 					emit('render-error', { error: '后处理库未就位（加载顺序/缺文件）' })
 					return
 				}
+				/* 小型可选插件均为离线文件；任一失败只关闭对应画质能力。 */
+				for (const plugin of ['static/libs/RoomEnvironment.js', 'static/libs/Sky.js', 'static/libs/FXAAShader.js']) {
+					try { await this.loadScript(plugin) } catch (_) {}
+					if (generation !== bootGeneration) return
+				}
+				await this.loadCalligraphyFont()
+				if (generation !== bootGeneration) return
 				emit('render-stage', '渲染环境就绪 · 搭建街景…')
 				this.initScene(data)
 			} catch (err) {
@@ -1540,7 +1833,7 @@ export default {
 			scene.fog = new THREE.FogExp2(fogColor, fogDensity)
 
 			const wideLandscape = width / Math.max(1, height) > 1.85
-			camera = new THREE.PerspectiveCamera(wideLandscape ? 52 : 58, width / height, 0.1, 130)
+			camera = new THREE.PerspectiveCamera(wideLandscape ? 55 : 58, width / height, 0.1, 100)
 			camera.position.set(0, 4.4, 12)
 			cameraYawCenter = Number(data.streetData.recommendedCamera?.azimuth || 0)
 			cameraYaw = cameraYawCenter
@@ -1560,19 +1853,56 @@ export default {
 			renderer.toneMappingExposure = phase?.exposure ?? 1.05
 			renderer.domElement.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;'
 			container.appendChild(renderer.domElement)
+			bloomSuppressed = false
+			contextLostHandlerRef = (event) => {
+				event.preventDefault()
+				this.pauseRendering()
+				emit('render-error', { error: '图形上下文已中断，请重试街景' })
+			}
+			contextRestoredHandlerRef = () => {
+				if (!pagePaused && !document.hidden) this.startAnimation()
+				emit('render-ready')
+			}
+			renderer.domElement.addEventListener('webglcontextlost', contextLostHandlerRef)
+			renderer.domElement.addEventListener('webglcontextrestored', contextRestoredHandlerRef)
+			this.createEnvironmentMap()
+			visibilityHandlerRef = () => {
+				if (document.hidden) this.pauseRendering()
+				else if (!pagePaused && renderer) this.startAnimation()
+			}
+			document.addEventListener('visibilitychange', visibilityHandlerRef)
 
 			/* 后处理（Bloom）：失败则降级为直接渲染，绝不因后处理异常而黑屏或卡死。
 			   「画面特效」关闭时直接跳过 composer，省下整条 Bloom pass 的逐帧开销（低端机降负载）。*/
 			composer = null
 			bloomPassRef = null
+			fxaaPassRef = null
+			gradePassRef = null
 			if (effectsEnabled) {
 				try {
-					composer = new THREE.EffectComposer(renderer)
+					const composerTarget = renderer.capabilities.isWebGL2
+						? new THREE.WebGLRenderTarget(width, height, { samples: 4, type: THREE.HalfFloatType })
+						: undefined
+					composer = new THREE.EffectComposer(renderer, composerTarget)
 					composer.addPass(new THREE.RenderPass(scene, camera))
 					if (typeof composer.setPixelRatio === 'function') composer.setPixelRatio(renderPixelRatio)
 					bloomPassRef = new THREE.UnrealBloomPass(new THREE.Vector2(width, height), phase?.bloomStrength ?? 0.45, 0.28, 0.78)
 					composer.addPass(bloomPassRef)
+					if (!renderer.capabilities.isWebGL2 && THREE.FXAAShader) {
+						fxaaPassRef = new THREE.ShaderPass(THREE.FXAAShader)
+						fxaaPassRef.material.uniforms.resolution.value.set(1 / (width * renderPixelRatio), 1 / (height * renderPixelRatio))
+						composer.addPass(fxaaPassRef)
+					}
+					gradePassRef = new THREE.ShaderPass({
+						uniforms: { tDiffuse: { value: null }, warmth: { value: phase?.key === 'night' ? 0.015 : 0.045 } },
+						vertexShader: 'varying vec2 vUv; void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+						fragmentShader: 'uniform sampler2D tDiffuse;uniform float warmth;varying vec2 vUv;float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}void main(){vec4 c=texture2D(tDiffuse,vUv);float v=smoothstep(.78,.22,distance(vUv,vec2(.5)));c.rgb*=mix(.82,1.,v);c.r+=warmth;c.b-=warmth*.42;c.rgb+=(hash(vUv*900.)-.5)*.012;gl_FragColor=c;}'
+					})
+					composer.addPass(gradePassRef)
+					this.syncBloomSize()
 				} catch (err) {
+					if (bloomPassRef) bloomPassRef.dispose()
+					if (composer) composer.dispose()
 					composer = null
 					bloomPassRef = null
 				}
@@ -1583,9 +1913,11 @@ export default {
 				resizeHandlerRef = () => {
 					const w = container.clientWidth || window.innerWidth
 					const h = container.clientHeight || window.innerHeight
-					if (camera) { camera.aspect = w / h; camera.updateProjectionMatrix() }
+					if (camera) { camera.aspect = w / h; camera.fov = w / h > 1.85 ? 55 : 58; camera.updateProjectionMatrix() }
 					if (renderer) renderer.setSize(w, h)
 					if (composer) composer.setSize(w, h)
+					if (fxaaPassRef) fxaaPassRef.material.uniforms.resolution.value.set(1 / (w * renderPixelRatio), 1 / (h * renderPixelRatio))
+					this.syncBloomSize()
 				}
 				window.addEventListener('resize', resizeHandlerRef)
 			}
@@ -1601,6 +1933,7 @@ export default {
 			emit('render-stage', '点亮街景…')
 			this.createJoystick()
 			this.startAnimation()
+			isInitialized = true
 			emit('render-ready')
 		},
 		loadScene(data) {
@@ -1625,7 +1958,7 @@ export default {
 			const angle = phase?.lighting?.directional?.angle || { x: 12, y: 16, z: 10 }
 			directionalLightRef.position.set(angle.x, angle.y, angle.z)
 			directionalLightRef.castShadow = true
-			directionalLightRef.shadow.mapSize.set(Math.min(window.innerWidth, window.innerHeight) <= 520 ? 1024 : 2048, Math.min(window.innerWidth, window.innerHeight) <= 520 ? 1024 : 2048)
+			directionalLightRef.shadow.mapSize.set(1024, 1024)
 			directionalLightRef.shadow.camera.left = -24
 			directionalLightRef.shadow.camera.right = 24
 			directionalLightRef.shadow.camera.top = 28
@@ -1654,9 +1987,30 @@ export default {
 			this.createDecorations(data.streetData, currentWorldLayout)
 			this.createParticles(phase)
 			this.createPlayer()
+			this.tryLoadPlayerModel(playerSkinData?.modelPath || PLAYER_MODEL_PATH)
+			this.createAmbientLife(data.streetData)
+			decorationBatchRoot = new THREE.Group()
+			decorations.forEach((group) => decorationBatchRoot.add(group))
+			scene.add(decorationBatchRoot)
+			const facadeRows = [-1, 1].map((side) => {
+				const row = new THREE.Group()
+				buildings.filter((building) => Math.sign(building.position.x) === side).forEach((building) => row.add(building))
+				scene.add(row)
+				return row
+			})
+			buildings = facadeRows
+			this.batchStaticRoots([...buildings, decorationBatchRoot, ...environment])
+			scene.updateMatrixWorld(true)
+			lanternLightSources = lanternLights.map((light) => light.getWorldPosition(new THREE.Vector3()))
+			lanternLights.forEach((light) => light.removeFromParent())
+			const lightBudget = Math.min(window.innerWidth, window.innerHeight) <= 520 ? 2 : 4
+			lanternLights = lanternLights.slice(0, lightBudget)
+			lanternLights.forEach((light, index) => { light.position.copy(lanternLightSources[index]); scene.add(light) })
+			lastLightUpdate = 0
 			this.highlightQuestPoi(data.questTargetPoiId)
 
 			if (phase) this.applyPhase(phase)
+			this.applyEnvironmentIntensity(scene, phase?.key === 'night' ? 0.72 : 0.48)
 			emit('render-progress', 100)
 		},
 		createStreetEnvironment(streetData, worldLayout) {
@@ -1739,6 +2093,21 @@ export default {
 			gate.position.set(0, 0, -28.2)
 			scene.add(gate)
 			environment.push(gate)
+			/* 城墙向两侧没入雾中，并以雉堞加强街尽头的尺度。 */
+			;[-1, 1].forEach((side) => {
+				const wall = new THREE.Group()
+				const wallBody = new THREE.Mesh(new THREE.BoxGeometry(18, 3.7, 2.5), gateWallMat)
+				wallBody.position.set(side * 12.5, 1.85, -29.1)
+				wallBody.rotation.y = side * 0.09
+				wall.add(wallBody)
+				for (let i = 0; i < 7; i += 1) {
+					const merlon = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.68, 1.45), gateWallMat)
+					merlon.position.set(side * (5.1 + i * 2.25), 4.02, -29.1 - i * 0.2)
+					wall.add(merlon)
+				}
+				scene.add(wall)
+				environment.push(wall)
+			})
 
 			/* 生成式水墨屋脊只作受雾效影响的远景层，近景建筑与碰撞仍全部由 3D 几何承担。 */
 			const phaseKey = currentPhaseData?.key || 'noon'
@@ -1751,7 +2120,7 @@ export default {
 				depthWrite: false,
 				fog: true,
 				toneMapped: false,
-				blending: THREE.MultiplyBlending
+				blending: THREE.NormalBlending
 			})
 			const backdrop = new THREE.Mesh(
 				new THREE.CylinderGeometry(46, 46, 32, 64, 1, true),
@@ -1764,15 +2133,29 @@ export default {
 			backdrop.renderOrder = -1
 			scene.add(backdrop)
 			environment.push(backdrop)
+			;[
+				{ radius: 44, height: 24, y: 10, texture: this.makeInkLayerTexture('mountain'), color: 0x8f8a80, opacity: 0.24, order: -3, kind: 'mountain' },
+				{ radius: 39, height: 18, y: 8, texture: this.makeInkLayerTexture('wall'), color: 0x686963, opacity: 0.3, order: -2, kind: 'wall' }
+			].forEach((layer) => {
+				const mesh = new THREE.Mesh(new THREE.CylinderGeometry(layer.radius, layer.radius, layer.height, 48, 1, true), new THREE.MeshBasicMaterial({ map: layer.texture, color: layer.color, transparent: true, opacity: layer.opacity, side: THREE.BackSide, depthWrite: false, fog: true }))
+				mesh.position.set(0, layer.y, -7); mesh.renderOrder = layer.order; mesh.userData.isParallaxLayer = layer.kind
+				scene.add(mesh); environment.push(mesh)
+			})
+			const cloudPositions = new Float32Array([-18,14,-10, -7,16,-24, 8,14,-17, 19,17,-4, -24,18,8, 25,15,-29])
+			const cloudGeometry = new THREE.BufferGeometry(); cloudGeometry.setAttribute('position', new THREE.BufferAttribute(cloudPositions, 3))
+			const clouds = new THREE.Points(cloudGeometry, new THREE.PointsMaterial({ map: this.makeCloudTexture(), color: 0xF5F0E8, size: 8, transparent: true, opacity: phaseKey === 'night' ? 0.11 : 0.3, depthWrite: false, sizeAttenuation: true }))
+			clouds.userData.isCloudLayer = true; scene.add(clouds); environment.push(clouds)
 
-			if (!textureCache.pingyao_roofline) {
+			if (!textureCache.pingyao_roofline && !rooflineTextureLoading) {
+				rooflineTextureLoading = true
 				const generation = assetLoadGeneration
-				new THREE.TextureLoader().load('/static/img/3d/pingyao-roofline-panorama.webp', (texture) => {
+				new THREE.TextureLoader().load(resolveAssetUrl('static/img/3d/pingyao-roofline-panorama.webp'), (texture) => {
 					if (generation !== assetLoadGeneration || !renderer) {
 						texture.dispose()
 						return
 					}
-					texture.colorSpace = THREE.SRGBColorSpace
+					rooflineTextureLoading = false
+					this.setColorTexture(texture)
 					texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy())
 					texture.needsUpdate = true
 					textureCache.pingyao_roofline = texture
@@ -1782,7 +2165,7 @@ export default {
 							item.material.needsUpdate = true
 						}
 					})
-				}, undefined, () => {})
+				}, undefined, () => { if (generation === assetLoadGeneration) rooflineTextureLoading = false })
 			}
 		},
 		getBuildingPalette(style) {
@@ -1799,7 +2182,7 @@ export default {
 			}
 			return palettes[style] || palettes.courtyard
 		},
-		addPitchedRoof(group, width, depth, baseY, roofHex) {
+		addPitchedRoof(group, width, depth, baseY, roofHex, ceremonial = false) {
 			const roofMaterial = new THREE.MeshStandardMaterial({
 				color: 0xffffff,
 				map: this.makeRoofTexture(roofHex),
@@ -1807,23 +2190,65 @@ export default {
 				metalness: 0,
 				flatShading: true
 			})
-			const pitch = 0.44
-			;[-1, 1].forEach((side) => {
-				const plane = new THREE.Mesh(new THREE.BoxGeometry(width + 0.9, 0.14, depth * 0.64), roofMaterial)
-				plane.position.set(0, baseY + 0.45, side * depth * 0.27)
-				plane.rotation.x = side > 0 ? pitch : -pitch
-				plane.castShadow = true
-				plane.receiveShadow = true
-				group.add(plane)
-			})
+			const half = depth / 2 + 0.48
+			const rise = depth * (ceremonial ? 0.3 : 0.24)
+			const eaveLift = ceremonial ? 0.16 : 0.07
+			const profile = new THREE.Shape()
+			profile.moveTo(-half, eaveLift)
+			profile.lineTo(-half * 0.78, 0.14)
+			profile.lineTo(0, rise)
+			profile.lineTo(half * 0.78, 0.14)
+			profile.lineTo(half, eaveLift)
+			profile.lineTo(half, eaveLift - 0.14)
+			profile.lineTo(half * 0.78, 0)
+			profile.lineTo(0, rise - 0.14)
+			profile.lineTo(-half * 0.78, 0)
+			profile.lineTo(-half, eaveLift - 0.14)
+			profile.closePath()
+			const roofGeometry = new THREE.ExtrudeGeometry(profile, { depth: width + 0.8, bevelEnabled: false, steps: 1 })
+			roofGeometry.rotateY(Math.PI / 2)
+			roofGeometry.translate(-(width + 0.8) / 2, 0, 0)
+			this.mapSurfaceUV(roofGeometry, 2.8, 2.8)
+			const roof = new THREE.Mesh(roofGeometry, roofMaterial)
+			roof.position.y = baseY + 0.1
+			roof.castShadow = true
+			roof.receiveShadow = true
+			group.add(roof)
 			const ridge = new THREE.Mesh(
 				new THREE.CylinderGeometry(0.1, 0.1, width + 1.05, 8),
 				new THREE.MeshStandardMaterial({ color: 0x292a2a, roughness: 0.92 })
 			)
 			ridge.rotation.z = Math.PI / 2
-			ridge.position.y = baseY + 1.0
+			ridge.position.y = baseY + 0.1 + rise
 			ridge.castShadow = true
 			group.add(ridge)
+			;[-1, 1].forEach((side) => {
+				const end = new THREE.Mesh(new THREE.BoxGeometry(0.16, ceremonial ? 0.38 : 0.2, 0.18), ridge.material)
+				end.position.set(side * (width / 2 + 0.38), baseY + rise + (ceremonial ? 0.23 : 0.14), 0)
+				group.add(end)
+			})
+			/* 筒瓦以实例覆盖两面坡，轮廓和檐口在近景可读，仍保持每座屋顶两个 draw call。 */
+			const columns = Math.max(8, Math.min(15, Math.round(width / 0.62)))
+			const slopeLength = Math.hypot(half * 0.88, rise)
+			const tileGeo = new THREE.CylinderGeometry(0.045, 0.065, slopeLength, 6, 1, true)
+			const tileMat = new THREE.MeshBasicMaterial({ color: 0x292827, toneMapped: true })
+			const tiles = new THREE.InstancedMesh(tileGeo, tileMat, columns * 2)
+			const dummy = new THREE.Object3D()
+			let tileIndex = 0
+			for (let column = 0; column < columns; column += 1) {
+				const x = -width / 2 + (column + 0.5) * width / columns
+				;[-1, 1].forEach((side) => {
+					dummy.position.set(x, baseY + 0.12 + rise * 0.5, side * half * 0.44)
+					dummy.rotation.set(side * Math.atan2(half * 0.88, rise), 0, 0)
+					dummy.updateMatrix()
+					tiles.setMatrixAt(tileIndex++, dummy.matrix)
+				})
+			}
+			tiles.castShadow = true
+			tiles.receiveShadow = true
+			tiles.userData.isRoofTiles = true
+			group.add(tiles)
+			/* 筒瓦末端直接形成滴水轮廓，避免为瓦当再增加逐屋 draw call。 */
 		},
 		createBuildings(streetData, worldLayout) {
 			const facades = worldLayout?.facades || []
@@ -1831,13 +2256,13 @@ export default {
 				const group = new THREE.Group()
 				const palette = this.getBuildingPalette(building.style)
 				const bodyMaterial = new THREE.MeshStandardMaterial({
-					color: palette.wall,
+					color: 0xe5e4df,
 					map: this.makeBrickTexture(palette.brick, palette.mortar),
 					roughness: 0.95,
 					metalness: 0,
 					flatShading: true
 				})
-				const body = new THREE.Mesh(new THREE.BoxGeometry(building.width, building.height, building.depth), bodyMaterial)
+				const body = new THREE.Mesh(this.mapSurfaceUV(new THREE.BoxGeometry(building.width, building.height, building.depth), 3.6, 2.5), bodyMaterial)
 				body.position.y = building.height / 2 + 0.16
 				body.castShadow = true
 				body.receiveShadow = true
@@ -1851,8 +2276,37 @@ export default {
 				plinth.receiveShadow = true
 				group.add(plinth)
 
-				this.addPitchedRoof(group, building.width, building.depth, building.height + 0.16, palette.roof)
+				this.addPitchedRoof(group, building.width, building.depth, building.height + 0.16, palette.roof, ['gate', 'temple', 'tower'].includes(building.style))
+				// Solid gables close the gap below the pitched roof.
+				const gableShape = new THREE.Shape()
+				const rise = building.depth * (['gate', 'temple', 'tower'].includes(building.style) ? 0.3 : 0.24)
+				gableShape.moveTo(-building.depth / 2, 0)
+				gableShape.lineTo(0, rise)
+				gableShape.lineTo(building.depth / 2, 0)
+				gableShape.closePath()
+				;[-1, 1].forEach((side) => {
+					const geo = new THREE.ShapeGeometry(gableShape)
+					geo.rotateY(side * Math.PI / 2)
+					this.mapSurfaceUV(geo, 3.6, 2.5)
+					const gable = new THREE.Mesh(geo, bodyMaterial)
+					gable.position.set(side * building.width / 2, building.height + 0.16, 0)
+					group.add(gable)
+				})
 				this.addBuildingDetails(group, building, palette)
+				/* 后院矮屋与烟囱抬高屋脊层次，位置仍随主立面整体旋转。 */
+				const rearHeight = 2.15 + (building.slot % 2) * 0.35
+				const rear = new THREE.Mesh(new THREE.BoxGeometry(building.width * 0.76, rearHeight, 2.7), bodyMaterial)
+				rear.position.set(0, rearHeight / 2, -building.depth * 0.9)
+				rear.castShadow = true
+				group.add(rear)
+				const rearRoof = new THREE.Mesh(new THREE.BoxGeometry(building.width * 0.88, 0.18, 3.25), new THREE.MeshStandardMaterial({ color: 0x343432, roughness: 0.95 }))
+				rearRoof.position.set(0, rearHeight + 0.08, -building.depth * 0.9)
+				rearRoof.rotation.z = (building.slot % 2 ? 1 : -1) * 0.035
+				group.add(rearRoof)
+				const chimney = new THREE.Mesh(new THREE.BoxGeometry(0.38, 1.1, 0.38), bodyMaterial)
+				chimney.position.set(building.width * 0.22, rearHeight + 0.45, -building.depth * 0.98)
+				chimney.userData.isChimney = true
+				group.add(chimney)
 
 				if (building.style === 'tower' || building.style === 'gate') {
 					const upper = new THREE.Mesh(
@@ -1879,7 +2333,8 @@ export default {
 			const frontZ = depth / 2 + 0.025
 			const woodTex = this.makeWoodTexture(palette.wood)
 			const frameMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: woodTex, roughness: 0.86, flatShading: true })
-			const doorW = building.style === 'gate' ? 2.1 : 1.25
+			const storefront = ['shop', 'craft', 'food'].includes(building.style)
+			const doorW = building.style === 'gate' ? 2.1 : storefront ? 1.8 : 1.35
 			const doorH = Math.min(2.35, height * 0.62)
 			const doorMat = new THREE.MeshStandardMaterial({ color: 0x4a291c, map: woodTex, roughness: 0.88, side: THREE.DoubleSide })
 			const door = new THREE.Mesh(new THREE.PlaneGeometry(doorW, doorH), doorMat)
@@ -1890,7 +2345,7 @@ export default {
 				new THREE.BoxGeometry(doorW + 0.52, 0.16, 0.46),
 				new THREE.MeshStandardMaterial({ color: 0x68665e, roughness: 1 })
 			)
-			threshold.position.set(0, 0.2, frontZ + 0.18)
+			threshold.position.set(0, 0.08, frontZ + 0.18)
 			threshold.receiveShadow = true
 			group.add(threshold)
 
@@ -1916,8 +2371,8 @@ export default {
 			group.add(doorLintel)
 
 			const latticeTex = this.makeLatticeTexture('#60351f')
-			const winW = Math.min(1.28, width * 0.15)
-			const winH = 1.05
+			const winW = storefront ? 1.55 : Math.min(1.15, width * 0.15)
+			const winH = storefront ? 1.35 : building.style === 'temple' ? 1.45 : 1.1
 			;[-1, 1].forEach((side) => {
 				const winMaterial = new THREE.MeshStandardMaterial({
 					color: 0xf4e5c6,
@@ -1935,8 +2390,8 @@ export default {
 			})
 
 			const sign = new THREE.Mesh(
-				new THREE.PlaneGeometry(Math.min(3.2, width * 0.42), 0.82),
-				new THREE.MeshBasicMaterial({ map: this.makeSignTexture(building.label, building.style), transparent: true, toneMapped: false })
+				new THREE.PlaneGeometry(Math.min(3.2, width * 0.42), Math.min(3.2, width * 0.42) * 192 / 512),
+				new THREE.MeshBasicMaterial({ map: this.makeSignTexture(building.label, building.style), toneMapped: false })
 			)
 			sign.position.set(0, Math.min(height - 0.45, doorH + 0.92), frontZ + 0.055)
 			sign.renderOrder = 2
@@ -1953,6 +2408,31 @@ export default {
 			beam.position.set(0, eaveY + 0.18, frontZ - 0.04)
 			beam.castShadow = true
 			group.add(beam)
+			if (storefront) {
+				const counter = new THREE.Mesh(new THREE.BoxGeometry(width * 0.7, 0.12, 0.24), frameMat)
+				counter.position.set(0, 1.05, frontZ + 0.1)
+				group.add(counter)
+			}
+			/* 椽头、斗拱和雀替形成连续檐下节奏。 */
+			for (let i = -4; i <= 4; i += 1) {
+				const rafter = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.62, 6), new THREE.MeshStandardMaterial({ color: 0x4b291c, roughness: 0.9, flatShading: true }))
+				rafter.rotation.x = Math.PI / 2
+				rafter.position.set(i * width * 0.105, eaveY + 0.3, frontZ + 0.15)
+				group.add(rafter)
+			}
+			;[-1, 1].forEach((side) => {
+				const queTi = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.12, 0.16), frameMat)
+				queTi.position.set(side * (doorW / 2 + 0.28), doorH + 0.48, frontZ + 0.03)
+				queTi.rotation.z = side * 0.38
+				group.add(queTi)
+			})
+			if (building.style === 'bank') {
+				for (let i = 0; i < 3; i += 1) {
+					const step = new THREE.Mesh(new THREE.BoxGeometry(doorW + 1.1 - i * 0.22, 0.14, 0.52), threshold.material)
+					step.position.set(0, 0.07 + i * 0.14, frontZ + 0.44 + i * 0.2)
+					group.add(step)
+				}
+			}
 
 			;[-1, 1].forEach((side) => {
 				const lantern = new THREE.Mesh(
@@ -1960,13 +2440,16 @@ export default {
 					new THREE.MeshStandardMaterial({
 						color: palette.accent,
 						emissive: palette.accent,
-						emissiveIntensity: building.poiId ? 0.78 : 0.32,
+						emissiveIntensity: 0.12,
 						roughness: 0.55
 					})
 				)
 				lantern.position.set(side * Math.min(width * 0.25, 1.8), Math.min(height - 0.6, 2.65), frontZ + 0.18)
 				lantern.userData.isBuildingLantern = true
 				group.add(lantern)
+				const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, Math.max(0.12, eaveY - lantern.position.y - 0.28), 4), frameMat)
+				cord.position.set(lantern.position.x, (eaveY + lantern.position.y + 0.28) / 2, frontZ + 0.18)
+				group.add(cord)
 			})
 		},
 		createPoiBeacons(pois, streetData, worldLayout) {
@@ -2094,6 +2577,7 @@ export default {
 				const hairMat = material(0x241c18, 0.92)
 				const shoeMat = material(silhouette === 'escort' ? 0x171516 : 0x29241F, 0.9)
 				const eyeMat = new THREE.MeshBasicMaterial({ color: 0x241b17 })
+				const eyes = []
 
 				const addMesh = (geometry, mat, x, y, z, parent = group) => {
 					const mesh = new THREE.Mesh(geometry, mat)
@@ -2110,10 +2594,17 @@ export default {
 					clothMat, 0, torsoY, 0
 				)
 				const robeY = 0.63
+				const robeProfile = [
+					new THREE.Vector2(shape.robeBottom, 0),
+					new THREE.Vector2(shape.robeBottom * 0.97, shape.robeHeight * 0.12),
+					new THREE.Vector2(shape.torsoBottom, shape.robeHeight * 0.9),
+					new THREE.Vector2(shape.torsoBottom * 0.9, shape.robeHeight)
+				]
 				const robe = addMesh(
-					new THREE.CylinderGeometry(shape.torsoBottom * 0.92, shape.robeBottom, shape.robeHeight, 12),
+					new THREE.LatheGeometry(robeProfile, 14),
 					robeMat, 0, robeY, 0
 				)
+				robe.position.y -= shape.robeHeight * 0.5
 				if (skin.pattern === 'brocade') robe.userData.costumeTexture = 'brocade'
 
 				const sash = addMesh(new THREE.TorusGeometry(shape.torsoBottom + 0.018, 0.045, 7, 20), trimMat, 0, 0.91, 0)
@@ -2163,6 +2654,7 @@ export default {
 					ear.scale.set(0.55, 1, 0.55)
 					const eye = addMesh(new THREE.SphereGeometry(0.024, 7, 5), eyeMat, side * 0.088, 1.91, 0.229)
 					eye.scale.set(1, 0.8, 0.42)
+					eyes.push(eye)
 					const brow = addMesh(new THREE.BoxGeometry(0.075, 0.016, 0.018), hairMat, side * 0.088, 1.978, 0.226)
 					brow.rotation.z = side * -0.08
 				})
@@ -2248,7 +2740,7 @@ export default {
 				const spawn = currentWorldLayout?.spawn || { x: 0, z: 13 }
 				group.position.set(spawn.x, 0, spawn.z)
 				group.scale.y = shape.height
-				group.userData = { leftLeg, rightLeg, leftArm, rightArm, body: torso, head, tassel, modelVersion: 2, silhouette }
+				group.userData = { leftLeg, rightLeg, leftArm, rightArm, body: torso, robe, head, eyes, tassel, modelVersion: 2, silhouette, procedural: true }
 				scene.add(group)
 				player = group
 				if (camera && !cameraTargetVec) {
@@ -2263,6 +2755,124 @@ export default {
 				/* 单个高级部件在旧 WebView 不兼容时，保留原低模作为可玩性兜底。 */
 				this.createLegacyPlayer()
 			}
+		},
+		async tryLoadPlayerModel(modelPath = PLAYER_MODEL_PATH) {
+			const generation = ++playerModelGeneration
+			try {
+				if (!THREE.GLTFLoader) await this.loadScript('static/libs/GLTFLoader.js')
+				if (!THREE.SkeletonUtils) await this.loadScript('static/libs/SkeletonUtils.js')
+				const buffer = playerModelBufferCache || await this.readBinaryAsset(modelPath)
+				playerModelBufferCache = buffer
+				if (generation !== playerModelGeneration || !scene) return
+				const gltf = await new Promise((resolve, reject) => new THREE.GLTFLoader().parse(buffer, '', resolve, reject))
+				gltf.scene.traverse((item) => {
+					const materials = Array.isArray(item.material) ? item.material : [item.material]
+					materials.filter(Boolean).forEach((material) => {
+						;['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap'].forEach((key) => {
+							if (material[key]) material[key].userData.playerModelOwned = true
+						})
+					})
+				})
+				if (generation !== playerModelGeneration || !scene) { this.disposeObjectResources(gltf.scene); return }
+				const root = gltf.scene
+				root.name = 'pingyao-player-gltf'
+				root.scale.setScalar(1.15)
+				root.traverse((item) => { if (item.isMesh) { item.castShadow = true; item.frustumCulled = true } })
+				this.applyGlbSkin(root, playerSkinData || {})
+				const mixer = new THREE.AnimationMixer(root)
+				const actions = {}
+				;(gltf.animations || []).forEach((clip) => {
+					const key = /run/i.test(clip.name) ? 'run' : /walk/i.test(clip.name) ? 'walk' : /wave|cheer|interact/i.test(clip.name) ? 'wave' : /^idle$/i.test(clip.name) ? 'idle' : ''
+					if (key && !actions[key]) actions[key] = mixer.clipAction(clip)
+				})
+				if (!actions.idle || !actions.walk) { mixer.stopAllAction(); return }
+				const oldPlayer = player
+				root.position.copy(oldPlayer.position)
+				root.rotation.copy(oldPlayer.rotation)
+				scene.add(root)
+				scene.remove(oldPlayer)
+				this.disposeObjectResources(oldPlayer)
+				actions.idle.play()
+				root.userData = { ...root.userData, isGltf: true, mixer, actions, activeAction: actions.idle, modelVersion: 3 }
+				animationMixers.push(mixer)
+				player = root
+			} catch (_) { /* 程序化角色已经可玩，模型失败无需打断加载。 */ }
+		},
+		applyGlbSkin(root, skin) {
+			const slots = { Cloth: skin.body, Robe: skin.robe || skin.body, Trim: skin.trim, Skin: skin.head, Hair: skin.hat, Hat: skin.hat }
+			const proportions = { traveler: [0.98, 1], clerk: [1, 1.01], scholar: [0.97, 1.04], escort: [1.06, 1.03], merchant: [1.04, 1], festival: [1.08, 1.03], legend: [1.1, 1.06] }
+			const [width, height] = proportions[skin.silhouette] || proportions.traveler
+			root.scale.set(1.15 * width, 1.15 * height, 1.15 * width)
+			root.traverse((item) => {
+				if (!item.isMesh) return
+				const slot = Object.keys(slots).find((name) => item.name.includes(name) || item.material?.name?.includes(name))
+					|| (/Head/i.test(item.name) ? 'Skin' : /Hat/i.test(item.name) ? 'Hat' : /Body|Arm/i.test(item.name) ? 'Cloth' : /Leg|Cape/i.test(item.name) ? 'Robe' : '')
+				if (slot && slots[slot] && item.material?.color) {
+					const previous = item.material
+					item.material = previous.clone()
+					item.material.userData.pingyaoSkinClone = true
+					item.material.color.set(slots[slot])
+					if (slot === 'Robe' && skin.pattern === 'brocade') {
+						item.material.map = this.getBrocadeTexture()
+						item.material.userData.useBrocade = true
+					}
+					if (previous.userData?.pingyaoSkinClone) previous.dispose()
+				}
+				if (item.name.startsWith('hw_')) item.visible = item.name === 'hw_' + skin.headwear
+				if (item.name.startsWith('acc_')) item.visible = item.name === 'acc_' + skin.accessory
+				if (/Spellbook|Wand|Staff|Mage_Cape|Mage_Hat/.test(item.name)) item.visible = false
+			})
+			this.attachHanfuToRig(root, skin)
+		},
+		attachHanfuToRig(root, skin) {
+			const stale = []
+			root.traverse((item) => { if (item.userData?.pingyaoAttachment) stale.push(item) })
+			stale.forEach((item) => { item.removeFromParent(); this.disposeObjectResources(item) })
+			const findBone = (pattern) => {
+				let found = null
+				root.traverse((item) => { if (!found && item.isBone && pattern.test(item.name)) found = item })
+				return found
+			}
+			const hips = findBone(/^hips$/i) || root
+			const head = findBone(/^head$/i) || root
+			const hand = findBone(/^hand\.r$/i) || hips
+			const robeColor = colorHex(skin.robe || skin.body, 0x8B4513)
+			const trimColor = colorHex(skin.trim, 0xD4A574)
+			const robeMat = new THREE.MeshStandardMaterial({ color: skin.pattern === 'brocade' ? 0xF5F0E8 : robeColor, map: skin.pattern === 'brocade' ? this.getBrocadeTexture() : null, roughness: 0.86, side: THREE.DoubleSide, flatShading: true })
+			robeMat.userData.useBrocade = skin.pattern === 'brocade'
+			const robe = new THREE.Mesh(new THREE.CylinderGeometry(0.3, skin.silhouette === 'festival' || skin.silhouette === 'legend' ? 0.52 : 0.44, skin.silhouette === 'escort' ? 0.5 : 0.72, 12, 1, true), robeMat)
+			robe.position.set(0, -0.25, 0); robe.userData.pingyaoAttachment = true; robe.name = 'Robe_Attachment'; hips.add(robe)
+			const sash = new THREE.Mesh(new THREE.TorusGeometry(0.31, 0.035, 7, 18), new THREE.MeshStandardMaterial({ color: trimColor, roughness: 0.62, metalness: 0.08 }))
+			sash.rotation.x = Math.PI / 2; sash.position.y = 0.08; sash.userData.pingyaoAttachment = true; hips.add(sash)
+			const hatMat = new THREE.MeshStandardMaterial({ color: colorHex(skin.hat, 0x29241f), roughness: 0.88, flatShading: true })
+			const hat = new THREE.Group(); hat.name = 'hw_' + (skin.headwear || 'hair-bun'); hat.userData.pingyaoAttachment = true
+			const brim = new THREE.Mesh(new THREE.CylinderGeometry(skin.headwear === 'guard-cap' ? 0.34 : 0.25, 0.27, 0.1, 12), hatMat); brim.position.y = 0.17; hat.add(brim)
+			const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.22, skin.headwear === 'merchant-crown' ? 0.34 : 0.2, 10), hatMat); crown.position.y = 0.3; hat.add(crown)
+			hat.position.set(0, 0.16, 0); head.add(hat)
+			const eyelidMat = new THREE.MeshBasicMaterial({ color: colorHex(skin.head, 0xD4A574), transparent: true, opacity: 0, depthWrite: false })
+			const eyelids = []
+			;[-1, 1].forEach((side) => {
+				const eyelid = new THREE.Mesh(new THREE.PlaneGeometry(0.09, 0.028), eyelidMat)
+				eyelid.position.set(side * 0.085, 0.055, 0.205); eyelid.userData = { pingyaoAttachment: true, isEyelid: true }; head.add(eyelid); eyelids.push(eyelid)
+			})
+			root.userData.eyes = eyelids
+			if (skin.accessory) {
+				const accessory = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.075, skin.accessory === 'scroll' ? 0.5 : 0.32, 8), new THREE.MeshStandardMaterial({ color: trimColor, roughness: 0.7 }))
+				accessory.name = 'acc_' + skin.accessory; accessory.rotation.z = Math.PI / 2; accessory.position.set(0, -0.1, 0.08); accessory.userData.pingyaoAttachment = true; hand.add(accessory)
+			}
+		},
+		disposeObjectResources(root) {
+			const geometries = new Set(), materials = new Set(), textures = new Set()
+			root?.traverse((item) => {
+				if (item.geometry) geometries.add(item.geometry)
+				;(Array.isArray(item.material) ? item.material : [item.material]).filter(Boolean).forEach((material) => {
+					materials.add(material)
+					;['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap'].forEach((key) => { if (material[key]?.userData?.playerModelOwned) textures.add(material[key]) })
+				})
+			})
+			geometries.forEach((geometry) => geometry.dispose())
+			materials.forEach((material) => material.dispose())
+			textures.forEach((texture) => texture.dispose())
 		},
 		createLegacyPlayer() {
 			// 化身按已装备服饰着色：body/head 必有，robe（长衫下摆）/hat（冠帽）/accent（足部光环）按服饰可选，
@@ -2405,13 +3015,14 @@ export default {
 		reskinPlayer(skin) {
 			if (!scene) return
 			playerSkinData = skin || null
+			if (player?.userData?.isGltf) {
+				this.applyGlbSkin(player, playerSkinData)
+				return
+			}
 			const prevPos = player ? { x: player.position.x, y: player.position.y, z: player.position.z } : null
 			if (player) {
 				scene.remove(player)
-				player.traverse((item) => {
-					if (item.geometry) item.geometry.dispose()
-					if (item.material) item.material.dispose()
-				})
+				this.disposeObjectResources(player)
 				player = null
 			}
 			this.createPlayer()
@@ -2463,6 +3074,12 @@ export default {
 					)
 					lantern.position.set(reach, 2.35, 0)
 					group.add(lantern)
+					const ribs = new THREE.Mesh(new THREE.TorusGeometry(0.355, 0.018, 5, 16), new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.72 }))
+					ribs.position.copy(lantern.position); ribs.rotation.x = Math.PI / 2; group.add(ribs)
+					const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.makeLanternGlowTexture(), color: 0xD4A574, transparent: true, opacity: 0.58, depthWrite: false, blending: THREE.AdditiveBlending }))
+					halo.position.copy(lantern.position); halo.scale.set(1.45, 1.45, 1); halo.userData.isLanternHalo = true; group.add(halo)
+					const pool = new THREE.Mesh(new THREE.CircleGeometry(1.25, 20), new THREE.MeshBasicMaterial({ map: this.makeLanternGlowTexture(), color: 0xD4A574, transparent: true, opacity: 0.2, depthWrite: false, blending: THREE.AdditiveBlending }))
+					pool.position.set(reach, 0.018, 0); pool.rotation.x = -Math.PI / 2; pool.userData.isLanternPool = true; group.add(pool)
 					// 灯穗
 					const tassel = new THREE.Mesh(
 						new THREE.ConeGeometry(0.06, 0.24, 6),
@@ -2592,8 +3209,12 @@ export default {
 						new THREE.CylinderGeometry(0.012, 0.012, 0.5, 4),
 						new THREE.MeshStandardMaterial({ color: 0x2a1c10, roughness: 0.9, flatShading: true })
 					)
-					line.position.y = 2.4
+					line.scale.y = 2.2
+					line.position.y = 2.7
 					group.add(line)
+					const hook = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.07, 0.07), line.material)
+					hook.position.set(-d.side * 0.2, 3.25, 0)
+					group.add(hook)
 					const bell = new THREE.Mesh(
 						new THREE.ConeGeometry(0.1, 0.18, 8),
 						new THREE.MeshStandardMaterial({ color: 0xC9A227, emissive: 0x2a2000, roughness: 0.45, metalness: 0.55, flatShading: true })
@@ -2611,12 +3232,12 @@ export default {
 					const chestMat = new THREE.MeshStandardMaterial({ color: 0x4b2c1d, roughness: 0.86, flatShading: true })
 					const brassMat = new THREE.MeshStandardMaterial({ color: 0x9d7939, roughness: 0.5, metalness: 0.38 })
 					const chest = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.62, 0.72), chestMat)
-					chest.position.y = 0.38
+					chest.position.y = 0.31
 					chest.castShadow = true
 					group.add(chest)
 					;[-0.42, 0.42].forEach((x) => {
 						const band = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.68, 0.76), brassMat)
-						band.position.set(x, 0.4, 0)
+						band.position.set(x, 0.34, 0)
 						group.add(band)
 					})
 					const lock = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.2, 0.08), brassMat)
@@ -2683,7 +3304,7 @@ export default {
 					group.add(counter)
 					;[-1, 1].forEach((x) => {
 						const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 2.25, 6), woodMat)
-						pole.position.set(x * 0.78, 1.2, 0)
+						pole.position.set(x * 0.78, 1.125, 0)
 						group.add(pole)
 					})
 					const canopy = new THREE.Mesh(new THREE.BoxGeometry(2.15, 0.1, 1.18), clothMat)
@@ -2711,6 +3332,41 @@ export default {
 						jar.castShadow = true
 						group.add(jar)
 					})
+				} else if (['horse-post', 'mounting-stone', 'water-vat', 'well', 'bench', 'pickle-jars'].includes(d.kind)) {
+					const stoneMat = new THREE.MeshStandardMaterial({ color: 0x77766f, roughness: 0.98, flatShading: true })
+					const woodMat = new THREE.MeshStandardMaterial({ color: 0x5a321f, roughness: 0.9, flatShading: true })
+					if (d.kind === 'horse-post') {
+						const post = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.19, 1.25, 7), stoneMat)
+						post.position.y = 0.625; group.add(post)
+						const ring = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.025, 6, 14), stoneMat)
+						ring.position.set(0, 0.94, 0.13); ring.rotation.x = Math.PI / 2; group.add(ring)
+					} else if (d.kind === 'mounting-stone') {
+						for (let i = 0; i < 2; i += 1) { const step = new THREE.Mesh(new THREE.BoxGeometry(0.9 - i * 0.2, 0.28, 0.62), stoneMat); step.position.set(0, 0.14 + i * 0.28, -i * 0.12); group.add(step) }
+					} else if (d.kind === 'water-vat' || d.kind === 'pickle-jars') {
+						const count = d.kind === 'pickle-jars' ? 3 : 1
+						for (let i = 0; i < count; i += 1) { const vat = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.34, 0.62, 10), d.kind === 'pickle-jars' ? woodMat : stoneMat); vat.position.set((i - (count - 1) / 2) * 0.55, 0.31, 0); group.add(vat) }
+					} else if (d.kind === 'well') {
+						const well = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.7, 0.66, 12, 1, true), stoneMat); well.position.y = 0.33; group.add(well)
+						;[-1, 1].forEach((side) => { const post = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 1.6, 6), woodMat); post.position.set(side * 0.62, 1.0, 0); group.add(post) })
+						const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 1.5, 6), woodMat); beam.rotation.z = Math.PI / 2; beam.position.y = 1.72; group.add(beam)
+					} else {
+						const seat = new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.14, 0.42), woodMat); seat.position.y = 0.55; group.add(seat)
+						;[-1, 1].forEach((side) => { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.55, 0.32), woodMat); leg.position.set(side * 0.52, 0.275, 0); group.add(leg) })
+					}
+				} else if (['wine-flag', 'door-curtain', 'drying-cloth', 'bird-cage', 'tea-stall'].includes(d.kind)) {
+					const woodMat = new THREE.MeshStandardMaterial({ color: 0x4b291c, roughness: 0.9, flatShading: true })
+					if (d.kind === 'bird-cage') {
+						const cage = new THREE.Mesh(new THREE.CylinderGeometry(0.31, 0.31, 0.65, 10, 1, true), new THREE.MeshStandardMaterial({ color: 0x8B4513, wireframe: true, roughness: 0.8 })); cage.position.y = 1.15; group.add(cage)
+						const hook = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.45, 5), woodMat); hook.position.y = 0.72; group.add(hook)
+					} else if (d.kind === 'tea-stall') {
+						const table = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.15, 0.72), woodMat); table.position.y = 0.78; group.add(table)
+						;[-1, 1].forEach((x) => { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.75, 0.55), woodMat); leg.position.set(x * 0.62, 0.38, 0); group.add(leg) })
+						for (let i = -1; i <= 1; i += 1) { const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.07, 0.09, 10), new THREE.MeshStandardMaterial({ color: 0xD4A574, roughness: 0.7 })); bowl.position.set(i * 0.35, 0.91, 0); group.add(bowl) }
+					} else {
+						const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.055, 3, 6), woodMat); pole.position.y = 1.5; group.add(pole)
+						const cloth = new THREE.Mesh(new THREE.PlaneGeometry(d.kind === 'drying-cloth' ? 1.8 : 0.62, d.kind === 'door-curtain' ? 1.65 : 1.35, 5, 4), new THREE.MeshStandardMaterial({ color: d.kind === 'wine-flag' ? 0xC41E3A : 0xD4A574, side: THREE.DoubleSide, roughness: 0.92 })); cloth.position.set(d.kind === 'drying-cloth' ? 0 : 0.35, 2.05, 0); cloth.userData.isWindCloth = true; group.add(cloth)
+						group.userData.isBanner = true
+					}
 				} else if (d.kind === 'lantern-string') {
 					const cable = new THREE.Mesh(
 						new THREE.CylinderGeometry(0.018, 0.018, 9, 5),
@@ -2726,7 +3382,15 @@ export default {
 						)
 						lantern.position.set(i * 1.28, 3.88 - Math.abs(i) * 0.025, 0)
 						group.add(lantern)
+						const tie = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 4.25 - lantern.position.y - 0.225, 4), cable.material)
+						tie.position.set(lantern.position.x, (4.25 + lantern.position.y + 0.225) / 2, 0)
+						group.add(tie)
 					}
+					;[-1, 1].forEach((side) => {
+						const support = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.09, 4.3, 6), cable.material)
+						support.position.set(side * 4.48, 2.15, 0)
+						group.add(support)
+					})
 					const glow = new THREE.PointLight(0xff9d55, 0, 8.5, 2)
 					glow.position.set(0, 3.8, 0)
 					group.add(glow)
@@ -2738,6 +3402,65 @@ export default {
 				scene.add(group)
 				decorations.push(group)
 			})
+		},
+		createAmbientLife(streetData) {
+			const compact = Math.min(window.innerWidth, window.innerHeight) <= 520
+			const npcCount = 2
+			const clothColors = [0x8B4513, 0x6f7470, 0xC41E3A]
+			for (let i = 0; i < npcCount; i += 1) {
+				const npc = new THREE.Group()
+				const cloth = new THREE.MeshStandardMaterial({ color: clothColors[i], roughness: 0.9, flatShading: true })
+				const skin = new THREE.MeshStandardMaterial({ color: 0xD4A574, roughness: 0.75 })
+				const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.28, 0.68, 8), cloth); torso.position.y = 1.03; npc.add(torso)
+				const robe = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.36, 0.58, 8), cloth); robe.position.y = 0.47; npc.add(robe)
+				const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 10, 8), skin); head.position.y = 1.52; npc.add(head)
+				const hair = new THREE.Mesh(new THREE.SphereGeometry(0.185, 9, 5, 0, Math.PI * 2, 0, Math.PI * 0.52), new THREE.MeshStandardMaterial({ color: 0x29241f, roughness: 0.95 })); hair.position.y = 1.58; npc.add(hair)
+				const limbs = []
+				;[-1, 1].forEach((side) => {
+					const arm = new THREE.Group(); arm.position.set(side * 0.23, 1.2, 0); npc.add(arm)
+					const movingCloth = cloth.clone(); movingCloth.transparent = true; movingCloth.opacity = 0.999
+					const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 0.5, 7), movingCloth); sleeve.position.y = -0.24; arm.add(sleeve); limbs.push(arm)
+				})
+				npc.scale.setScalar(0.9 + i * 0.035)
+				npc.position.set((i % 2 ? 1 : -1) * (3.15 + i * 0.16), 0, 10 - i * 8.5)
+				npc.userData = { kind: 'pedestrian', startZ: npc.position.z, range: 9 + i * 2, speed: 0.33 + i * 0.07, direction: i % 2 ? -1 : 1, limbs, phase: i * 2.1 }
+				scene.add(npc); this.batchStaticRoots([npc]); ambientActors.push(npc)
+			}
+
+			/* 晋小鸦停在檐边，靠近后以抛物线飞往下一处。 */
+			const crow = new THREE.Group()
+			const crowMat = new THREE.MeshStandardMaterial({ color: 0x292827, roughness: 0.88, flatShading: true })
+			const body = new THREE.Mesh(new THREE.SphereGeometry(0.18, 7, 6), crowMat); body.scale.set(0.8, 0.9, 1.35); crow.add(body)
+			const head = new THREE.Mesh(new THREE.SphereGeometry(0.12, 7, 6), crowMat); head.position.set(0, 0.12, 0.16); crow.add(head)
+			const beak = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.16, 5), new THREE.MeshStandardMaterial({ color: 0xD4A574, roughness: 0.8 })); beak.rotation.x = Math.PI / 2; beak.position.set(0, 0.11, 0.33); crow.add(beak)
+			const wings = []
+			;[-1, 1].forEach((side) => { const wingMat = crowMat.clone(); wingMat.transparent = true; wingMat.opacity = 0.999; const wing = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.42, 5), wingMat); wing.position.x = side * 0.16; wing.rotation.z = side * 1.25; crow.add(wing); wings.push(wing) })
+			crow.position.set(-5.0, 4.9, 4)
+			crow.userData = { kind: 'crow', wings, perch: 0, flying: false, from: new THREE.Vector3(), to: new THREE.Vector3(), flight: 0, perches: [new THREE.Vector3(-5, 4.9, 4), new THREE.Vector3(5, 4.6, -5), new THREE.Vector3(-5, 5.1, -16)] }
+			scene.add(crow); this.batchStaticRoots([crow]); ambientActors.push(crow)
+
+			const cat = new THREE.Group()
+			const catMat = new THREE.MeshStandardMaterial({ color: 0x6f7470, roughness: 0.92, flatShading: true })
+			const catBody = new THREE.Mesh(new THREE.SphereGeometry(0.24, 8, 6), catMat); catBody.scale.set(1.45, 0.72, 0.72); cat.add(catBody)
+			const catHead = new THREE.Mesh(new THREE.SphereGeometry(0.17, 8, 6), catMat); catHead.position.set(0, 0.1, 0.3); cat.add(catHead)
+			;[-1, 1].forEach((side) => { const ear = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.17, 4), catMat); ear.position.set(side * 0.09, 0.27, 0.31); cat.add(ear) })
+			const tailMat = catMat.clone(); tailMat.transparent = true; tailMat.opacity = 0.999
+			const tail = new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.035, 5, 12, Math.PI * 1.35), tailMat); tail.position.set(-0.31, 0.1, -0.02); tail.rotation.y = Math.PI / 2; cat.add(tail)
+			cat.position.set(5.55, 3.95, -10); cat.rotation.y = -0.7; cat.userData = { kind: 'cat', tail }
+			scene.add(cat); this.batchStaticRoots([cat]); ambientActors.push(cat)
+
+			const smokeTexture = this.getTexture('smoke_sprite', () => {
+				const canvas = this.makeCanvas(128), ctx = canvas.getContext('2d'), gradient = ctx.createRadialGradient(64, 64, 2, 64, 64, 60)
+				gradient.addColorStop(0, 'rgba(245,240,232,.5)'); gradient.addColorStop(1, 'rgba(245,240,232,0)'); ctx.fillStyle = gradient; ctx.fillRect(0, 0, 128, 128)
+				return new THREE.CanvasTexture(canvas)
+			})
+			for (let i = 0; i < (compact ? 4 : 7); i += 1) {
+				const smoke = new THREE.Sprite(new THREE.SpriteMaterial({ map: smokeTexture, transparent: true, opacity: 0.28, depthWrite: false, color: 0xF5F0E8 }))
+				smoke.position.set(i % 2 ? 8.1 : -8.2, 4.4 + (i % 3) * 0.45, -14 + (i % 2) * 9)
+				smoke.scale.setScalar(0.65 + (i % 3) * 0.2)
+				smoke.userData = { kind: 'smoke', originY: smoke.position.y, phase: i * 0.9 }
+				scene.add(smoke); ambientActors.push(smoke)
+			}
 		},
 		createParticles(phase) {
 			const type = phase?.fallingType || 'leaf'
@@ -2768,9 +3491,28 @@ export default {
 			particles.userData.kind = type
 			scene.add(particles)
 		},
-		applyPhase(phase) {
+		applyPhase(phase, immediate = false) {
 			if (!scene || !phase) return
+			const previousPhase = currentPhaseData
 			currentPhaseData = phase
+			if (particles && particles.userData.kind !== (phase.fallingType || 'leaf')) {
+				particles.removeFromParent()
+				particles.geometry.dispose()
+				particles.material.dispose()
+				particles = null
+				this.createParticles(phase)
+			}
+			if (!immediate && renderer && previousPhase?.key && previousPhase.key !== phase.key) {
+				phaseTransition = {
+					startedAt: performance.now(), duration: 2200, target: phase,
+					ambientColor: ambientLightRef?.color.clone(), ambientIntensity: ambientLightRef?.intensity || 0,
+					keyColor: directionalLightRef?.color.clone(), keyIntensity: directionalLightRef?.intensity || 0,
+					hemiColor: hemiLightRef?.color.clone(), hemiGround: hemiLightRef?.groundColor.clone(), hemiIntensity: hemiLightRef?.intensity || 0,
+					fogColor: scene.fog?.color.clone(), fogDensity: scene.fog?.density || 0,
+					exposure: renderer.toneMappingExposure, bloom: bloomPassRef?.strength || 0
+				}
+				return
+			}
 
 			const skyColor = colorHex(phase.sky?.top, 0xD7C0A2)
 			/* 渐变天空（夜晚带星空），随时辰刷新 */
@@ -2803,9 +3545,13 @@ export default {
 			}
 			const backdropTints = { dawn: 0xB59678, noon: 0x8F8A80, dusk: 0x765044, night: 0x31384A }
 			environment.forEach((item) => {
-				if (!item.userData?.isRooflineBackdrop || !item.material) return
-				item.material.color.setHex(backdropTints[phase.key] || backdropTints.noon)
-				item.material.opacity = phase.key === 'night' ? 0.48 : 0.42
+				if (!item.material) return
+				if (item.userData?.isRooflineBackdrop) {
+					item.material.color.setHex(backdropTints[phase.key] || backdropTints.noon)
+					item.material.opacity = phase.key === 'night' ? 0.48 : 0.42
+				}
+				if (item.userData?.isParallaxLayer) item.material.opacity = phase.key === 'night' ? 0.16 : item.userData.isParallaxLayer === 'mountain' ? 0.24 : 0.3
+				if (item.userData?.isCloudLayer) item.material.opacity = phase.key === 'night' ? 0.11 : phase.key === 'dusk' ? 0.22 : 0.3
 			})
 
 			/* 灯笼 / 旗幡 / 招幌：夜间增强发光 */
@@ -2819,6 +3565,8 @@ export default {
 						if (mesh.isMesh && mesh.material && mesh.material.emissive) {
 							mesh.material.emissiveIntensity = lit ? 0.95 : 0.28
 						}
+						if (mesh.userData?.isLanternHalo && mesh.material) mesh.material.opacity = lit ? 0.58 : 0
+						if (mesh.userData?.isLanternPool && mesh.material) mesh.material.opacity = lit ? 0.2 : 0
 					})
 				}
 				if (group.userData?.isBanner || group.userData?.isSign) {
@@ -2832,6 +3580,84 @@ export default {
 
 			/* 建筑窗格：入夜后窗纸透暖光，配合 Bloom 晕染出灯火气 */
 			this.updateWindowGlow(phase)
+			this.applyEnvironmentIntensity(scene, phase.key === 'night' ? 0.72 : phase.key === 'dusk' ? 0.58 : 0.46)
+		},
+		updatePhaseTransition(now) {
+			const transition = phaseTransition
+			if (!transition || !scene || !renderer) return
+			const raw = Math.min(1, (now - transition.startedAt) / transition.duration)
+			const t = raw * raw * (3 - 2 * raw)
+			const phase = transition.target
+			const color = (from, hex) => from.clone().lerp(new THREE.Color(colorHex(hex, from.getHex())), t)
+			if (ambientLightRef) { ambientLightRef.color.copy(color(transition.ambientColor, phase.lighting?.ambient?.color)); ambientLightRef.intensity = THREE.MathUtils.lerp(transition.ambientIntensity, phase.lighting?.ambient?.intensity ?? 0.55, t) }
+			if (directionalLightRef) { directionalLightRef.color.copy(color(transition.keyColor, phase.lighting?.directional?.color)); directionalLightRef.intensity = THREE.MathUtils.lerp(transition.keyIntensity, phase.lighting?.directional?.intensity ?? 1.25, t) }
+			if (hemiLightRef) {
+				hemiLightRef.color.copy(color(transition.hemiColor, phase.lighting?.hemi?.sky))
+				hemiLightRef.groundColor.copy(color(transition.hemiGround, phase.lighting?.hemi?.ground))
+				hemiLightRef.intensity = THREE.MathUtils.lerp(transition.hemiIntensity, phase.lighting?.hemi?.intensity ?? 0.42, t)
+			}
+			if (scene.fog) { scene.fog.color.copy(color(transition.fogColor, phase.fog?.color)); scene.fog.density = THREE.MathUtils.lerp(transition.fogDensity, phase.fog?.density ?? transition.fogDensity, t) }
+			renderer.toneMappingExposure = THREE.MathUtils.lerp(transition.exposure, phase.exposure ?? 1, t)
+			if (bloomPassRef) bloomPassRef.strength = THREE.MathUtils.lerp(transition.bloom, phase.bloomStrength ?? 0.3, t)
+			if (gradePassRef) gradePassRef.uniforms.warmth.value = THREE.MathUtils.lerp(0.045, phase.key === 'night' ? 0.012 : 0.05, t)
+			const lights = decorations.filter((group) => group.userData?.isLantern || group.userData?.isLanternString)
+			lights.forEach((group, index) => {
+				const stagger = Math.max(0, Math.min(1, (raw * 1.45 - index / Math.max(1, lights.length) * 0.45)))
+				group.traverse((mesh) => { if (mesh.material?.emissive) mesh.material.emissiveIntensity = phase.lanternsLit ? 0.25 + stagger * 0.7 : 0.95 - stagger * 0.67 })
+			})
+			if (raw >= 1) { phaseTransition = null; this.applyPhase(phase, true) }
+		},
+		updatePlayerMixer(speed, moving, deltaTime) {
+			if (!player?.userData?.isGltf) return
+			const data = player.userData
+			data.mixer.update(deltaTime)
+			const next = speed > 3.4 && data.actions.run ? data.actions.run : moving ? data.actions.walk : data.actions.idle
+			if (next && next !== data.activeAction) {
+				next.reset().setEffectiveTimeScale(moving ? Math.max(0.65, speed / 2.6) : 1).play()
+				data.activeAction?.crossFadeTo(next, 0.2, true)
+				data.activeAction = next
+			} else if (next && moving) next.timeScale = Math.max(0.65, speed / 2.6)
+		},
+		playPlayerWave() {
+			const data = player?.userData
+			if (!data?.isGltf || !data.actions.wave) return
+			const wave = data.actions.wave.reset()
+			wave.setLoop(THREE.LoopOnce, 1); wave.clampWhenFinished = true; wave.play()
+			data.activeAction?.crossFadeTo(wave, 0.2, true); data.activeAction = wave
+		},
+		updateAmbientLife(now, deltaTime) {
+			ambientActors.forEach((actor, index) => {
+				const data = actor.userData
+				if (data.kind === 'pedestrian') {
+					actor.position.z += data.direction * data.speed * deltaTime
+					if (Math.abs(actor.position.z - data.startZ) > data.range) { data.direction *= -1; actor.rotation.y += Math.PI }
+					if (player && actor.position.distanceTo(player.position) < 1.2) actor.position.x += Math.sign(actor.position.x || 1) * deltaTime * 0.55
+					const swing = Math.sin(now * 0.004 + data.phase) * 0.35
+					data.limbs.forEach((limb, limbIndex) => { limb.rotation.x = limbIndex ? swing : -swing })
+					actor.position.y = Math.abs(Math.sin(now * 0.004 + data.phase)) * 0.018
+				} else if (data.kind === 'crow') {
+					if (!data.flying && player && actor.position.distanceTo(player.position) < 4.2) {
+						data.flying = true; data.flight = 0; data.from.copy(actor.position); data.perch = (data.perch + 1) % data.perches.length; data.to.copy(data.perches[data.perch])
+					}
+					if (data.flying) {
+						data.flight = Math.min(1, data.flight + deltaTime * 0.48); actor.position.lerpVectors(data.from, data.to, data.flight); actor.position.y += Math.sin(data.flight * Math.PI) * 0.085
+						data.wings.forEach((wing, wingIndex) => { wing.rotation.z = (wingIndex ? -1 : 1) * (0.7 + Math.sin(now * 0.025) * 0.55) })
+						if (data.flight >= 1) data.flying = false
+					}
+				} else if (data.kind === 'cat') data.tail.rotation.z = Math.sin(now * 0.002) * 0.18
+				else if (data.kind === 'smoke') {
+					const cycle = (now * 0.00012 + data.phase) % 1
+					actor.position.y = data.originY + cycle * 2.2; actor.position.x += Math.sin(now * 0.0008 + index) * deltaTime * 0.025
+					actor.scale.setScalar(0.55 + cycle * 1.2); actor.material.opacity = (1 - cycle) * 0.3
+				}
+			})
+			decorations.forEach((group, index) => group.traverse((mesh) => {
+				if (!mesh.userData?.isWindCloth || !mesh.geometry?.attributes?.position) return
+				const pos = mesh.geometry.attributes.position
+				if (!mesh.userData.basePositions) mesh.userData.basePositions = new Float32Array(pos.array)
+				for (let i = 0; i < pos.count; i += 1) pos.setZ(i, mesh.userData.basePositions[i * 3 + 2] + Math.sin(now * 0.002 + pos.getX(i) * 4 + index) * 0.035)
+				pos.needsUpdate = true
+			}))
 		},
 		/* 根据时辰调整建筑木格窗的透光强度（晨/午暗、昏微亮、夜最亮） */
 		updateWindowGlow(phase) {
@@ -2841,6 +3667,9 @@ export default {
 				group.traverse((mesh) => {
 					if (mesh.isMesh && mesh.userData?.isWindowGlow && mesh.material) {
 						mesh.material.emissiveIntensity = glow
+					}
+					if (mesh.isMesh && mesh.userData?.isBuildingLantern && mesh.material) {
+						mesh.material.emissiveIntensity = key === 'night' ? 0.72 : key === 'dusk' ? 0.42 : 0.08
 					}
 				})
 			})
@@ -3109,13 +3938,18 @@ export default {
 			})
 		},
 		clearScene() {
+			const releasedGeometries = new Set(), releasedMaterials = new Set()
 			const disposeObject = (object) => {
 				if (!object) return
 				if (scene) scene.remove(object)
 				object.traverse((item) => {
-					if (item.geometry) item.geometry.dispose()
-					if (Array.isArray(item.material)) item.material.forEach((material) => material && material.dispose())
-					else if (item.material) item.material.dispose()
+					if (item.geometry && !releasedGeometries.has(item.geometry)) {
+						releasedGeometries.add(item.geometry)
+						item.geometry.dispose()
+					}
+					;(Array.isArray(item.material) ? item.material : [item.material]).filter(Boolean).forEach((material) => {
+						if (!releasedMaterials.has(material)) { releasedMaterials.add(material); material.dispose() }
+					})
 				})
 			}
 
@@ -3131,12 +3965,22 @@ export default {
 			disposeObject(ground)
 			ground = null
 
-			;[...environment, ...buildings, ...poiBeacons, ...decorations].forEach(disposeObject)
+			;[...environment, ...buildings, ...poiBeacons, decorationBatchRoot].filter(Boolean).forEach(disposeObject)
 			environment = []
 			buildings = []
 			poiBeacons = []
 			decorations = []
+			decorationBatchRoot = null
+			lanternLights.forEach((light) => { if (scene) scene.remove(light) })
 			lanternLights = []
+			lanternLightSources = []
+			sceneMaterialPool.clear()
+			animationMixers.forEach((mixer) => { try { mixer.stopAllAction(); if (mixer.getRoot) mixer.uncacheRoot(mixer.getRoot()) } catch (_) {} })
+			animationMixers = []
+			ambientActors.forEach(disposeObject)
+			ambientActors = []
+			phaseTransition = null
+			playerModelGeneration += 1
 
 			disposeObject(particles)
 			particles = null
@@ -3149,9 +3993,12 @@ export default {
 		},
 		startAnimation() {
 			if (animationId) { cancelAnimationFrame(animationId); animationId = null }
+			if (!renderer || pagePaused || document.hidden) return
 			lastTime = performance.now()
 			lastMoveEmit = lastTime
-			qualitySampleStartedAt = lastTime
+			lastPlayerMotionAt = lastTime
+			// Ignore shader compilation and the first texture uploads in adaptive quality.
+			qualitySampleStartedAt = lastTime + 1800
 			qualityFrameCount = 0
 			const animate = () => {
 				animationId = requestAnimationFrame(animate)
@@ -3188,11 +4035,13 @@ export default {
 
 						walkCycle += speed * deltaTime * 4.6
 						const swing = Math.sin(walkCycle) * Math.min(0.62, speed * 0.14)
-						player.userData.leftLeg.rotation.x = swing
-						player.userData.rightLeg.rotation.x = -swing
-						player.userData.leftArm.rotation.x = -swing * 0.78
-						player.userData.rightArm.rotation.x = swing * 0.78
-						player.position.y = Math.abs(Math.sin(walkCycle * 2)) * 0.035
+						if (player.userData.leftLeg) {
+							player.userData.leftLeg.rotation.x = swing
+							player.userData.rightLeg.rotation.x = -swing
+							player.userData.leftArm.rotation.x = -swing * 0.78
+							player.userData.rightArm.rotation.x = swing * 0.78
+							player.position.y = Math.abs(Math.sin(walkCycle * 2)) * 0.035
+						}
 
 						stepDistanceCarry += movedDistance
 						while (stepDistanceCarry >= 0.72) {
@@ -3205,12 +4054,15 @@ export default {
 							lastMoveEmit = now
 						}
 						wasMoving = true
+						lastPlayerMotionAt = now
 					} else {
 						const settle = 1 - Math.exp(-10 * deltaTime)
-						player.userData.leftLeg.rotation.x += (0 - player.userData.leftLeg.rotation.x) * settle
-						player.userData.rightLeg.rotation.x += (0 - player.userData.rightLeg.rotation.x) * settle
-						player.userData.leftArm.rotation.x += (0 - player.userData.leftArm.rotation.x) * settle
-						player.userData.rightArm.rotation.x += (0 - player.userData.rightArm.rotation.x) * settle
+						if (player.userData.leftLeg) {
+							player.userData.leftLeg.rotation.x += (0 - player.userData.leftLeg.rotation.x) * settle
+							player.userData.rightLeg.rotation.x += (0 - player.userData.rightLeg.rotation.x) * settle
+							player.userData.leftArm.rotation.x += (0 - player.userData.leftArm.rotation.x) * settle
+							player.userData.rightArm.rotation.x += (0 - player.userData.rightArm.rotation.x) * settle
+						}
 						player.position.y += (0 - player.position.y) * settle
 						if (wasMoving && speed < 0.08) {
 							emit('player-move', { x: player.position.x, z: player.position.z, steps: moveStepAccum })
@@ -3225,16 +4077,29 @@ export default {
 					if (player.userData.tassel) {
 						player.userData.tassel.rotation.z = Math.sin(walkCycle * 1.35) * Math.min(0.18, speed * 0.035)
 					}
+					if (player.userData.robe) player.userData.robe.rotation.z = Math.sin(walkCycle) * Math.min(0.035, speed * 0.008)
+					if (player.userData.eyes?.length) {
+						const blink = Math.sin(now * 0.0017) > 0.985 ? 0.08 : 0.8
+						player.userData.eyes.forEach((eye) => {
+							if (eye.userData?.isEyelid) eye.material.opacity += ((blink < 0.2 ? 0.96 : 0) - eye.material.opacity) * (1 - Math.exp(-24 * deltaTime))
+							else eye.scale.y += (blink - eye.scale.y) * (1 - Math.exp(-24 * deltaTime))
+						})
+					}
+					this.updatePlayerMixer(speed, moving, deltaTime)
 				}
+				this.updateAmbientLife(now, deltaTime)
+				this.updatePhaseTransition(now)
 
 				if (camera && player) {
 					if (!cameraTargetVec) cameraTargetVec = new THREE.Vector3()
 					if (!cameraPositionVec) cameraPositionVec = new THREE.Vector3()
 					const horizontalDistance = Math.cos(cameraPitch) * cameraDistance
+					const idleOrbit = now - lastPlayerMotionAt > 4000 ? Math.sin((now - lastPlayerMotionAt - 4000) * 0.00018) * 0.16 : 0
+					const viewYaw = cameraYaw + idleOrbit
 					cameraPositionVec.set(
-						player.position.x + Math.sin(cameraYaw) * horizontalDistance,
+						player.position.x + Math.sin(viewYaw) * horizontalDistance,
 						1.2 + Math.sin(cameraPitch) * cameraDistance,
-						player.position.z + Math.cos(cameraYaw) * horizontalDistance
+						player.position.z + Math.cos(viewYaw) * horizontalDistance
 					)
 					const cameraBounds = currentWorldLayout?.cameraBounds
 					if (cameraBounds) {
@@ -3243,7 +4108,20 @@ export default {
 					}
 					camera.position.lerp(cameraPositionVec, 1 - Math.exp(-8.5 * deltaTime))
 					cameraTargetVec.set(player.position.x, player.position.y + 1.24, player.position.z)
+					const speedLength = Math.hypot(movementVelocity.x, movementVelocity.z)
+					if (speedLength > 0.08) { cameraTargetVec.x += movementVelocity.x / speedLength * 0.6; cameraTargetVec.z += movementVelocity.z / speedLength * 0.6 }
+					cameraTargetVec.x -= Math.sin(viewYaw) * 1.4
+					cameraTargetVec.z -= Math.cos(viewYaw) * 1.4
+					cameraTargetVec.y = 1.5
 					camera.lookAt(cameraTargetVec)
+					const baseFov = window.innerWidth / Math.max(1, window.innerHeight) > 1.85 ? 55 : 58
+					const wantedFov = baseFov + Math.min(3, speedLength * 0.72)
+					if (Math.abs(camera.fov - wantedFov) > 0.03) { camera.fov += (wantedFov - camera.fov) * (1 - Math.exp(-4 * deltaTime)); camera.updateProjectionMatrix() }
+				}
+				if (player && now - lastLightUpdate > 300) {
+					const nearest = lanternLightSources.slice().sort((a, b) => a.distanceToSquared(player.position) - b.distanceToSquared(player.position))
+					lanternLights.forEach((light, index) => { if (nearest[index]) light.position.copy(nearest[index]) })
+					lastLightUpdate = now
 				}
 
 				poiBeacons.forEach((beacon, index) => {
@@ -3275,17 +4153,8 @@ export default {
 					if (group.userData?.isBanner) {
 						group.rotation.y = Math.sin(now * 0.0012 + idx) * 0.18
 					}
-					if (group.userData?.isLantern) {
-						group.rotation.z = Math.sin(now * 0.0014 + idx) * 0.012
-					}
-					if (group.userData?.isSign) {
-						group.rotation.z = Math.sin(now * 0.0016 + idx) * 0.08
-					}
-					if (group.userData?.isWindChime) {
-						group.rotation.x = Math.sin(now * 0.0026 + idx) * 0.12
-						group.rotation.z = Math.cos(now * 0.0021 + idx) * 0.1
-					}
 				})
+				environment.forEach((item) => { if (item.userData?.isCloudLayer) item.rotation.y += deltaTime * 0.0035 })
 
 				/* 粒子飘动：萤火上下浮动 / 落叶下落 */
 				if (particles && particles.geometry) {
@@ -3329,7 +4198,7 @@ export default {
 						}
 
 						if (nextState !== previousState) {
-							if (nextState === 'active') emit('poi-enter', beacon.userData.poiId)
+							if (nextState === 'active') { emit('poi-enter', beacon.userData.poiId); this.playPlayerWave() }
 							else if (previousState === 'active') emit('poi-leave', beacon.userData.poiId)
 							if (nextState === 'near' && previousState === 'far') emit('poi-near', beacon.userData.poiId)
 							beacon.userData.proximityState = nextState
@@ -3339,7 +4208,7 @@ export default {
 					})
 				}
 
-				qualityFrameCount += 1
+				if (now >= qualitySampleStartedAt) qualityFrameCount += 1
 				const qualityElapsed = now - qualitySampleStartedAt
 				if (renderer && qualityElapsed >= 3500) {
 					const fps = qualityFrameCount * 1000 / qualityElapsed
@@ -3357,6 +4226,7 @@ export default {
 						const height = renderContainer?.clientHeight || window.innerHeight
 						renderer.setSize(width, height)
 						if (composer) composer.setSize(width, height)
+						this.syncBloomSize()
 						qualityAdjusted = true
 					}
 					if (fps < 36 && renderer.shadowMap.enabled) {
@@ -3364,23 +4234,35 @@ export default {
 						renderer.shadowMap.needsUpdate = false
 						qualityAdjusted = true
 					}
+					if (fps < 30) bloomSuppressed = true
 					qualitySampleStartedAt = now
 					qualityFrameCount = 0
 				}
 
-				if (composer) composer.render()
+				if (composer && currentPhaseData?.lanternsLit && !bloomSuppressed) composer.render()
 				else if (renderer && scene && camera) renderer.render(scene, camera)
 			}
 			animate()
 		},
 		dispose() {
+			bootGeneration += 1
 			if (animationId) cancelAnimationFrame(animationId)
 			animationId = null
 			assetLoadGeneration += 1
+			if (visibilityHandlerRef) document.removeEventListener('visibilitychange', visibilityHandlerRef)
+			visibilityHandlerRef = null
+			if (renderer) {
+				renderer.domElement.removeEventListener('webglcontextlost', contextLostHandlerRef)
+				renderer.domElement.removeEventListener('webglcontextrestored', contextRestoredHandlerRef)
+			}
+			contextLostHandlerRef = null
+			contextRestoredHandlerRef = null
 			// 解绑摇杆触摸监听（挂在常驻容器 #street-canvas 上，不随 canvas 重建而清，必须显式移除）。
 			if (joystickCleanup) { joystickCleanup(); joystickCleanup = null }
 			this.clearScene()
 			if (bloomPassRef && typeof bloomPassRef.dispose === 'function') bloomPassRef.dispose()
+			if (fxaaPassRef && typeof fxaaPassRef.dispose === 'function') fxaaPassRef.dispose()
+			if (gradePassRef && typeof gradePassRef.dispose === 'function') gradePassRef.dispose()
 			if (composer) {
 				if (typeof composer.dispose === 'function') composer.dispose()
 				else {
@@ -3390,18 +4272,24 @@ export default {
 			}
 			composer = null
 			bloomPassRef = null
+			fxaaPassRef = null
+			gradePassRef = null
+			if (environmentTarget) environmentTarget.dispose()
+			environmentTarget = null
 			/* 释放程序化纹理缓存（共享纹理不在 clearScene 里清，统一在此释放） */
 			Object.keys(textureCache).forEach((k) => { if (textureCache[k]) textureCache[k].dispose() })
 			Object.keys(skyTextureCache).forEach((k) => { if (skyTextureCache[k]) skyTextureCache[k].dispose() })
 			textureCache = {}
 			skyTextureCache = {}
 			brocadeTextureLoading = false
+			rooflineTextureLoading = false
 			if (resizeHandlerRef) {
 				window.removeEventListener('resize', resizeHandlerRef)
 				resizeHandlerRef = null
 			}
 			if (renderer) {
 				renderer.dispose()
+				if (typeof renderer.forceContextLoss === 'function') renderer.forceContextLoss()
 				// renderer.dispose() 不会移除 DOM：手动把自建的 canvas 从容器摘除，避免切场/重试时残留叠加与 WebGL 上下文泄漏。
 				const container = document.getElementById('street-canvas')
 				if (container && renderer.domElement && renderer.domElement.parentNode === container) {
@@ -3419,7 +4307,11 @@ export default {
 			buildings = []
 			poiBeacons = []
 			decorations = []
+			decorationBatchRoot = null
 			lanternLights = []
+			ambientActors = []
+			animationMixers = []
+			phaseTransition = null
 			cameraTargetVec = null
 			cameraPositionVec = null
 			currentWorldLayout = null
@@ -3444,6 +4336,7 @@ export default {
 	position: relative;
 	width: 100vw;
 	height: 100vh;
+	height: 100dvh;
 	overflow: hidden;
 	background: #000;
 }
@@ -3557,6 +4450,8 @@ export default {
 	animation: scrollUnfurlV 0.55s cubic-bezier(0.2, 0.7, 0.3, 1) both;
 	transform-origin: top center;
 }
+
+.street-stage__poi-backdrop { position: absolute; inset: 0; }
 
 .street-stage__poi-paper-fiber {
 	position: absolute;
@@ -3886,12 +4781,48 @@ export default {
 		width: min(640px, calc(100vw - 80px));
 		max-width: none;
 		max-height: calc(100vh - 24px);
+		max-height: calc(100dvh - max(24px, env(safe-area-inset-top)) - env(safe-area-inset-bottom));
+		box-sizing: border-box;
 		padding: 20px 24px;
 		overflow-y: auto;
 	}
 	.street-stage__poi-name { font-size: 24px; letter-spacing: 3px; }
 	.street-stage__poi-desc { margin-top: 12px; font-size: 14px; line-height: 1.55; }
 	.street-stage__poi-story { margin-top: 12px; padding: 10px 14px; }
+	.street-stage__poi-footer { margin-top: 10px; gap: 8px; flex-wrap: wrap; }
+	.street-stage__poi-story-label, .street-stage__poi-eyebrow { font-size: 11px; letter-spacing: 0; }
+	.street-stage__poi-story-text, .street-stage__poi-story-deep { font-size: 13px; line-height: 1.5; }
+	.street-stage__poi-stamp { width: 54px; height: 54px; font-size: 12px; }
+	.street-stage__poi-tool, .street-stage__poi-action, .street-stage__poi-close { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: 4px 12px; box-sizing: border-box; font-size: 13px; letter-spacing: 0; }
+}
+
+/* 旋转被系统禁止时保留完整竖屏 HUD，避免头像、牌匾、任务卷轴叠成一团。 */
+@media screen and (orientation: portrait) and (max-width: 600px) {
+	.street-stage__rightcorner {
+		top: calc(env(safe-area-inset-top) + 244px);
+		right: 8px;
+		gap: 7px;
+	}
+	.street-stage__phase { min-width: 62px; padding: 6px 8px 7px; border-width: 1px; }
+	.street-stage__phase::before { inset: 2px; }
+	.street-stage__phase-label { font-size: 16px; letter-spacing: 2px; }
+	.street-stage__phase-caption { font-size: 9px; letter-spacing: 1px; }
+
+	.street-stage__switch { left: 10px; right: 10px; }
+	.street-stage__switch-arrow { width: 42px; height: 42px; border-width: 1px; font-size: 23px; }
+	.street-stage__move-pad { width: 94px; height: 94px; border-width: 1px; }
+	.street-stage__move-knob { width: 40px; height: 40px; border-width: 1px; }
+
+	.street-stage__poi-paper {
+		width: calc(100vw - 28px);
+		max-width: none;
+		max-height: calc(100dvh - 32px);
+		padding: 20px 18px;
+		overflow-y: auto;
+	}
+	.street-stage__poi-name { font-size: 23px; letter-spacing: 3px; }
+	.street-stage__poi-desc { margin-top: 12px; font-size: 14px; line-height: 1.6; }
+	.street-stage__poi-story { margin-top: 12px; padding: 10px 12px; }
 	.street-stage__poi-footer { margin-top: 14px; }
 }
 </style>

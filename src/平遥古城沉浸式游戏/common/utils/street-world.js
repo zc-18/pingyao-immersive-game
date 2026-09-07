@@ -36,32 +36,52 @@ const SCENE_SET_PIECES = {
 		{ kind: 'ledger-chest', x: -4.05, z: 5.2, side: -1 },
 		{ kind: 'ledger-chest', x: 4.1, z: -8.5, side: 1 },
 		{ kind: 'lantern-post', x: -5.15, z: -15, side: -1 },
-		{ kind: 'hanging-sign', x: 5.25, z: -16, side: 1 }
+		{ kind: 'hanging-sign', x: 5.25, z: -16, side: 1 },
+		{ kind: 'horse-post', x: -4.35, z: -2, side: -1 },
+		{ kind: 'mounting-stone', x: 4.2, z: 6.8, side: 1 },
+		{ kind: 'bench', x: -4.2, z: -10.5, side: -1 },
+		{ kind: 'wine-flag', x: 5.1, z: 8.5, side: 1 }
 	],
 	'south-avenue': [
 		{ kind: 'stone-lion', x: -4.05, z: -16.5, side: -1 },
 		{ kind: 'stone-lion', x: 4.05, z: -16.5, side: 1 },
 		{ kind: 'drum', x: -4.2, z: -2.5, side: -1 },
-		{ kind: 'stele', x: 4.15, z: 5.5, side: 1 }
+		{ kind: 'stele', x: 4.15, z: 5.5, side: 1 },
+		{ kind: 'well', x: -4.0, z: 7.8, side: -1 },
+		{ kind: 'water-vat', x: 4.15, z: -9.8, side: 1 },
+		{ kind: 'horse-post', x: -4.25, z: -9.5, side: -1 },
+		{ kind: 'door-curtain', x: 5.0, z: -1, side: 1 }
 	],
 	'academy-lane': [
 		{ kind: 'stele', x: -4.1, z: 5, side: -1 },
 		{ kind: 'book-stall', x: 4.05, z: -3.5, side: 1 },
 		{ kind: 'potted', x: -4.2, z: -14.5, side: -1 },
-		{ kind: 'potted', x: 4.2, z: 7.5, side: 1 }
+		{ kind: 'potted', x: 4.2, z: 7.5, side: 1 },
+		{ kind: 'bird-cage', x: -4.2, z: -5.5, side: -1 },
+		{ kind: 'bench', x: 4.1, z: 3.3, side: 1 },
+		{ kind: 'drying-cloth', x: -5.0, z: -10, side: -1 },
+		{ kind: 'tea-stall', x: 4.05, z: -14, side: 1 }
 	],
 	'market-crossing': [
 		{ kind: 'market-stall', x: -4.05, z: 5.4, side: -1 },
 		{ kind: 'market-stall', x: 4.05, z: -7.5, side: 1 },
 		{ kind: 'jar-stack', x: -4.15, z: -12.5, side: -1 },
-		{ kind: 'jar-stack', x: 4.15, z: 1.5, side: 1 }
+		{ kind: 'jar-stack', x: 4.15, z: 1.5, side: 1 },
+		{ kind: 'tea-stall', x: -4.0, z: -2.5, side: -1 },
+		{ kind: 'pickle-jars', x: 4.15, z: 8, side: 1 },
+		{ kind: 'wine-flag', x: -5.1, z: -15.5, side: -1 },
+		{ kind: 'water-vat', x: 4.15, z: -14, side: 1 }
 	],
 	'lantern-quarter': [
 		{ kind: 'lantern-string', x: 0, z: 7, side: 0 },
 		{ kind: 'lantern-string', x: 0, z: -4, side: 0 },
 		{ kind: 'lantern-string', x: 0, z: -15, side: 0 },
 		{ kind: 'lantern-post', x: -5.15, z: -11, side: -1 },
-		{ kind: 'lantern-post', x: 5.15, z: -11, side: 1 }
+		{ kind: 'lantern-post', x: 5.15, z: -11, side: 1 },
+		{ kind: 'bird-cage', x: -4.2, z: 1, side: -1 },
+		{ kind: 'door-curtain', x: 5.0, z: 2.4, side: 1 },
+		{ kind: 'bench', x: -4.15, z: -7.8, side: -1 },
+		{ kind: 'water-vat', x: 4.1, z: -17, side: 1 }
 	]
 }
 
@@ -78,6 +98,8 @@ function getBuildingSide(building, index) {
 function createFacade(source, side, slot, sceneId) {
 	const style = source?.style || 'courtyard'
 	const depthLevel = Number(source?.depth || 1)
+	const depth = style === 'gate' || style === 'tower' ? 4.8 : 4.2
+	const width = ({ gate: 10, temple: 10.2, tower: 8.6, bank: 9.5, shop: 8.6, food: 8.2, craft: 8.0 })[style] || 9
 	return {
 		id: source?.id || `${sceneId}-residence-${side < 0 ? 'west' : 'east'}-${slot + 1}`,
 		label: source?.label || (style === 'shop' ? '街巷商铺' : '古城民居'),
@@ -86,11 +108,11 @@ function createFacade(source, side, slot, sceneId) {
 		isFiller: !source,
 		side,
 		slot,
-		x: side * 7.25,
+		x: side * (5.15 + depth / 2),
 		z: SLOT_Z[slot],
 		rotationY: side < 0 ? Math.PI / 2 : -Math.PI / 2,
-		width: 9.2,
-		depth: style === 'gate' || style === 'tower' ? 4.8 : 4.2,
+		width: width - (source ? 0 : slot * 0.2),
+		depth,
 		height: (STYLE_HEIGHT[style] || 3.8) + Math.min(0.35, (depthLevel - 1) * 0.12)
 	}
 }

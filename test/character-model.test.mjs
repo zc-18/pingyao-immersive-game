@@ -16,6 +16,10 @@ const brocadePath = new URL(
 	'../src/平遥古城沉浸式游戏/static/img/3d/pingyao-brocade-pattern.jpg',
 	import.meta.url
 )
+const playerModelPath = new URL(
+	'../src/平遥古城沉浸式游戏/static/models/pingyao-character.glb',
+	import.meta.url
+)
 
 test('每套服饰都提供可驱动 3D 轮廓的建模参数', () => {
 	assert.equal(COSTUMES.length, 7)
@@ -48,4 +52,26 @@ test('织锦运行时贴图经过移动端压缩', () => {
 	const stat = fs.statSync(brocadePath)
 	assert.ok(stat.size > 40_000, '贴图体积过小，可能为空或过度压缩')
 	assert.ok(stat.size < 150_000, '贴图体积过大，会拖慢移动端热换装')
+})
+
+test('离线骨骼角色满足移动端面数、体积和动画预算', () => {
+	const buffer = fs.readFileSync(playerModelPath)
+	assert.ok(buffer.length < 8 * 1024 * 1024, '角色 GLB 超过 8MiB 单体预算')
+	assert.equal(buffer.toString('ascii', 0, 4), 'glTF')
+	const jsonLength = buffer.readUInt32LE(12)
+	const gltf = JSON.parse(buffer.subarray(20, 20 + jsonLength).toString('utf8'))
+	let triangles = 0
+	for (const mesh of gltf.meshes || []) {
+		for (const primitive of mesh.primitives || []) {
+			if (primitive.indices != null) triangles += gltf.accessors[primitive.indices].count / 3
+		}
+	}
+	assert.ok(triangles <= 8000, `角色为 ${triangles} 三角面，超过 8k`)
+	const animations = (gltf.animations || []).map((clip) => clip.name || '')
+	assert.ok(animations.some((name) => /^Idle$/i.test(name)))
+	assert.ok(animations.some((name) => /Walking/i.test(name)))
+	assert.ok(animations.some((name) => /Running/i.test(name)))
+	assert.ok(animations.some((name) => /Cheer|Interact|Wave/i.test(name)))
+	assert.match(streetSource, /readBinaryAsset\(src\)/)
+	assert.match(streetSource, /GLTFLoader\(\)\.parse\(buffer/)
 })
