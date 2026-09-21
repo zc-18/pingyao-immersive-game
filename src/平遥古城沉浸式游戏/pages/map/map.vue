@@ -34,6 +34,22 @@
 			<text class="map-stage__scope-btn-text">{{ showAllPois ? '全 城' : '本 街' }}</text>
 		</view>
 
+		<!-- 定位状态与手动刷新 -->
+		<view class="map-stage__location-bar" :class="`map-stage__location-bar--${locationState}`">
+			<view class="map-stage__location-copy">
+				<text class="map-stage__location-state">{{ locationStatusText }}</text>
+				<text v-if="locationAddress" class="map-stage__location-address">{{ locationAddress }}</text>
+			</view>
+			<button
+				class="map-stage__location-action"
+				:disabled="locationState === 'locating'"
+				@tap="refreshLocation"
+			>
+				<PyIcon name="compass" tone="light" :size="38" />
+				<text>{{ locationState === 'locating' ? '定位中' : '定位' }}</text>
+			</button>
+		</view>
+
 		<!-- 主卷轴（手绘平遥城）-->
 		<view class="map-stage__scroll">
 			<view class="map-stage__scroll-roll map-stage__scroll-roll--top"></view>
@@ -97,7 +113,7 @@
 					<!-- 玩家位置（红印章 + 在此小红旗）-->
 					<view class="map-stage__player" :style="{ left: playerMapPos.x + '%', top: playerMapPos.y + '%' }">
 						<view class="map-stage__player-flag">
-							<text class="map-stage__player-flag-text">在此</text>
+							<text class="map-stage__player-flag-text">{{ playerLocationLabel }}</text>
 							<view class="map-stage__player-pole"></view>
 						</view>
 						<view class="map-stage__player-stamp">
@@ -207,20 +223,35 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import FallingLeaves from '@/components/FallingLeaves.vue'
 import EmptyOwl from '@/components/EmptyOwl.vue'
+import PyIcon from '@/components/PyIcon.vue'
 import { getGameSnapshot, getScenePoiList, markPageVisit, rememberReturnContext } from '@/common/utils/game-state.js'
 import { getPoiStatusText, isUnlockedPoiStatus, getPoiShortLabel } from '@/common/utils/poi.js'
 import { poiList, poiMap } from '@/common/data/poi-list.js'
 import { getUserProgress } from '@/common/utils/storage.js'
+import {
+	getCurrentLocation,
+	getLocationSnapshot,
+	isLocationWithinMapBounds,
+	resolvePlayerMapPosition,
+	saveLocationSnapshot
+} from '@/common/utils/location.js'
+import { getTencentLbsConfig, reverseGeocode } from '@/common/utils/tencent-lbs.js'
 
 const snapshot = ref(getGameSnapshot())
 const selectedPoiId = ref('')
 const sidePanelOpen = ref(false)
 const activeSideTab = ref('history')
 const showAllPois = ref(true)
+const cachedLocation = getLocationSnapshot()
+const locationSnapshot = ref(cachedLocation)
+const locationState = ref(cachedLocation ? 'cached' : 'idle')
+const locationAddress = ref(getTencentLbsConfig().enabled ? '' : '腾讯服务未配置')
+let locationRequestId = 0
+let isUnmounted = false
 
 const sideTabs = [
 	{ key: 'history', label: '打卡履历' },
@@ -272,11 +303,36 @@ const selectedPoi = computed(() => mapPoiList.value.find((item) => item.id === s
 const unlockedPoiCount = computed(() => mapPoiList.value.filter((item) => item.isUnlocked).length)
 const unlockedPoiList = computed(() => mapPoiList.value.filter((item) => item.isUnlocked))
 
-/* 玩家在城图上的位置：全城视野落在当前街景代表点位（heroPoi 的城图坐标），不再恒在死中心；本街视野居中即可。 */
-const playerMapPos = computed(() => {
+const fallbackPlayerMapPos = computed(() => {
 	if (!showAllPois.value) return { x: 54, y: 52 }
 	const hero = poiMap[snapshot.value.currentStreet?.heroPoiId]
 	return hero?.mapPosition || { x: 50, y: 50 }
+})
+
+/* GPS 只在古城粗略范围内用于估算位置；城外或失败时仍落在当前街景代表点位。 */
+const playerMapPos = computed(() => {
+	if (!showAllPois.value) return fallbackPlayerMapPos.value
+	return resolvePlayerMapPosition(locationSnapshot.value, fallbackPlayerMapPos.value)
+})
+
+const playerLocationLabel = computed(() => {
+	if (!showAllPois.value || !isLocationWithinMapBounds(locationSnapshot.value)) return '街景位置'
+	return locationState.value === 'cached' ? '上次定位' : '估算位置'
+})
+
+const locationStatusText = computed(() => {
+	if (locationState.value === 'locating') return '正在定位…'
+	if (locationState.value === 'outside') return '已定位 · 古城范围外'
+	if (locationState.value === 'error') return '定位不可用'
+	if (locationState.value === 'cached') {
+		return isLocationWithinMapBounds(locationSnapshot.value) ? '上次定位 · 估算位置' : '上次定位 · 古城范围外'
+	}
+	if (locationState.value === 'success') {
+		return locationSnapshot.value?.accuracy > 100
+			? `低精度 · 约 ${Math.round(locationSnapshot.value.accuracy)} 米`
+			: '已定位 · 估算位置'
+	}
+	return '定位未开启'
 })
 
 const routeSteps = computed(() => mapPoiList.value
@@ -320,6 +376,50 @@ onShow(() => {
 	snapshot.value = getGameSnapshot()
 	selectedPoiId.value = mapPoiList.value.find((item) => item.status === 'quest')?.id || ''
 })
+
+onUnmounted(() => {
+	isUnmounted = true
+	locationRequestId += 1
+})
+
+function locationErrorText(error) {
+	const message = error instanceof Error ? error.message : String(error?.errMsg || '')
+	if (/permission|auth deny|denied|拒绝|权限/i.test(message)) return '定位权限未开启'
+	return '定位暂不可用'
+}
+
+async function refreshLocation() {
+	if (locationState.value === 'locating') return
+	const requestId = ++locationRequestId
+	locationState.value = 'locating'
+	locationAddress.value = ''
+
+	try {
+		const currentLocation = await getCurrentLocation()
+		if (isUnmounted || requestId !== locationRequestId) return
+		locationSnapshot.value = currentLocation
+		saveLocationSnapshot(currentLocation)
+		locationState.value = isLocationWithinMapBounds(currentLocation) ? 'success' : 'outside'
+
+		const tencentConfig = getTencentLbsConfig()
+		if (!tencentConfig.enabled) {
+			locationAddress.value = '腾讯服务未配置'
+			return
+		}
+
+		const geocodeResult = await reverseGeocode(currentLocation)
+		if (isUnmounted || requestId !== locationRequestId) return
+		locationAddress.value = geocodeResult.status === 'success'
+			? geocodeResult.data.address
+			: '地址暂不可用'
+	} catch (error) {
+		if (isUnmounted || requestId !== locationRequestId) return
+		// 保留磁盘中的旧快照，但本次失败后页面回到静态街景标记。
+		locationSnapshot.value = null
+		locationState.value = 'error'
+		locationAddress.value = locationErrorText(error)
+	}
+}
 
 function goExplore() {
 	uni.navigateTo({ url: '/pages_game/street/street' })
@@ -466,6 +566,82 @@ function toggleScope() {
 	letter-spacing: 4rpx;
 	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
 	text-shadow: 0 1rpx 2rpx rgba(0, 0, 0, 0.6);
+}
+
+.map-stage__location-bar {
+	position: relative;
+	z-index: 5;
+	display: flex;
+	align-items: center;
+	gap: 12rpx;
+	width: calc(100% - 136rpx);
+	box-sizing: border-box;
+	min-height: 58rpx;
+	margin-top: 12rpx;
+	padding: 8rpx 10rpx 8rpx 18rpx;
+	background: rgba(61, 32, 16, 0.9);
+	border: 2rpx solid rgba(212, 165, 116, 0.55);
+	border-radius: 6rpx;
+	box-shadow: 0 5rpx 14rpx rgba(0, 0, 0, 0.5);
+}
+
+.map-stage__location-bar--error,
+.map-stage__location-bar--outside {
+	border-color: rgba(196, 30, 58, 0.65);
+}
+
+.map-stage__location-copy {
+	display: flex;
+	flex: 1;
+	min-width: 0;
+	flex-direction: column;
+	gap: 2rpx;
+}
+
+.map-stage__location-state,
+.map-stage__location-address {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.map-stage__location-state {
+	font-size: 19rpx;
+	font-weight: 700;
+	color: $py-paper-warm;
+}
+
+.map-stage__location-address {
+	font-size: 16rpx;
+	color: rgba(255, 235, 200, 0.72);
+}
+
+.map-stage__location-action {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6rpx;
+	width: 126rpx;
+	height: 42rpx;
+	min-height: 42rpx;
+	margin: 0;
+	padding: 0 8rpx;
+	color: $py-paper-warm;
+	font-size: 18rpx;
+	font-weight: 700;
+	line-height: 1;
+	white-space: nowrap;
+	background: transparent;
+	border: 0;
+	border-radius: 0;
+}
+
+.map-stage__location-action::after {
+	border: 0;
+}
+
+.map-stage__location-action[disabled] {
+	opacity: 0.5;
 }
 
 .map-stage__fan-btn-inner {
@@ -744,6 +920,7 @@ function toggleScope() {
 	font-weight: 700;
 	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
 	letter-spacing: 2rpx;
+	white-space: nowrap;
 	clip-path: polygon(0 0, 100% 0, 92% 100%, 0 100%);
 	border: 1rpx solid #6b1622;
 	box-shadow: 0 2rpx 4rpx rgba(0, 0, 0, 0.5);

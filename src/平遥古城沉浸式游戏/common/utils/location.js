@@ -1,24 +1,41 @@
 import { STORAGE_KEYS, getStorage, patchStorageObject } from './storage.js'
 
 const DEFAULT_MAP_BOUNDS = {
-	minLatitude: 36.0001,
-	maxLatitude: 36.025,
-	minLongitude: 112.16,
+	// 仅用于首版地图估算，尚未通过实测轨迹校准。
+	minLatitude: 37.195,
+	maxLatitude: 37.219,
+	minLongitude: 112.17,
 	maxLongitude: 112.2
 }
 
 function finiteNumber(value, fallback = 0) {
+	if (value === null || value === '' || typeof value === 'boolean') return fallback
 	const number = Number(value)
 	return Number.isFinite(number) ? number : fallback
 }
 
-export function validateLocation(location) {
-	if (!location || !Number.isFinite(Number(location.latitude)) || !Number.isFinite(Number(location.longitude))) {
-		return null
-	}
+function coordinateNumber(value) {
+	if (value === null || value === '' || typeof value === 'boolean') return null
+	const number = Number(value)
+	return Number.isFinite(number) ? number : null
+}
 
-	const latitude = Number(location.latitude)
-	const longitude = Number(location.longitude)
+function normalizeBounds(bounds) {
+	if (!bounds || typeof bounds !== 'object') return null
+	const minLatitude = coordinateNumber(bounds.minLatitude)
+	const maxLatitude = coordinateNumber(bounds.maxLatitude)
+	const minLongitude = coordinateNumber(bounds.minLongitude)
+	const maxLongitude = coordinateNumber(bounds.maxLongitude)
+	if (minLatitude === null || maxLatitude === null || minLongitude === null || maxLongitude === null) return null
+	if (!(maxLatitude > minLatitude) || !(maxLongitude > minLongitude)) return null
+	return { minLatitude, maxLatitude, minLongitude, maxLongitude }
+}
+
+export function validateLocation(location) {
+	if (!location || typeof location !== 'object') return null
+	const latitude = coordinateNumber(location.latitude)
+	const longitude = coordinateNumber(location.longitude)
+	if (latitude === null || longitude === null) return null
 	if (latitude === 0 || longitude === 0 || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
 		return null
 	}
@@ -38,11 +55,9 @@ export function projectLocationToMap(location, bounds = DEFAULT_MAP_BOUNDS) {
 	const normalized = validateLocation(location)
 	if (!normalized) return null
 
-	const minLatitude = Number(bounds.minLatitude)
-	const maxLatitude = Number(bounds.maxLatitude)
-	const minLongitude = Number(bounds.minLongitude)
-	const maxLongitude = Number(bounds.maxLongitude)
-	if (!(maxLatitude > minLatitude) || !(maxLongitude > minLongitude)) return null
+	const normalizedBounds = normalizeBounds(bounds)
+	if (!normalizedBounds) return null
+	const { minLatitude, maxLatitude, minLongitude, maxLongitude } = normalizedBounds
 
 	const clamp = (value) => Math.min(100, Math.max(0, value))
 	const roundPercentage = (value) => Math.round(clamp(value) * 100) / 100
@@ -52,7 +67,16 @@ export function projectLocationToMap(location, bounds = DEFAULT_MAP_BOUNDS) {
 	}
 }
 
+export function isLocationWithinMapBounds(location, bounds = DEFAULT_MAP_BOUNDS) {
+	const normalized = validateLocation(location)
+	const normalizedBounds = normalizeBounds(bounds)
+	if (!normalized || !normalizedBounds) return false
+	return normalized.latitude >= normalizedBounds.minLatitude && normalized.latitude <= normalizedBounds.maxLatitude &&
+		normalized.longitude >= normalizedBounds.minLongitude && normalized.longitude <= normalizedBounds.maxLongitude
+}
+
 export function resolvePlayerMapPosition(location, fallback, bounds = DEFAULT_MAP_BOUNDS) {
+	if (!isLocationWithinMapBounds(location, bounds)) return fallback
 	return projectLocationToMap(location, bounds) || fallback
 }
 
@@ -62,14 +86,28 @@ export function getCurrentLocation() {
 			reject(new Error('uni.getLocation is unavailable'))
 			return
 		}
+		let settled = false
 		const success = (result) => {
-			const normalized = validateLocation(result)
+			if (settled) return
+			const normalized = validateLocation({ ...result, timestamp: Date.now() })
+			settled = true
 			if (normalized) resolve(normalized)
 			else reject(new Error('定位结果无效'))
 		}
-		const fail = (error) => reject(error instanceof Error ? error : new Error(error?.errMsg || '定位失败'))
+		const fail = (error) => {
+			if (settled) return
+			settled = true
+			reject(error instanceof Error ? error : new Error(error?.errMsg || '定位失败'))
+		}
 		try {
-			const result = globalThis.uni.getLocation({ type: 'gcj02', success, fail })
+			const result = globalThis.uni.getLocation({
+				type: 'gcj02',
+				isHighAccuracy: true,
+				highAccuracyExpireTime: 5000,
+				timeout: 10000,
+				success,
+				fail
+			})
 			if (result && typeof result.then === 'function') result.then(success).catch(fail)
 		} catch (error) {
 			fail(error)
