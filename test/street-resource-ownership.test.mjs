@@ -67,12 +67,14 @@ test('clearScene releases shared scene materials once and preserves cache-owned 
 test('continuous roof has finite normals and a ridge attached at the roof peak', () => {
   const { api, THREE } = harness()
   api.makeRoofTexture = () => null
-  for (const depth of [2.6, 4.2, 4.8]) {
+  api.getCourtyardTexture = () => null
+  for (const depth of [.42, .9, 1.4, 2.6, 4.2, 4.8]) {
     const root = new THREE.Group()
     api.addPitchedRoof(root, 9.2, depth, 4, '#333333', true)
     const roof = root.children[0], ridge = root.children[1]
     roof.geometry.computeBoundingBox()
     assert.ok([...roof.geometry.attributes.normal.array].every(Number.isFinite))
+    assert.ok([...roof.geometry.attributes.uv.array].every(Number.isFinite))
     assert.ok(Math.abs(roof.geometry.boundingBox.max.y + roof.position.y - ridge.position.y) < 1e-5)
   }
 })
@@ -80,11 +82,15 @@ test('continuous roof has finite normals and a ridge attached at the roof peak',
 test('phase particle replacement disposes old buffers and keeps one particle system', () => {
   const { api, scene } = harness()
   api.refreshSky = () => {}
+  // Canvas drawing is exercised in the browser audit; retain the real texture cache here.
+  api.makeCanvas = () => ({ getContext: () => ({ fillRect() {}, beginPath() {}, ellipse() {}, fill() {}, createRadialGradient: () => ({ addColorStop() {} }) }) })
   api.createParticles({ fallingType: 'leaf' })
   const first = scene.children[0]
   let released = 0
   first.geometry.addEventListener('dispose', () => released++)
   first.material.addEventListener('dispose', () => released++)
+  let textureReleases = 0
+  first.material.map.addEventListener('dispose', () => textureReleases++)
   api.applyPhase({ fallingType: 'firefly' })
   assert.equal(released, 2)
   assert.equal(scene.children.length, 1)
@@ -92,6 +98,25 @@ test('phase particle replacement disposes old buffers and keeps one particle sys
   const second = scene.children[0]
   api.applyPhase({ fallingType: 'firefly' })
   assert.equal(scene.children[0], second)
+  api.applyPhase({ fallingType: 'leaf' })
+  assert.equal(scene.children[0].material.map, first.material.map)
+  assert.equal(textureReleases, 0, 'cached sprite maps survive a phase change')
+})
+
+test('courtyard gallery and gate lanterns follow the same day/night cycle as facade lights', () => {
+  const { context, api, THREE, scene } = harness()
+  const facade = new THREE.Group(), enclosure = new THREE.Group()
+  ;[facade, enclosure].forEach(root => {
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(.25), new THREE.MeshStandardMaterial({ emissive: 0xffbb73 }))
+    lamp.userData.isBuildingLantern = true; root.add(lamp); scene.add(root)
+  })
+  context.facade = facade; context.enclosure = enclosure
+  vm.runInContext('buildings = [facade]; environment = [enclosure]', context)
+  api.batchStaticRoots([facade, enclosure])
+  for (const [key, expected] of [['night', .72], ['noon', .08], ['dusk', .42], ['dawn', .08]]) {
+    api.updateWindowGlow({ key })
+    for (const root of [facade, enclosure]) assert.equal(root.children[0].material.emissiveIntensity, expected)
+  }
 })
 
 test('color textures use the installed engine encoding API and support colorSpace', () => {
@@ -102,4 +127,33 @@ test('color textures use the installed engine encoding API and support colorSpac
   const modern = { colorSpace: '' }
   api.setColorTexture(modern)
   assert.equal(modern.colorSpace, THREE.SRGBColorSpace)
+})
+
+test('sRGB art colors and phase colors enter the linear renderer exactly once', () => {
+  const { api, THREE } = harness()
+  const expected = new THREE.Color(0x808080).convertSRGBToLinear()
+  assert.ok(Math.abs(expected.r - .21586) < .00001)
+  assert.ok(api.makeSceneColor(0x808080).equals(expected), 'legacy engine fallback')
+  api.configureColorManagement()
+  assert.ok(new THREE.MeshStandardMaterial({ color: 0x808080 }).color.equals(expected))
+  assert.ok(api.makeSceneColor(0x808080).equals(expected), 'lights must not be decoded twice')
+  assert.equal(new THREE.Color().fromArray([.5, .5, .5]).r, .5, 'GLTF linear factors stay linear')
+})
+
+test('bloom recovers after sustained spare performance without rapid quality oscillation', () => {
+  const { api, context } = harness()
+  vm.runInContext('composer = {}; currentPhaseData = { lanternsLit: true }', context)
+  const suppressed = () => vm.runInContext('bloomSuppressed', context)
+  api.updateBloomBudget(25, 1000)
+  assert.equal(suppressed(), true)
+  for (const now of [4500, 8000, 11500, 15000, 18500]) api.updateBloomBudget(60, now)
+  assert.equal(suppressed(), true, 'cooldown avoids repeatedly toggling an expensive effect')
+  api.updateBloomBudget(60, 22000)
+  assert.equal(suppressed(), false, 'an initial shader stall must not disable lighting forever')
+  api.updateBloomBudget(25, 25500)
+  for (const now of [30000, 35000, 40000, 46000]) api.updateBloomBudget(45, now)
+  assert.equal(suppressed(), true, 'only sustained headroom can restore bloom')
+  vm.runInContext('bloomSuppressed = false; currentPhaseData = { lanternsLit: false }', context)
+  api.updateBloomBudget(20, 50000)
+  assert.equal(suppressed(), false, 'a daytime slowdown is not caused by the inactive composer')
 })

@@ -5,7 +5,8 @@
 			"style": {
 				"navigationStyle": "custom",
 				"disableScroll": true,
-				"backgroundColor": "#F5F0E8"
+				"backgroundColor": "#F5F0E8",
+				"pageOrientation": "landscape"
 			}
 		},
 		{
@@ -40,7 +41,8 @@
 			"path": "pages_game/role-select/role-select",
 			"style": {
 				"navigationStyle": "custom",
-				"backgroundColor": "#F5F0E8"
+				"backgroundColor": "#F5F0E8",
+				"pageOrientation": "landscape"
 			}
 		},
 		{

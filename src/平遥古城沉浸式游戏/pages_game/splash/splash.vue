@@ -83,6 +83,7 @@ import { getGameSnapshot, getRuntimeState, markPageVisit } from '@/common/utils/
 import { getCurrentPhase } from '@/common/utils/phase.js'
 import { getCheckInPreview } from '@/common/utils/check-in.js'
 import { playSFX, SFX } from '@/common/utils/audio.js'
+import { lockGameLandscape } from '@/common/utils/orientation.js'
 
 const isRouting = ref(false)
 const stampShown = ref(false)
@@ -128,6 +129,7 @@ const entranceTitle = computed(() => sceneTitle.value || '票号旧巷')
 const entranceDesc = computed(() => '城门徐徐推开，光从门缝中漏出。一脚踏入青石板街，把第一段引线点亮。')
 
 onShow(() => {
+	lockGameLandscape()
 	markPageVisit('splash')
 	profile.value = getUserProfile()
 	runtime.value = getRuntimeState()
@@ -174,6 +176,7 @@ function handleEnter() {
 	position: relative;
 	width: 100vw;
 	min-height: 100vh;
+	min-height: 100dvh;
 	overflow: hidden;
 	background: linear-gradient(180deg, #2a1a14 0%, #1a1108 50%, #050308 100%);
 }
@@ -548,5 +551,74 @@ function handleEnter() {
 	letter-spacing: 6rpx;
 	color: rgba(212, 165, 116, 0.55);
 	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
+}
+
+/* APP 的 rpx 以横屏宽度换算，直接沿用竖屏尺寸会把首屏撑成两屏高。 */
+@media screen and (orientation: landscape) and (max-height: 520px) {
+	.splash-stage {
+		height: 100vh;
+		height: 100dvh;
+		min-height: 0;
+	}
+
+	.splash-wall { bottom: 16%; height: 22%; }
+	.splash-roofs { bottom: 5%; height: 18%; }
+
+	.splash-center {
+		position: absolute;
+		left: 50%;
+		top: calc(env(safe-area-inset-top) + 10px);
+		width: min(430px, 58vw);
+		padding: 0;
+		gap: 5px;
+		transform: translateX(-50%);
+	}
+
+	.splash-kicker { font-size: 11px; letter-spacing: 4px; }
+	.splash-stamp {
+		width: 112px;
+		height: 112px;
+		margin-top: 3px;
+		border-width: 4px;
+		border-radius: 8px;
+		box-shadow: 0 0 28px rgba(196, 30, 58, 0.42);
+	}
+	.splash-stamp::before { inset: 4px; border-radius: 4px; }
+	.splash-stamp__inner { gap: 6px; }
+	.splash-stamp__text { font-size: 40px; }
+	.splash-headline { margin-top: 3px; font-size: 22px; letter-spacing: 3px; }
+	.splash-desc { max-width: 420px; margin-top: 2px; font-size: 11px; line-height: 1.5; letter-spacing: 0; }
+
+	.splash-owl-flyby { width: 42px; height: 54px; }
+	.splash-owl {
+		right: calc(env(safe-area-inset-right) + 14px);
+		top: calc(env(safe-area-inset-top) + 62px);
+		gap: 4px;
+	}
+	.splash-owl__img { width: 68px; height: 78px; }
+	.splash-owl__bubble { max-width: 150px; padding: 7px 9px; border-width: 1px; border-radius: 8px 8px 2px 8px; }
+	.splash-owl__bubble::after { right: -6px; top: 12px; border-top-width: 5px; border-bottom-width: 5px; border-left-width: 6px; }
+	.splash-owl__text { font-size: 10px; line-height: 1.45; letter-spacing: 0; }
+
+	.splash-bottom {
+		bottom: calc(env(safe-area-inset-bottom) + 8px);
+		gap: 5px;
+		padding: 0;
+	}
+	.splash-status { font-size: 10px; letter-spacing: 2px; }
+	.splash-enter-frame {
+		min-width: 220px;
+		padding: 10px 28px;
+		gap: 9px;
+		border-width: 1px;
+		border-radius: 4px;
+		font-size: 18px;
+		letter-spacing: 6px;
+	}
+	.splash-enter-frame::before,
+	.splash-enter-frame::after { top: -7px; width: 14px; height: 9px; border-radius: 2px 2px 0 0; }
+	.splash-enter-frame__seal { top: -11px; width: 20px; height: 14px; }
+	.splash-enter-frame__arrow { font-size: 18px; }
+	.splash-tap-hint { font-size: 9px; letter-spacing: 2px; }
 }
 </style>

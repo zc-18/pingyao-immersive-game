@@ -434,4 +434,66 @@ function particleStyle(i) {
 	0%, 100% { transform: translateX(0); }
 	50%      { transform: translateX(6rpx); }
 }
+
+/* 手机横屏：竖排卷轴放不下 390px 高的视口，改成左奖励/右结语的双栏卷轴，禁止出现滚动条 */
+@media screen and (orientation: landscape) and (max-height: 520px) {
+	.reward-stage__voucher {
+		width: min(92vw, 720px);
+		max-width: none;
+		max-height: calc(100vh - 20px);
+		max-height: calc(100dvh - 20px);
+		overflow: hidden;
+	}
+
+	.reward-stage__roll { height: 12px; left: -6px; right: -6px; }
+	.reward-stage__roll--top { top: -6px; }
+	.reward-stage__roll--bot { bottom: -6px; }
+
+	.reward-stage__paper {
+		display: grid;
+		grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+		grid-template-areas:
+			'head head'
+			'list npc'
+			'bonus claim';
+		column-gap: 16px;
+		row-gap: 8px;
+		align-items: start;
+		padding: 20px 26px 14px;
+	}
+
+	.reward-stage__seal {
+		top: -12px;
+		right: 22px;
+		width: 52px;
+		height: 52px;
+		border-width: 3px;
+		font-size: 16px;
+	}
+
+	.reward-stage__seal::before { inset: 3px; }
+
+	.reward-stage__head { grid-area: head; gap: 2px; margin-bottom: 2px; }
+	.reward-stage__eyebrow { font-size: 10px; letter-spacing: 5px; }
+	.reward-stage__title { font-size: 20px; letter-spacing: 3px; }
+
+	.reward-stage__list { grid-area: list; gap: 5px; }
+	.reward-stage__item { gap: 8px; padding: 5px 10px; border-left-width: 2px; }
+	.reward-stage__item-stamp { width: 24px; height: 24px; font-size: 11px; border-radius: 3px; }
+	.reward-stage__item-label { font-size: 12px; letter-spacing: 2px; }
+	.reward-stage__item-value { font-size: 16px; }
+
+	.reward-stage__bonus { grid-area: bonus; margin-top: 0; gap: 2px; padding: 6px 10px; }
+	.reward-stage__bonus-label { font-size: 9px; letter-spacing: 4px; }
+	.reward-stage__bonus-text { font-size: 11px; line-height: 1.5; }
+
+	.reward-stage__npc { grid-area: npc; align-self: stretch; margin-top: 0; gap: 8px; padding: 8px 10px; }
+	.reward-stage__npc-img { width: 44px; height: 54px; }
+	.reward-stage__npc-line { font-size: 12px; line-height: 1.6; }
+
+	.reward-stage__claim { grid-area: claim; align-self: end; margin-top: 0; gap: 8px; padding: 9px 18px; border-width: 1px; }
+	.reward-stage__claim-stamp { width: 22px; height: 22px; font-size: 12px; border-radius: 2px; }
+	.reward-stage__claim-text { font-size: 14px; letter-spacing: 5px; }
+	.reward-stage__claim-arrow { font-size: 15px; }
+}
 </style>

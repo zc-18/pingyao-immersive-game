@@ -1,5 +1,5 @@
 <template>
-	<view class="street-hud">
+	<view ref="hudRoot" class="street-hud">
 		<!-- 顶部正中：地点牌匾（飞檐 + 红绸）-->
 		<view class="street-hud__plaque-wrap">
 			<view class="street-hud__plaque" :class="{ 'street-hud__plaque--flip': plaqueFlipping }">
@@ -31,30 +31,14 @@
 			</view>
 		</view>
 
-		<!-- 右上角：三枚铜钱（背包 / 任务 / 设置）-->
+		<!-- 铜章与独立文字标签，装饰不遮挡功能名称。 -->
 		<view class="street-hud__coins">
-			<view class="street-hud__coin" @tap="$emit('action', 'inventory')">
-				<view class="street-hud__coin-rim"></view>
-				<view class="street-hud__coin-face">
-					<text class="street-hud__coin-char">袋</text>
-				</view>
-				<view class="street-hud__coin-hole"></view>
-			</view>
-			<view class="street-hud__coin" @tap="$emit('action', 'quest')">
-				<view class="street-hud__coin-rim"></view>
-				<view class="street-hud__coin-face">
-					<text class="street-hud__coin-char">册</text>
-				</view>
-				<view class="street-hud__coin-hole"></view>
-				<view v-if="quest" class="street-hud__coin-dot"></view>
-			</view>
-			<view class="street-hud__coin" @tap="$emit('action', 'settings')">
-				<view class="street-hud__coin-rim"></view>
-				<view class="street-hud__coin-face">
-					<text class="street-hud__coin-char">匣</text>
-				</view>
-				<view class="street-hud__coin-hole"></view>
-			</view>
+			<button v-for="item in actions" :key="item.action" class="street-hud__coin" role="button" tabindex="0" :data-action="item.action" :aria-label="item.label" :title="item.label" :aria-expanded="item.action === 'settings' ? settingsOpen : undefined" @tap="$emit('action', item.action)">
+				<view class="street-hud__coin-rim" aria-hidden="true"></view>
+				<view class="street-hud__coin-face" aria-hidden="true"><text class="street-hud__coin-char">{{ item.glyph }}</text></view>
+				<text class="street-hud__coin-label">{{ item.label }}</text>
+				<view v-if="item.action === 'quest' && quest" class="street-hud__coin-dot" aria-hidden="true"></view>
+			</button>
 		</view>
 
 		<!-- 右上角下方：任务追踪（横向小卷轴）-->
@@ -120,7 +104,16 @@
 </template>
 
 <script setup>
+import { onBeforeUnmount, onMounted, ref } from 'vue'
+const hudRoot = ref(null)
+let keyboardRoot = null
+const actions = [
+	{ action: 'inventory', glyph: '衣', label: '换装' },
+	{ action: 'quest', glyph: '册', label: '行旅册' },
+	{ action: 'settings', glyph: '设', label: '设置' }
+]
 defineProps({
+	settingsOpen: { type: Boolean, default: false },
 	level:        { type: Number, default: 1 },
 	levelName:    { type: String, default: '票号学徒' },
 	roleName:     { type: String, default: '研学者' },
@@ -138,7 +131,20 @@ defineProps({
 	plaqueFlipping: { type: Boolean, default: false }
 })
 
-defineEmits(['action'])
+const emit = defineEmits(['action'])
+function handleActionKey(event) {
+	if (event.key !== 'Enter' && event.key !== ' ') return
+	const action = event.target?.closest?.('.street-hud__coin')?.dataset.action
+	if (!action) return
+	event.preventDefault()
+	if (!event.repeat) emit('action', action)
+}
+onMounted(() => {
+	if (typeof document === 'undefined') return
+	keyboardRoot = hudRoot.value?.$el || hudRoot.value
+	keyboardRoot?.addEventListener('keydown', handleActionKey)
+})
+onBeforeUnmount(() => keyboardRoot?.removeEventListener('keydown', handleActionKey))
 </script>
 
 <style lang="scss" scoped>
@@ -382,19 +388,31 @@ defineEmits(['action'])
 .street-hud__coin {
 	position: relative;
 	width: 88rpx;
-	height: 88rpx;
-	border-radius: 50%;
+	min-width: 44px;
+	height: 116rpx;
+	min-height: 60px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	line-height: 1;
+	overflow: visible;
+	border-radius: 5px;
 	transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.4, 1);
 	cursor: pointer;
 }
 
 .street-hud__coin:active {
-	transform: rotateY(180deg) scale(0.94);
+	transform: scale(0.94);
 }
+.street-hud__coin::after { border: 0; }
+.street-hud__coin:focus-visible { outline: 2px solid #f0d28e; outline-offset: 3px; }
+.street-hud__coin > * { pointer-events: none; }
 
 .street-hud__coin-rim {
 	position: absolute;
 	inset: 0;
+	bottom: 28rpx;
 	border-radius: 50%;
 	background:
 		radial-gradient(circle at 30% 28%, rgba(255, 235, 195, 0.55) 0%, transparent 30%),
@@ -407,6 +425,7 @@ defineEmits(['action'])
 .street-hud__coin-face {
 	position: absolute;
 	inset: 8rpx;
+	bottom: 36rpx;
 	border-radius: 50%;
 	background:
 		radial-gradient(circle at 35% 30%, rgba(255, 240, 200, 0.4) 0%, transparent 35%),
@@ -417,23 +436,27 @@ defineEmits(['action'])
 }
 
 .street-hud__coin-char {
-	font-size: 24rpx;
+	font-size: 38rpx;
 	font-weight: 700;
 	color: $py-paper-warm;
 	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
 	text-shadow: 0 1rpx 2rpx rgba(0, 0, 0, 0.65);
 }
 
-.street-hud__coin-hole {
+.street-hud__coin-label {
 	position: absolute;
 	left: 50%;
-	top: 50%;
-	width: 14rpx;
-	height: 14rpx;
-	background: #0d0907;
-	transform: translate(-50%, -50%);
+	bottom: 0;
+	padding: 2rpx 4rpx;
+	font-size: 20rpx;
+	line-height: 1.2;
+	white-space: nowrap;
+	color: #fff4df;
+	background: #241a13b8;
+	border-radius: 3px;
+	text-shadow: 0 1px 2px #000;
+	transform: translateX(-50%);
 	z-index: 2;
-	box-shadow: 0 0 4rpx rgba(0, 0, 0, 0.85);
 }
 
 .street-hud__coin-dot {
@@ -809,13 +832,14 @@ defineEmits(['action'])
 	.street-hud__exp-bar { margin-top: 2px; width: 96px; height: 6px; border-width: 1px; }
 
 	.street-hud__coins { top: 8px; right: 10px; gap: 8px; }
-	.street-hud__coin { width: 42px; height: 42px; }
-	.street-hud__coin-face { inset: 4px; }
-	.street-hud__coin-char { font-size: 12px; }
-	.street-hud__coin-hole { width: 7px; height: 7px; }
+	.street-hud__coin { width: 44px; height: 60px; }
+	.street-hud__coin-rim { bottom: 16px; }
+	.street-hud__coin-face { inset: 4px; bottom: 20px; }
+	.street-hud__coin-char { font-size: 20px; }
+	.street-hud__coin-label { font-size: 11px; padding: 1px 3px; }
 	.street-hud__coin-dot { width: 9px; height: 9px; }
 
-	.street-hud__tracker { top: 58px; right: 10px; width: 190px; }
+	.street-hud__tracker { top: 76px; right: 10px; width: 190px; }
 	.street-hud__tracker-roll { top: -3px; bottom: -3px; width: 9px; }
 	.street-hud__tracker-roll--l { left: -4px; }
 	.street-hud__tracker-roll--r { right: -4px; }
@@ -849,7 +873,74 @@ defineEmits(['action'])
 	.street-hud__bs-coin::after { width: 4px; height: 4px; }
 	.street-hud__bs-seal-char { font-size: 11px; }
 
-	.street-hud__scene-hint { bottom: 58px; max-width: 52%; padding: 6px 14px; border-width: 1px; }
+	.street-hud__scene-hint { bottom: 64px; left: max(12px, env(safe-area-inset-left)); max-width: calc(50% - 74px); padding: 6px 10px; border-width: 1px; border-radius: 4px; transform: none; animation: none; font-size: 11px; line-height: 1.45; display: flex; }
+	.street-hud__scene-hint-text { font-size: 11px; letter-spacing: 1px; }
+}
+
+@media screen and (orientation: portrait) and (max-width: 600px) {
+	.street-hud__quest-tag { display: none; }
+	.street-hud__plaque-wrap { top: calc(env(safe-area-inset-top) + 76px); gap: 3px; }
+	.street-hud__plaque { min-width: 176px; max-width: calc(100vw - 120px); padding: 7px 18px; border-width: 1px; font-size: 14px; letter-spacing: 3px; }
+	.street-hud__plaque::before,
+	.street-hud__plaque::after { top: -5px; width: 14px; height: 9px; border-radius: 2px 2px 0 0; }
+	.street-hud__plaque-ribbon { top: -11px; width: 22px; height: 13px; }
+	.street-hud__quest-tag { font-size: 9px; letter-spacing: 2px; }
+
+	.street-hud__profile { top: calc(env(safe-area-inset-top) + 8px); left: 8px; gap: 7px; }
+	.street-hud__avatar { width: 48px; height: 48px; }
+	.street-hud__avatar-inner { inset: 4px; }
+	.street-hud__avatar-char { font-size: 21px; }
+	.street-hud__seal { right: -4px; bottom: -2px; width: 21px; height: 21px; border-width: 1px; border-radius: 3px; }
+	.street-hud__seal::before { inset: 2px; }
+	.street-hud__seal-num { font-size: 10px; }
+	.street-hud__profile-info { gap: 1px; min-width: 84px; max-width: 96px; }
+	.street-hud__role { font-size: 10px; letter-spacing: 1px; }
+	.street-hud__title { font-size: 12px; letter-spacing: 1px; }
+	.street-hud__exp-bar { margin-top: 2px; width: 88px; height: 5px; border-width: 1px; }
+
+	.street-hud__coins { top: calc(env(safe-area-inset-top) + 9px); right: 8px; gap: 5px; }
+	.street-hud__coin { width: 44px; height: 60px; }
+	.street-hud__coin-rim { bottom: 16px; }
+	.street-hud__coin-face { inset: 4px; bottom: 20px; }
+	.street-hud__coin-char { font-size: 20px; }
+	.street-hud__coin-label { font-size: 11px; padding: 1px 3px; }
+	.street-hud__coin-dot { width: 8px; height: 8px; }
+
+	.street-hud__tracker { top: calc(env(safe-area-inset-top) + 126px); right: 8px; width: 178px; }
+	.street-hud__tracker-roll { top: -3px; bottom: -3px; width: 9px; }
+	.street-hud__tracker-roll--l { left: -4px; }
+	.street-hud__tracker-roll--r { right: -4px; }
+	.street-hud__tracker-paper { padding: 8px 11px; }
+	.street-hud__tracker-eyebrow { font-size: 9px; letter-spacing: 3px; }
+	.street-hud__tracker-title { margin-top: 2px; font-size: 13px; letter-spacing: 1px; }
+	.street-hud__tracker-line { margin-top: 4px; font-size: 10px; line-height: 1.4; }
+	.street-hud__tracker-progress { gap: 5px; margin-top: 5px; }
+	.street-hud__tracker-progress-bar { height: 4px; }
+	.street-hud__tracker-pct { font-size: 10px; }
+
+	.street-hud__bonus { top: calc(env(safe-area-inset-top) + 128px); left: 8px; gap: 5px; max-width: calc(100vw - 210px); padding: 4px 8px 4px 4px; }
+	.street-hud__bonus-stamp { width: 18px; height: 18px; font-size: 11px; }
+	.street-hud__bonus-text { font-size: 10px; line-height: 1.35; letter-spacing: 0; }
+
+	.street-hud__bottom-scroll { bottom: calc(env(safe-area-inset-bottom) + 10px); width: calc(100vw - 24px); max-width: none; }
+	.street-hud__bs-roll { top: -3px; bottom: -3px; width: 13px; }
+	.street-hud__bs-roll--l { left: -6px; }
+	.street-hud__bs-roll--r { right: -6px; }
+	.street-hud__bs-roll::before,
+	.street-hud__bs-roll::after { width: 18px; height: 18px; }
+	.street-hud__bs-roll::before { top: -6px; }
+	.street-hud__bs-roll::after { bottom: -6px; }
+	.street-hud__bs-paper { padding: 9px 14px; }
+	.street-hud__bs-cell { gap: 5px; }
+	.street-hud__bs-divider { height: 20px; }
+	.street-hud__bs-icon { width: 22px; height: 22px; }
+	.street-hud__bs-value { font-size: 14px; }
+	.street-hud__bs-label { font-size: 9px; letter-spacing: 1px; }
+	.street-hud__bs-coin { width: 16px; height: 16px; }
+	.street-hud__bs-coin::after { width: 4px; height: 4px; }
+	.street-hud__bs-seal-char { font-size: 11px; }
+
+	.street-hud__scene-hint { bottom: calc(env(safe-area-inset-bottom) + 68px); max-width: calc(100vw - 100px); padding: 6px 12px; border-width: 1px; }
 	.street-hud__scene-hint-text { font-size: 11px; letter-spacing: 1px; }
 }
 </style>

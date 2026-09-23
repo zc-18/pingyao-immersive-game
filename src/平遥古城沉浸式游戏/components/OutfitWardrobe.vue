@@ -1,5 +1,6 @@
 <template>
-	<view v-if="visible" class="wardrobe" @tap="handleClose">
+	<view v-if="visible" class="wardrobe" :class="{ 'wardrobe--compact': compactLandscape }">
+		<view class="wardrobe__dismiss-area" @tap="handleClose"></view>
 		<view class="wardrobe__panel" @tap.stop>
 			<!-- 卷轴轴头 -->
 			<view class="wardrobe__roll wardrobe__roll--top"></view>
@@ -90,6 +91,7 @@ import { STORAGE_KEYS, getStorage } from '@/common/utils/storage.js'
 import { playSFX, SFX } from '@/common/utils/audio.js'
 
 const props = defineProps({
+	compactLandscape: { type: Boolean, default: false },
 	visible: { type: Boolean, default: false }
 })
 const emit = defineEmits(['close', 'changed'])
@@ -186,6 +188,8 @@ function handleClose() {
 	box-shadow: 0 20rpx 56rpx rgba(0, 0, 0, 0.62);
 	animation: panelRise 0.5s cubic-bezier(0.2, 0.7, 0.3, 1) both;
 }
+
+.wardrobe__dismiss-area { position: absolute; inset: 0; }
 
 .wardrobe__roll {
 	position: absolute;
@@ -539,5 +543,26 @@ function handleClose() {
 	.wardrobe__btn { padding: 4px 12px; font-size: 10px; letter-spacing: 1px; }
 	.wardrobe__tag { padding: 3px 8px; font-size: 9px; letter-spacing: 1px; }
 	.wardrobe__close { margin-top: 7px; padding-top: 7px; font-size: 11px; letter-spacing: 3px; }
+}
+@media (orientation: landscape) and (max-height: 600px) {
+	.wardrobe--compact {
+		padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) calc(var(--tab-reserve, 0px) + max(8px, env(safe-area-inset-bottom))) max(12px, env(safe-area-inset-left));
+		box-sizing: border-box;
+		.wardrobe__panel { width: 100%; max-width: 900px; height: 100%; max-height: none; padding: 8px 16px; animation: none; }
+		.wardrobe__head { flex-direction: row; justify-content: center; min-height: 36px; padding: 0 72px 6px; gap: 12px; }
+		.wardrobe__eyebrow { font-size: 11px; letter-spacing: 0; }
+		.wardrobe__title { font-size: 18px; letter-spacing: 0; }
+		.wardrobe__balance { padding: 4px 8px; top: 2px; }
+		.wardrobe__balance-icon, .wardrobe__balance-num { font-size: 13px; }
+		.wardrobe__scroll { min-height: 0; height: 0; flex: 1; margin: 6px 0; }
+		.wardrobe__grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 0; }
+		.wardrobe__card { padding: 8px; gap: 4px; min-width: 0; }
+		.wardrobe__figure { width: 132rpx; height: 168rpx; flex-shrink: 0; transform: scale(0.6); transform-origin: center; margin: -33.6rpx -26.4rpx; }
+		.wardrobe__name { font-size: 14px; letter-spacing: 0; }
+		.wardrobe__desc { font-size: 11px; letter-spacing: 0; }
+		.wardrobe__action { margin-top: 4px; }
+		.wardrobe__btn, .wardrobe__tag { min-height: 44px; padding: 4px 8px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; font-size: 13px; letter-spacing: 0; }
+		.wardrobe__close { min-height: 44px; padding: 0; flex-shrink: 0; font-size: 14px; letter-spacing: 0; }
+	}
 }
 </style>

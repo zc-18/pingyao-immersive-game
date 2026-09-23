@@ -170,6 +170,7 @@
 		<!-- 商品详情（卷轴展开）-->
 		<view v-if="currentItem" class="shop-stage__detail-mask" @tap="currentItem = null"></view>
 		<view v-if="currentItem" class="shop-stage__detail" @tap.stop>
+			<view class="shop-stage__detail-close" role="button" aria-label="关闭商品详情" @tap="currentItem = null"><PyIcon name="close" size="20px" variant="plain" /></view>
 			<view class="shop-stage__detail-roll shop-stage__detail-roll--top"></view>
 			<view class="shop-stage__detail-paper">
 				<view class="shop-stage__detail-fiber"></view>
@@ -237,17 +238,15 @@ import { onShow } from '@dcloudio/uni-app'
 import FallingLeaves from '@/components/FallingLeaves.vue'
 import LanternHanger from '@/components/LanternHanger.vue'
 import EmptyOwl from '@/components/EmptyOwl.vue'
+import PyIcon from '@/components/PyIcon.vue'
 import {
-	createRedeemOrder,
+	redeemShopItem,
 	getShopAssets,
-	saveRedeemOrder,
-	setShopAssets,
 	shopCategories,
 	shopItems
 } from '@/common/data/shop-items.js'
 import { markPageVisit, rememberReturnContext } from '@/common/utils/game-state.js'
 import { playSFX, SFX } from '@/common/utils/audio.js'
-import { grantCostumeByShopItem } from '@/common/data/costumes.js'
 
 const activeCategory = ref(shopCategories[0]?.id || 'food')
 const assets = ref(getShopAssets())
@@ -303,23 +302,18 @@ function redeemItem(item) {
 	if (!item || isRedeeming.value || !isEnough(item)) return
 	isRedeeming.value = true
 
-	// 先落单、再扣款：落单抛错则直接退出、绝不扣款，杜绝"扣了银钥却没凭证"的资损（原先先扣后存有此风险）。
-	let order = null
-	try {
-		order = createRedeemOrder(item)
-		saveRedeemOrder(order)
-	} catch (e) {
+	const result = redeemShopItem(item.id)
+	if (!result.ok) {
 		isRedeeming.value = false
-		uni.showToast({ title: '出票失败，请重试', icon: 'none' })
+		assets.value = getShopAssets()
+		uni.showToast({ title: result.reason, icon: 'none' })
 		return
 	}
-
-	const nextAssets = { ...assets.value, [item.currency]: Math.max(0, (assets.value[item.currency] || 0) - item.price) }
-	assets.value = setShopAssets(nextAssets)
+	const { order, grantedCostume } = result
+	assets.value = result.assets
 	playSFX(SFX.COIN)
 
 	// 换装体验类商品：兑换即解锁对应虚拟服饰，让线下 O2O 商品在游戏内真正"可穿"（接通购物→换装闭环）。
-	const grantedCostume = grantCostumeByShopItem(item.id)
 	currentItem.value = null
 	if (grantedCostume) {
 		uni.showToast({ title: `解锁新衣「${grantedCostume.name}」· 去「我的·试新衣」试穿`, icon: 'none', duration: 2600 })
@@ -1465,5 +1459,83 @@ function redeemItem(item) {
 @keyframes floatY {
 	0%, 100% { transform: translateY(0); }
 	50%      { transform: translateY(-8rpx); }
+}
+.shop-stage__detail-close {
+	display: none;
+}
+
+@import '@/common/styles/tab-landscape.scss';
+@media (orientation: landscape) and (max-height: 600px) {
+	.shop-stage {
+		@include tab-landscape-viewport;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 240px;
+		grid-template-rows: 48px 44px minmax(0, 1fr);
+		gap: 6px 12px;
+	}
+	.shop-stage [class] { letter-spacing: 0; }
+	.shop-stage__shopfront { grid-row: 1; grid-column: 1; padding: 0; min-width: 0; }
+	.shop-stage__plaque { width: fit-content; min-width: 0; max-width: 100%; margin: 0; padding: 8px 24px; box-sizing: border-box; }
+	.shop-stage__plaque-text { font-size: 22px; }
+	.shop-stage__banner, .shop-stage__lanterns, .shop-stage__eaves { display: none; }
+	.shop-stage__hud { grid-row: 1; grid-column: 2; padding: 0; margin: 0; height: 48px; align-items: center; }
+	.shop-stage__pouch { padding: 5px 10px; gap: 10px; }
+	.shop-stage__pouch-item { gap: 6px; }
+	.shop-stage__pouch-value { font-size: 15px; }
+	.shop-stage__pouch-label { font-size: 10px; }
+	.shop-stage__pouch-coin, .shop-stage__pouch-key { width: 23px; height: 23px; font-size: 12px; }
+	.shop-stage__pouch-divider { height: 25px; }
+	.shop-stage__keeper { width: 44px; height: 44px; }
+	.shop-stage__keeper-img { width: 44px; height: 44px; }
+	.shop-stage__keeper-bubble { position: fixed; width: 180px; right: max(12px, env(safe-area-inset-right)); top: calc(max(8px, env(safe-area-inset-top)) + 110px); padding: 10px; pointer-events: none; }
+	.shop-stage__keeper-bubble-name { font-size: 11px; }
+	.shop-stage__keeper-bubble-line { font-size: 13px; }
+	.shop-stage__categories { grid-row: 2; grid-column: 1 / -1; padding: 0; margin: 0; gap: 8px; }
+	.shop-stage__category { min-width: 0; min-height: 44px; padding: 4px 18px; flex: 1; box-sizing: border-box; }
+	.shop-stage__category-name { font-size: 15px; }
+	.shop-stage__category-tag { font-size: 10px; }
+	.shop-stage__shelves-scroll { grid-row: 3; grid-column: 1 / -1; height: 100%; min-height: 0; max-height: none; margin: 0; }
+	.shop-stage__shelves { padding: 10px 24px 4px; }
+	.shop-stage__post { width: 16px; }
+	.shop-stage__couplet { padding: 8px 1px; font-size: 12px; }
+	.shop-stage__shelf { padding: 0 0 14px; margin: 0 0 12px; }
+	.shop-stage__shelf-row { gap: 16px; padding: 0 8px; }
+	.shop-stage__product { min-width: 0; padding: 0 4px 10px; min-height: 124px; }
+	.shop-stage__product-orb { width: 54px; height: 54px; }
+	.shop-stage__product-orb-icon { font-size: 24px; }
+	.shop-stage__product-halo { width: 64px; height: 64px; top: 0; }
+	.shop-stage__product-name { font-size: 13px; max-width: 180px; white-space: normal; }
+	.shop-stage__product-plaque { padding: 3px 12px; margin: 4px 0 0; }
+	.shop-stage__product-tag-string { height: 4px; }
+	.shop-stage__product-tag-paper { padding: 2px 8px; }
+	.shop-stage__product-tag-paper text { font-size: 12px; }
+	.shop-stage__product-stamp { width: 22px; height: 22px; font-size: 12px; right: 8px; }
+	.shop-stage__counter { margin: 6px -24px 0; }
+	.shop-stage__counter-front { height: 25px; }
+	.shop-stage__counter-text { font-size: 12px; }
+	.shop-stage__detail-mask { z-index: 100; }
+	.shop-stage__detail {
+		left: max(24px, env(safe-area-inset-left)); right: max(24px, env(safe-area-inset-right));
+		top: max(8px, env(safe-area-inset-top)); bottom: calc(var(--tab-reserve) + max(8px, env(safe-area-inset-bottom)));
+		max-height: none; z-index: 101; animation: none; overflow: hidden; border-radius: 6px;
+	}
+	.shop-stage__detail-close { display: flex; align-items: center; justify-content: center; position: absolute; right: 0; top: 0; width: 44px; height: 44px; z-index: 4; background: $py-paper; }
+	.shop-stage__detail-paper { height: 100%; overflow-y: auto; box-sizing: border-box; padding: 12px 18px 0; display: grid; grid-template-columns: 100px minmax(0, 1fr); column-gap: 18px; align-content: start; }
+	.shop-stage__detail-product { grid-column: 1; grid-row: 1 / 3; align-items: center; margin: 0; }
+	.shop-stage__detail-product-inner { width: 70px; height: 70px; }
+	.shop-stage__detail-product-icon { font-size: 32px; }
+	.shop-stage__detail-head { grid-column: 2; align-items: flex-start; gap: 2px; margin: 0 34px 6px 0; }
+	.shop-stage__detail-eyebrow { font-size: 10px; }
+	.shop-stage__detail-name { font-size: 20px; }
+	.shop-stage__detail-merchant { font-size: 12px; }
+	.shop-stage__detail-desc { grid-column: 2; text-align: left; font-size: 13px; line-height: 1.5; margin: 0; }
+	.shop-stage__detail-props { grid-column: 1 / -1; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
+	.shop-stage__detail-prop { padding: 6px 8px; }
+	.shop-stage__detail-prop-label { font-size: 10px; }
+	.shop-stage__detail-prop-value { font-size: 12px; overflow-wrap: anywhere; }
+	.shop-stage__detail-fund { grid-column: 1 / -1; margin: 0; padding: 6px; font-size: 13px; }
+	.shop-stage__detail-buy { grid-column: 1 / -1; position: sticky; bottom: 0; min-height: 44px; padding: 4px 12px; margin: 8px 0 0; box-sizing: border-box; z-index: 3; }
+	.shop-stage__detail-buy-text { font-size: 16px; }
+	.shop-stage__detail-buy-stamp { width: 24px; height: 24px; font-size: 15px; }
 }
 </style>

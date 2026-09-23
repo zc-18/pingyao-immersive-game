@@ -120,4 +120,26 @@ function lanternStyle(i) {
 	0%, 100% { box-shadow: inset 0 -8rpx 14rpx rgba(0, 0, 0, 0.45), 0 0 28rpx rgba(255, 130, 60, 0.55); }
 	50%      { box-shadow: inset 0 -8rpx 14rpx rgba(0, 0, 0, 0.42), 0 0 44rpx rgba(255, 160, 80, 0.85); }
 }
+
+@media screen and (orientation: landscape) and (max-height: 520px) {
+	.lantern { width: 42px; }
+	.lantern__rope { width: 1px; height: 12px; }
+	.lantern__cap { width: 18px; height: 6px; border-radius: 2px 2px 1px 1px; }
+	.lantern__body { width: 42px; height: 52px; margin-top: -1px; border-radius: 21px / 24px; }
+	.lantern__body::before { top: 9px; }
+	.lantern__body::after { bottom: 9px; }
+	.lantern__text { font-size: 15px; }
+	.lantern__tail { width: 6px; height: 11px; margin-top: -1px; }
+}
+
+@media screen and (orientation: portrait) and (max-width: 600px) {
+	.lantern { width: 44px; }
+	.lantern__rope { width: 1px; height: 14px; }
+	.lantern__cap { width: 20px; height: 7px; }
+	.lantern__body { width: 44px; height: 56px; margin-top: -1px; border-radius: 22px / 26px; }
+	.lantern__body::before { top: 10px; }
+	.lantern__body::after { bottom: 10px; }
+	.lantern__text { font-size: 16px; }
+	.lantern__tail { width: 7px; height: 12px; margin-top: -1px; }
+}
 </style>

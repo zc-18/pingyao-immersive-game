@@ -1,4 +1,5 @@
-import { getStorage, patchStorageObject, setStorage, STORAGE_KEYS } from '../utils/storage.js'
+import { getStorage, getUserProgress, patchStorageObject, STORAGE_KEYS } from '../utils/storage.js'
+import { COSTUMES } from './costumes.js'
 
 export const assetMetaMap = {
 	silver: {
@@ -173,8 +174,10 @@ function formatDateTime(date) {
 }
 
 function createOrderId(date) {
-	return `PY${`${date.getTime()}`.slice(-8)}${Math.floor(Math.random() * 900 + 100)}`
+	return `PY${date.getTime()}${(++orderSequence).toString(36)}${Math.floor(Math.random() * 900 + 100)}`
 }
+
+let orderSequence = 0
 
 function normalizeShopItem(item = {}) {
 	const assetMeta = assetMetaMap[item.currency] || assetMetaMap.silver
@@ -225,19 +228,37 @@ export function setShopAssets(nextAssets = {}) {
 }
 
 export function getRedeemOrders() {
-	const cachedOrders = getStorage(STORAGE_KEYS.redeemOrders, [])
+	const progress = getUserProgress()
+	// Legacy coupons remain readable; the next write migrates them into the economy snapshot.
+	const cachedOrders = Array.isArray(progress.redeemOrders) ? progress.redeemOrders : getStorage(STORAGE_KEYS.redeemOrders, [])
 	if (!Array.isArray(cachedOrders)) {
 		return []
 	}
-	return cachedOrders.map((item) => normalizeRedeemOrder(item))
+	return cachedOrders.filter((item) => item && typeof item === 'object' && item.orderId).map((item) => normalizeRedeemOrder(item))
 }
 
 export function saveRedeemOrder(order = {}) {
 	const normalizedOrder = normalizeRedeemOrder(order)
 	const orderList = getRedeemOrders()
-	const nextOrders = [normalizedOrder, ...orderList]
-	setStorage(STORAGE_KEYS.redeemOrders, nextOrders)
-	return nextOrders
+	const nextOrders = [normalizedOrder, ...orderList.filter((item) => item.orderId !== normalizedOrder.orderId)]
+	return patchStorageObject(STORAGE_KEYS.userProgress, { redeemOrders: nextOrders }) ? nextOrders : null
+}
+
+/** Charge, issue the coupon and unlock its outfit in one storage write. */
+export function redeemShopItem(itemId, now = new Date()) {
+	const item = shopItems.find((entry) => entry.id === itemId)
+	if (!item) return { ok: false, reason: '商品不存在' }
+	const progress = getUserProgress()
+	if (progress[item.currency] < item.price) return { ok: false, reason: `${item.currencyLabel}不足` }
+	const order = createRedeemOrder(item, now)
+	const costume = COSTUMES.find((entry) => entry.unlock?.type === 'shop' && entry.unlock.itemId === itemId)
+	const grantedCostume = costume && !progress.ownedCostumes.includes(costume.id) ? costume : null
+	const saved = patchStorageObject(STORAGE_KEYS.userProgress, {
+		[item.currency]: progress[item.currency] - item.price,
+		redeemOrders: [order, ...getRedeemOrders()],
+		ownedCostumes: grantedCostume ? [...progress.ownedCostumes, grantedCostume.id] : progress.ownedCostumes
+	})
+	return saved ? { ok: true, order, grantedCostume, assets: getShopAssets() } : { ok: false, reason: '保存失败，未扣款，请重试' }
 }
 
 export function getRedeemOrderById(orderId) {
@@ -247,6 +268,8 @@ export function getRedeemOrderById(orderId) {
 /* 更新某张票券的状态（如到店「在店核销」→ 'used'）。完成订单生命周期：unused → used。 */
 export function updateRedeemOrderStatus(orderId, status) {
 	const orders = getRedeemOrders()
+	const target = orders.find((order) => order.orderId === orderId)
+	if (!target || status !== 'used' || target.status !== 'unused' || target.isExpired) return false
 	let changed = false
 	const next = orders.map((order) => {
 		if (order.orderId === orderId) {
@@ -256,7 +279,7 @@ export function updateRedeemOrderStatus(orderId, status) {
 		return order
 	})
 	if (changed) {
-		setStorage(STORAGE_KEYS.redeemOrders, next)
+		return !!patchStorageObject(STORAGE_KEYS.userProgress, { redeemOrders: next })
 	}
 	return changed
 }
@@ -302,7 +325,7 @@ export function getOrderStatus(order) {
 		}
 	}
 
-	if (order.isExpired) {
+	if (order.status !== 'used' && Number(order.expireAtTs) > 0 && Number(order.expireAtTs) <= Date.now()) {
 		return {
 			key: 'expired',
 			text: '已过期',

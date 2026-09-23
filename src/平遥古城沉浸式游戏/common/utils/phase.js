@@ -27,7 +27,7 @@ const PHASE_CONFIG = {
 		ambientSound: 'birds',
 		colorHint: 'rgba(255, 200, 130, 0.45)',
 		sky: { top: '#f3c79e', bottom: '#fce5c5' },
-		fog: { color: '#f3c79e', density: 0.014 },
+		fog: { color: '#dfc5aa', density: 0.012 },
 		lighting: {
 			ambient: { color: '#f3d3ad', intensity: 0.42 },
 			directional: { color: '#ffd18c', intensity: 0.95, angle: { x: 8, y: 18, z: 8 } },
@@ -46,15 +46,15 @@ const PHASE_CONFIG = {
 		lanternsLit: false,
 		ambientSound: 'cicada',
 		colorHint: 'rgba(255, 245, 220, 0.32)',
-		sky: { top: '#d7c0a2', bottom: '#f6ead7' },
-		fog: { color: '#e0caa8', density: 0.012 },
+		sky: { top: '#9bb8c5', bottom: '#e3e5da' },
+		fog: { color: '#b9c6c4', density: 0.011 },
 		lighting: {
-			ambient: { color: '#ddd5c8', intensity: 0.38 },
+			ambient: { color: '#e0e2dc', intensity: 0.42 },
 			directional: { color: '#f6ddb0', intensity: 0.92, angle: { x: 14, y: 22, z: 6 } },
-			hemi: { sky: '#ded5c6', ground: '#77766f', intensity: 0.3 }
+			hemi: { sky: '#c7d9de', ground: '#77766f', intensity: 0.34 }
 		},
 		bloomStrength: 0.16,
-		exposure: 0.88
+		exposure: 0.93
 	},
 	dusk: {
 		key: 'dusk',
@@ -67,7 +67,7 @@ const PHASE_CONFIG = {
 		ambientSound: 'crow',
 		colorHint: 'rgba(255, 130, 60, 0.45)',
 		sky: { top: '#b8633a', bottom: '#f3a86c' },
-		fog: { color: '#c47c4f', density: 0.022 },
+		fog: { color: '#c47c4f', density: 0.016 },
 		lighting: {
 			ambient: { color: '#d59d73', intensity: 0.42 },
 			directional: { color: '#ee8f50', intensity: 1, angle: { x: 4, y: 8, z: 10 } },
@@ -86,15 +86,15 @@ const PHASE_CONFIG = {
 		lanternsLit: true,
 		ambientSound: 'nightCrickets',
 		colorHint: 'rgba(140, 170, 220, 0.22)',
-		sky: { top: '#0d1230', bottom: '#2a2444' },
-		fog: { color: '#1a1a32', density: 0.018 },
+		sky: { top: '#15242d', bottom: '#4b5c60' },
+		fog: { color: '#344953', density: 0.016 },
 		lighting: {
-			ambient: { color: '#3a3a55', intensity: 0.5 },
+			ambient: { color: '#879cac', intensity: 0.52 },
 			directional: { color: '#a4b2d8', intensity: 0.65, angle: { x: -2, y: 14, z: 6 } },
-			hemi: { sky: '#1a2444', ground: '#0d0c1c', intensity: 0.42 }
+			hemi: { sky: '#9eb1c3', ground: '#353d42', intensity: 0.42 }
 		},
 		bloomStrength: 0.44,
-		exposure: 0.86
+		exposure: 0.94
 	}
 }
 

@@ -18,12 +18,12 @@ export function isFavoritePoi(poiId = '') {
 
 /* 切换收藏。返回 { favorited }。 */
 export function toggleFavoritePoi(poiId = '') {
-	if (!poiId) return { favorited: false }
+	if (!poiMap[poiId]) return { ok: false, favorited: false }
 	const current = getFavoritePoiIds()
 	const has = current.includes(poiId)
 	const next = has ? current.filter((id) => id !== poiId) : [...current, poiId]
-	patchStorageObject(STORAGE_KEYS.userProgress, { favoritePoiIds: [...new Set(next)] })
-	return { favorited: !has }
+	const saved = patchStorageObject(STORAGE_KEYS.userProgress, { favoritePoiIds: [...new Set(next)] })
+	return { ok: !!saved, favorited: saved ? !has : has }
 }
 
 export function getJournalNotes() {
@@ -37,13 +37,12 @@ export function getJournalNote(poiId = '') {
 
 /* 写/改/清 一条札记（空串则删除该条）。返回规范化后的文本。 */
 export function setJournalNote(poiId = '', text = '') {
-	if (!poiId) return ''
+	if (!poiMap[poiId]) return null
 	const clean = String(text || '').trim().slice(0, NOTE_MAX)
 	const notes = { ...getJournalNotes() }
 	if (clean) notes[poiId] = clean
 	else delete notes[poiId]
-	patchStorageObject(STORAGE_KEYS.userProgress, { journalNotes: notes })
-	return clean
+	return patchStorageObject(STORAGE_KEYS.userProgress, { journalNotes: notes }) ? clean : null
 }
 
 /* 行旅册展示用：收藏或写过札记的 POI 合集（带名称解析）。 */

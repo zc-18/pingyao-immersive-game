@@ -75,6 +75,7 @@ function handleClaim() {
 		return
 	}
 	const result = claimDailyCheckIn()
+	if (!result.ok) uni.showToast({ title: result.reason === 'storage' ? '保存失败，请重试' : '今日已签到', icon: 'none' })
 	if (result.ok) {
 		lastClaimResult.value = result
 		preview.value = getCheckInPreview()

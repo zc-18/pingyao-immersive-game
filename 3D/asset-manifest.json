@@ -1,0 +1,47 @@
+{
+  "hero": {
+    "file": "exports/pingyao-merchant-hero.glb",
+    "heightMeters": 1.894,
+    "meshObjects": 49,
+    "triangles": 31392,
+    "animations": [
+      "Cheer",
+      "Idle",
+      "Interact",
+      "Running_A",
+      "Walking_A"
+    ],
+    "materials": [
+      "Cloth",
+      "Eye_iris",
+      "Eye_pupil",
+      "Eye_white",
+      "Face_ear",
+      "Face_lip",
+      "Face_shadow",
+      "Hair",
+      "Hair_detail",
+      "Hat",
+      "Jade",
+      "Leather",
+      "Metal",
+      "Paper",
+      "Pingyao_Brocade",
+      "Robe",
+      "Shoes",
+      "Skin",
+      "Soles"
+    ]
+  },
+  "props": {
+    "file": "exports/pingyao-street-props.glb",
+    "roots": [
+      "Prop_Lantern_Root",
+      "Prop_Piaohao_Sign_Root",
+      "Prop_Incense_Burner_Root"
+    ],
+    "meshObjects": 23
+  },
+  "source": "Existing project-compatible animation rig and original geometry, refined in Blender MCP",
+  "texture": "textures/pingyao-brocade-512.png"
+}

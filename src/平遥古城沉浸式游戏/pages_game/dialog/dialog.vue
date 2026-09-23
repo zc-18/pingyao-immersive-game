@@ -154,6 +154,7 @@ import { onShow } from '@dcloudio/uni-app'
 import FallingLeaves from '@/components/FallingLeaves.vue'
 import npcDialogs from '@/common/data/npc-dialogs.js'
 import { markPageVisit } from '@/common/utils/game-state.js'
+import { lockGameLandscape } from '@/common/utils/orientation.js'
 
 const STORAGE_KEY = 'pingyao.dialog.active'
 const activeDialogId = ref(resolveInitialDialogId())
@@ -174,6 +175,7 @@ watch(() => currentMessages.value.length, () => {
 })
 
 onShow(() => {
+	lockGameLandscape()
 	markPageVisit('dialog')
 })
 

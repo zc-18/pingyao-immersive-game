@@ -2,7 +2,7 @@ export const streetScenes = [
 	{
 		id: 'bank-house',
 		name: '票号街景',
-		title: '票号旧巷',
+		title: '票号三进院',
 		subtitle: '青石微亮，账房灯影还停在灰墙深处。',
 		playerHint: '先靠近日升昌门前灯影，完成入城第一段故事。',
 		entryLabel: '入城主线',
@@ -44,7 +44,7 @@ export const streetScenes = [
 	{
 		id: 'south-avenue',
 		name: '县衙街景',
-		title: '县衙前街',
+		title: '县衙前院',
 		subtitle: '门楼层层后退，官署气象从街心慢慢压来。',
 		playerHint: '跟着灯标靠近县衙，完成第二段主线。',
 		entryLabel: '规矩与人心',
@@ -87,7 +87,7 @@ export const streetScenes = [
 	{
 		id: 'academy-lane',
 		name: '书院街景',
-		title: '书院横巷',
+		title: '书院庭院',
 		subtitle: '晨光落在檐角与碑亭之间，气息比主街更静一些。',
 		playerHint: '若想听支线故事，可以在这里靠近文庙或醋坊。',
 		entryLabel: '静巷支线',
@@ -132,7 +132,7 @@ export const streetScenes = [
 	{
 		id: 'market-crossing',
 		name: '市井街景',
-		title: '市集十字口',
+		title: '晋商集市院',
 		subtitle: '幌子、酒旗与行人影子交叠，是古城里最热闹的一段。',
 		playerHint: '靠近明清一条街，再完成一次街铺交互，为第一阶段主线收尾。',
 		entryLabel: '烟火收束',
@@ -177,7 +177,7 @@ export const streetScenes = [
 	{
 		id: 'lantern-quarter',
 		name: '灯影街景',
-		title: '灯影长街',
+		title: '灯影雅院',
 		subtitle: '入夜后红灯连成河，是古城最适合慢走的一段。',
 		playerHint: '走到灯影广场拍一张，再回头看城墙。',
 		entryLabel: '夜灯打卡',

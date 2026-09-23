@@ -993,4 +993,65 @@ function goUser()    { uni.switchTab({ url: '/pages/user/user' }) }
 	0%   { opacity: 0; transform: translateY(20rpx); }
 	100% { opacity: 1; transform: translateY(0); }
 }
+@import '@/common/styles/tab-landscape.scss';
+
+@media (orientation: landscape) and (max-height: 600px) {
+	.hub-stage {
+		@include tab-landscape-viewport;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(300px, 1fr);
+		grid-template-rows: 44px minmax(0, 1fr) 90px;
+		gap: 8px 18px;
+	}
+	.hub-stage [class] { letter-spacing: 0; }
+	.hub-stage__top { grid-column: 1 / -1; padding: 0; margin: 0; }
+	.hub-stage__profile { gap: 8px; }
+	.hub-stage__avatar { width: 40px; height: 40px; }
+	.hub-stage__avatar-inner { inset: 3px; }
+	.hub-stage__avatar-seal { width: 18px; height: 18px; font-size: 11px; right: -3px; bottom: -1px; }
+	.hub-stage__profile-name { font-size: 16px; }
+	.hub-stage__profile-title { font-size: 12px; }
+	.hub-stage__pouch { padding: 6px 12px; gap: 12px; }
+	.hub-stage__pouch-value { font-size: 14px; }
+	.hub-stage__pouch-coin, .hub-stage__pouch-step { width: 20px; height: 20px; }
+	.hub-stage__pouch-divider { height: 20px; }
+	.hub-stage__main { grid-column: 1; grid-row: 2 / 4; min-height: 0; height: 100%; margin: 0; padding: 0; }
+	.hub-stage__role { height: 100%; width: 58%; margin-right: 16%; }
+	.hub-stage__role-img { width: 100%; height: 100%; }
+	.hub-stage__owl { left: 0; top: 4px; }
+	.hub-stage__owl-img { width: 66px; height: 80px; }
+	.hub-stage__owl-perch { width: 36px; height: 2px; }
+	.hub-stage__quest-stick { right: 0; top: 6px; width: 110px; }
+	.hub-stage__quest-stick-info { padding: 8px; box-sizing: border-box; }
+	.hub-stage__quest-stick-title { font-size: 13px; }
+	.hub-stage__quest-stick-progress { font-size: 11px; }
+	.hub-stage__quest-stick-stamp { width: 24px; height: 24px; font-size: 14px; }
+	.hub-stage__quest-stick-cord, .hub-stage__quest-stick-tassel { height: 8px; }
+	.hub-stage__floor-glow { width: 70%; height: 26px; bottom: 8px; }
+	.hub-stage__role-shadow { width: 90%; height: 12px; bottom: 0; }
+	.hub-stage__npc-bar { grid-column: 2; grid-row: 2; align-self: center; margin: 0 6px; min-width: 0; }
+	.hub-stage__npc-bar-paper { padding: 10px 12px; }
+	.hub-stage__npc-bar-content { flex-direction: column; align-items: stretch; gap: 8px; }
+	.hub-stage__npc-bar-text { gap: 3px; }
+	.hub-stage__npc-bar-name { font-size: 11px; }
+	.hub-stage__npc-bar-line { font-size: 14px; line-height: 1.45; }
+	.hub-stage__npc-bar-route { margin: 0; padding: 3px 6px; }
+	.hub-stage__npc-bar-route-text { font-size: 11px; line-height: 1.4; }
+	.hub-stage__npc-bar-cta { min-height: 44px; padding: 0 12px; flex-direction: row; justify-content: center; box-sizing: border-box; }
+	.hub-stage__npc-bar-cta-text { font-size: 15px; }
+	.hub-stage__npc-bar-cta-stamp { width: 24px; height: 24px; font-size: 15px; }
+	.hub-stage__npc-bar-cta-arrow { font-size: 20px; }
+	.hub-stage__npc-bar-roll { width: 8px; }
+	.hub-stage__gates { grid-column: 2; grid-row: 3; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; align-content: end; }
+	.hub-stage__gates-beam { display: none; }
+	.hub-stage__ribbon { position: static; grid-column: 1 / -1; gap: 4px; justify-content: space-between; flex-wrap: wrap; }
+	.hub-stage__ribbon-cell { padding: 2px; gap: 3px; min-height: 28px; }
+	.hub-stage__ribbon-tag { width: 16px; height: 16px; font-size: 10px; }
+	.hub-stage__ribbon-text { font-size: 10px; }
+	.hub-stage__ribbon-arrow { font-size: 12px; }
+	.hub-stage__gate { min-height: 44px; flex-direction: row; gap: 4px; }
+	.hub-stage__gate-arch { width: 28px; height: 36px; flex-shrink: 0; border-radius: 14px 14px 2px 2px; }
+	.hub-stage__gate-glyph { font-size: 18px; }
+	.hub-stage__gate-name { font-size: 11px; margin: 0; }
+}
 </style>

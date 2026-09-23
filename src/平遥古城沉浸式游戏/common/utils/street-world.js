@@ -108,7 +108,7 @@ function createFacade(source, side, slot, sceneId) {
 		isFiller: !source,
 		side,
 		slot,
-		x: side * (5.15 + depth / 2),
+		x: side * (6.65 + depth / 2),
 		z: SLOT_Z[slot],
 		rotationY: side < 0 ? Math.PI / 2 : -Math.PI / 2,
 		width: width - (source ? 0 : slot * 0.2),
@@ -139,7 +139,7 @@ export function buildStreetWorldLayout(streetData = {}, pois = []) {
 		if (facade) {
 			return {
 				id: poi.id,
-				x: facade.side * 4.7,
+				x: facade.side * 5.95,
 				z: facade.z,
 				status: poi.status,
 				buildingId: facade.id,
@@ -159,10 +159,12 @@ export function buildStreetWorldLayout(streetData = {}, pois = []) {
 	return {
 		facades,
 		pois: poiPlacements,
-		setPieces: [...BASE_SET_PIECES, ...(SCENE_SET_PIECES[streetData.id] || [])].map((item) => ({ ...item })),
+		setPieces: [...BASE_SET_PIECES, ...(SCENE_SET_PIECES[streetData.id] || [])].map((item) => ({ ...item, x: item.x + Math.sign(item.x) * 1.5 })),
+		// This closed shell is shared by rendering, collision and the minimap.
+		enclosure: { xMin: -11.4, xMax: 11.4, zMin: -25.6, zMax: 20.8, height: 4.4, thickness: .65, facadeLine: 6.65 },
 		spawn: { x: 0, z: 13 },
-		roadBounds: { xMin: -4.15, xMax: 4.15, zMin: -23, zMax: 15 },
-		cameraBounds: { xMin: -4.45, xMax: 4.45, zMin: -25, zMax: 21 }
+		roadBounds: { xMin: -5.65, xMax: 5.65, zMin: -23.6, zMax: 19.5 },
+		cameraBounds: { xMin: -6.1, xMax: 6.1, zMin: -24.4, zMax: 20 }
 	}
 }
 

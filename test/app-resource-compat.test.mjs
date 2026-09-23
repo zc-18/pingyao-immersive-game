@@ -16,7 +16,7 @@ test('APP 动态资源从 _www 包内路径解析并保留 H5 兜底', () => {
 
 test('Three.js 纹理同样经过跨端资源路径解析', () => {
 	assert.match(streetSource, /resolveAssetUrl\('static\/img\/3d\/pingyao-brocade-pattern\.jpg'\)/)
-	assert.match(streetSource, /resolveAssetUrl\('static\/img\/3d\/pingyao-roofline-panorama\.webp'\)/)
+	assert.match(streetSource, /resolveAssetUrl\('static\/textures\/courtyard\/' \+ kind/)
 })
 
 test('街景提供 APP 横屏锁定与竖屏降级布局', () => {

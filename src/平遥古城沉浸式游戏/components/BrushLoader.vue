@@ -2,7 +2,7 @@
 	<view v-if="visible" class="brush-loader" :class="{ 'brush-loader--inline': inline }">
 		<view class="brush-loader__bg" v-if="!inline"></view>
 
-		<view class="brush-loader__stage">
+		<view class="brush-loader__stage" role="status" aria-live="polite">
 			<!-- 灯笼摇晃 -->
 			<view class="brush-loader__lantern">
 				<view class="brush-loader__lantern-cap"></view>
@@ -10,16 +10,16 @@
 			</view>
 
 			<!-- 毛笔画圈 -->
-			<view class="brush-loader__circle">
+			<view v-if="!failed" class="brush-loader__circle">
 				<view class="brush-loader__arc"></view>
 				<view class="brush-loader__brush"></view>
 			</view>
 
-			<text class="brush-loader__text">{{ text || '晋小鸦正在张望…' }}</text>
+			<text class="brush-loader__text">{{ failed ? '院落暂未准备好' : text || '晋小鸦正在张望…' }}</text>
 			<text v-if="progress > 0" class="brush-loader__pct">{{ Math.floor(progress) }}%</text>
 
 			<!-- 文化提示轮播：加载时滚动展示古城拾遗（遮蔽加载耗时 + 传递文旅文化）。 -->
-			<view v-if="currentTip" class="brush-loader__tip">
+			<view v-if="currentTip && !failed" class="brush-loader__tip">
 				<text class="brush-loader__tip-label">— 古 城 拾 遗 —</text>
 				<text :key="tipIndex" class="brush-loader__tip-text">{{ currentTip }}</text>
 			</view>
@@ -28,8 +28,10 @@
 			<text v-if="stage" class="brush-loader__stage-text">{{ stage }}</text>
 			<!-- 提示 / 错误行：加载较慢或 renderjs 报错时把信息留在屏幕上，而非一闪而过的 toast。 -->
 			<text v-if="hint" class="brush-loader__hint">{{ hint }}</text>
-			<!-- 兜底逃生：无论何种原因卡住，过几秒出现此按钮，用户永不被永久困在加载层。 -->
-			<view v-if="showEscape" class="brush-loader__escape" @tap="$emit('escape')">直接进入古城 ▶</view>
+			<view v-if="showEscape" class="brush-loader__actions">
+				<button class="brush-loader__escape" role="button" aria-label="重新加载" @tap="$emit('escape')">重新加载</button>
+				<button class="brush-loader__return" role="button" aria-label="返回古城" @tap="$emit('return')">返回古城</button>
+			</view>
 		</view>
 	</view>
 </template>
@@ -44,10 +46,11 @@ const props = defineProps({
 	stage:      { type: String, default: '' },
 	hint:       { type: String, default: '' },
 	showEscape: { type: Boolean, default: false },
+	failed:     { type: Boolean, default: false },
 	inline:     { type: Boolean, default: false },
 	tips:       { type: Array, default: () => [] } // 文化提示轮播：加载时滚动展示，遮蔽耗时 + 传递文旅文化
 })
-defineEmits(['escape'])
+defineEmits(['escape', 'return'])
 
 /* 文化提示轮播：每 ~2.8s 切一条；仅在可见时计时，卸载/隐藏即清，杜绝遗留定时器。 */
 const tipIndex = ref(0)
@@ -59,7 +62,7 @@ function startTipRotation() {
 	if (!props.tips || props.tips.length <= 1) return
 	tipTimer = setInterval(() => { tipIndex.value = (tipIndex.value + 1) % props.tips.length }, 2800)
 }
-watch(() => props.visible, (v) => { if (v) { startTipRotation() } else { stopTipRotation() } }, { immediate: true })
+watch(() => props.visible && !props.failed, (v) => { if (v) { startTipRotation() } else { stopTipRotation() } }, { immediate: true })
 onUnmounted(stopTipRotation)
 </script>
 
@@ -95,6 +98,9 @@ onUnmounted(stopTipRotation)
 	flex-direction: column;
 	align-items: center;
 	gap: 28rpx;
+	width: min(680rpx, calc(100vw - 48rpx));
+	max-height: calc(100dvh - 32rpx);
+	overflow-y: auto;
 }
 
 /* ===== 灯笼 ===== */
@@ -165,8 +171,8 @@ onUnmounted(stopTipRotation)
 }
 
 .brush-loader__text {
-	font-size: 22rpx;
-	letter-spacing: 4rpx;
+	font-size: 15px;
+	letter-spacing: 2px;
 	color: rgba(212, 165, 116, 0.78);
 	font-family: 'Noto Serif SC', 'STSong', serif;
 }
@@ -184,6 +190,8 @@ onUnmounted(stopTipRotation)
 	letter-spacing: 2rpx;
 	color: rgba(212, 165, 116, 0.55);
 	font-family: 'Noto Serif SC', 'STSong', serif;
+	text-align: center;
+	word-break: break-word;
 }
 
 /* ===== 文化提示轮播 ===== */
@@ -221,23 +229,63 @@ onUnmounted(stopTipRotation)
 
 .brush-loader__hint {
 	margin-top: 4rpx;
-	font-size: 20rpx;
+	font-size: 13px;
 	letter-spacing: 1rpx;
 	color: rgba(231, 168, 120, 0.92);
 	text-align: center;
-	max-width: 460rpx;
-	line-height: 1.5;
+	max-width: min(460px, 100%);
+	line-height: 1.6;
+	word-break: break-word;
 }
 
+.brush-loader__actions {
+	display: flex;
+	gap: 12px;
+	margin-top: 12px;
+	flex-shrink: 0;
+}
+.brush-loader__actions button {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 44px;
+	min-width: 112px;
+	margin: 0;
+	line-height: 1.2;
+	font-size: 14px;
+	border-radius: 24px;
+}
+.brush-loader__actions button::after { border: 0; }
+.brush-loader__return {
+	color: #e1ccaa;
+	background: #ffffff0c;
+	border: 1px solid #a0845c;
+	padding: 0 16px;
+}
 .brush-loader__escape {
-	margin-top: 22rpx;
 	padding: 12rpx 36rpx;
-	font-size: 24rpx;
 	letter-spacing: 3rpx;
 	color: #f5f0e8;
 	border: 2rpx solid rgba(212, 165, 116, 0.6);
 	border-radius: 40rpx;
 	background: linear-gradient(180deg, rgba(139, 69, 19, 0.55) 0%, rgba(110, 53, 16, 0.7) 100%);
 	box-shadow: 0 0 20rpx rgba(255, 140, 60, 0.35);
+}
+
+@media screen and (orientation: landscape) and (max-height: 520px) {
+	.brush-loader__stage { width: min(560px, calc(100vw - 40px)); gap: 8px; }
+	.brush-loader__lantern-cap { width: 18px; height: 6px; }
+	.brush-loader__lantern-body { width: 40px; height: 52px; margin-top: -1px; border-radius: 20px / 24px; }
+	.brush-loader__circle { width: 62px; height: 62px; }
+	.brush-loader__arc { border-width: 2px; }
+	.brush-loader__brush { top: -3px; width: 5px; height: 18px; transform-origin: 50% 38px; }
+	.brush-loader__text { font-size: 15px; letter-spacing: 2px; }
+	.brush-loader__pct { font-size: 13px; }
+	.brush-loader__tip { max-width: 430px; gap: 3px; padding: 0 15px; }
+	.brush-loader__tip-label { font-size: 9px; letter-spacing: 3px; }
+	.brush-loader__tip-text { font-size: 11px; line-height: 1.45; }
+	.brush-loader__stage-text { font-size: 10px; line-height: 1.4; }
+	.brush-loader__hint { font-size: 13px; line-height: 1.6; }
+	.brush-loader__escape { margin-top: 6px; padding: 7px 20px; border-width: 1px; font-size: 13px; letter-spacing: 2px; }
 }
 </style>

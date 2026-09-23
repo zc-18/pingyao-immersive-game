@@ -128,6 +128,7 @@ import { roleList } from '@/common/data/roles.js'
 import { patchStorageObject, STORAGE_KEYS } from '@/common/utils/storage.js'
 import { markPageVisit, patchRuntimeState } from '@/common/utils/game-state.js'
 import { playSFX, SFX } from '@/common/utils/audio.js'
+import { lockGameLandscape } from '@/common/utils/orientation.js'
 
 const currentIndex = ref(0)
 const isSubmitting = ref(false)
@@ -135,6 +136,7 @@ const showGate = ref(false)
 const currentRole = computed(() => roleList[currentIndex.value] || roleList[0])
 
 onShow(() => {
+	lockGameLandscape()
 	markPageVisit('role-select')
 })
 
@@ -199,6 +201,7 @@ function confirmRole() {
 	position: relative;
 	width: 100vw;
 	min-height: 100vh;
+	min-height: 100dvh;
 	overflow: hidden;
 	background: linear-gradient(180deg, #2a1810 0%, #1a0d08 60%, #0a0604 100%);
 	padding-bottom: calc(env(safe-area-inset-bottom) + 280rpx);
@@ -752,5 +755,174 @@ function confirmRole() {
 @keyframes tokenFloat {
 	0%, 100% { transform: translateY(0); }
 	50%      { transform: translateY(-10rpx); }
+}
+
+/* 核心游戏在 APP 中锁横屏；这些规则同时让浏览器横屏和系统拒绝旋转时都有可用布局。 */
+@media screen and (orientation: landscape) and (max-height: 520px) {
+	.role-stage {
+		height: 100vh;
+		height: 100dvh;
+		min-height: 0;
+		padding: 0;
+	}
+	.role-stage__lattice { top: 48px; bottom: 8%; }
+	.role-stage__lanterns { height: 62px; padding: 0 4%; overflow: hidden; opacity: 0.72; }
+
+	.role-title-bar {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: calc(env(safe-area-inset-top) + 8px);
+		margin: 0;
+		gap: 4px;
+	}
+	.role-title-bar__plaque { padding: 7px 26px; border-width: 1px; font-size: 18px; letter-spacing: 6px; }
+	.role-title-bar__plaque::before,
+	.role-title-bar__plaque::after { top: -5px; width: 14px; height: 9px; border-radius: 2px 2px 0 0; }
+	.role-title-bar__ribbon { top: -11px; width: 22px; height: 13px; }
+	.role-title-bar__subtitle { font-size: 10px; letter-spacing: 3px; }
+
+	.role-owl {
+		left: calc(env(safe-area-inset-left) + 10px);
+		top: calc(env(safe-area-inset-top) + 8px);
+		gap: 6px;
+		max-width: 210px;
+	}
+	.role-owl__img { width: 48px; height: 56px; }
+	.role-owl__bubble { max-width: 156px; padding: 7px 9px; border-width: 1px; border-radius: 2px 8px 8px 8px; }
+	.role-owl__bubble::before { left: -6px; top: 14px; border-top-width: 5px; border-bottom-width: 5px; border-right-width: 6px; }
+	.role-owl__name { font-size: 9px; letter-spacing: 2px; }
+	.role-owl__line { margin-top: 2px; font-size: 10px; line-height: 1.4; letter-spacing: 0; }
+
+	.role-row {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 66px;
+		bottom: 58px;
+		height: auto;
+		margin: 0;
+		padding: 0 70px;
+	}
+	.role-figure { width: 20%; }
+	.role-figure--active { transform: scale(1.06) translateY(-4px); }
+	.role-figure--dim { transform: scale(0.9); }
+	.role-figure__img { width: min(112px, 14vw); height: min(190px, 49vh); }
+	.role-figure__halo { bottom: 15px; width: 108px; height: 36px; }
+	.role-figure__nameplate { margin-top: -6px; padding: 6px 10px; border-width: 1px; font-size: 12px; letter-spacing: 1px; }
+	.role-figure__nameplate-stamp { width: 18px; height: 18px; border-width: 1px; font-size: 10px; }
+	.role-figure__banner {
+		position: fixed;
+		left: calc(env(safe-area-inset-left) + 12px);
+		bottom: calc(env(safe-area-inset-bottom) + 10px);
+		width: 210px;
+		padding: 8px 14px;
+		transform: none;
+		animation: none;
+	}
+	.role-figure__banner::before,
+	.role-figure__banner::after { top: -4px; bottom: -4px; width: 11px; }
+	.role-figure__banner::before { left: -5px; }
+	.role-figure__banner::after { right: -5px; }
+	.role-figure__banner-tag { font-size: 11px; line-height: 1.35; }
+	.role-figure__banner-bonus { margin-top: 2px; font-size: 9px; line-height: 1.35; }
+
+	.role-pager { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 13px); margin: 0; gap: 12px; transform: translateX(-50%); }
+	.role-pager__arrow { width: 40px; height: 40px; border-width: 1px; font-size: 22px; }
+	.role-pager__dots { gap: 6px; }
+	.role-pager__dot { width: 7px; height: 7px; border-width: 1px; }
+	.role-pager__dot--active { width: 19px; }
+	.role-motto { display: none; }
+
+	.role-bottom { left: auto; right: calc(env(safe-area-inset-right) + 12px); bottom: calc(env(safe-area-inset-bottom) + 10px); }
+	.role-confirm-token { flex-direction: row; animation: none; }
+	.role-confirm-token__cord { display: none; }
+	.role-confirm-token__head { width: 40px; height: 40px; border-width: 1px; z-index: 2; }
+	.role-confirm-token__head-char { font-size: 22px; }
+	.role-confirm-token__body { min-width: 142px; margin: 0 0 0 -6px; padding: 8px 12px 7px 16px; }
+	.role-confirm-token__body-char { font-size: 14px; letter-spacing: 4px; }
+	.role-confirm-token__body-sub { font-size: 8px; letter-spacing: 1px; }
+}
+
+@media screen and (orientation: portrait) and (max-width: 600px) {
+	.role-stage {
+		height: 100vh;
+		height: 100dvh;
+		min-height: 0;
+		padding: 0;
+	}
+	.role-stage__lattice { top: 64px; bottom: 10%; }
+	.role-stage__lanterns { height: 72px; padding: 0 3%; overflow: hidden; opacity: 0.72; }
+
+	.role-title-bar {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: calc(env(safe-area-inset-top) + 72px);
+		margin: 0;
+		gap: 5px;
+	}
+	.role-title-bar__plaque { padding: 8px 26px; border-width: 1px; font-size: 20px; letter-spacing: 6px; }
+	.role-title-bar__subtitle { font-size: 10px; letter-spacing: 3px; }
+
+	.role-owl {
+		left: 10px;
+		top: calc(env(safe-area-inset-top) + 136px);
+		gap: 7px;
+		max-width: calc(100vw - 20px);
+	}
+	.role-owl__img { width: 52px; height: 62px; }
+	.role-owl__bubble { max-width: calc(100vw - 90px); padding: 8px 11px; border-width: 1px; border-radius: 2px 9px 9px 9px; }
+	.role-owl__bubble::before { left: -6px; top: 14px; border-top-width: 5px; border-bottom-width: 5px; border-right-width: 6px; }
+	.role-owl__name { font-size: 10px; letter-spacing: 3px; }
+	.role-owl__line { margin-top: 2px; font-size: 12px; line-height: 1.45; letter-spacing: 0; }
+
+	.role-row {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: calc(env(safe-area-inset-top) + 215px);
+		bottom: 214px;
+		height: auto;
+		margin: 0;
+		padding: 0 24px;
+	}
+	.role-figure { display: none; width: 100%; height: 100%; }
+	.role-figure--active { display: flex; transform: none; }
+	.role-figure__img { width: min(62vw, 250px); height: calc(100% - 40px); min-height: 0; }
+	.role-figure__halo { bottom: 22px; width: 170px; height: 52px; }
+	.role-figure__nameplate { margin-top: -6px; padding: 7px 14px; border-width: 1px; font-size: 14px; letter-spacing: 2px; }
+	.role-figure__nameplate-stamp { width: 20px; height: 20px; border-width: 1px; font-size: 11px; }
+	.role-figure__banner {
+		position: fixed;
+		left: 50%;
+		bottom: 158px;
+		width: min(320px, calc(100vw - 32px));
+		padding: 9px 16px;
+		transform: translateX(-50%);
+		animation: none;
+	}
+	.role-figure__banner::before,
+	.role-figure__banner::after { top: -4px; bottom: -4px; width: 11px; }
+	.role-figure__banner::before { left: -5px; }
+	.role-figure__banner::after { right: -5px; }
+	.role-figure__banner-tag { font-size: 12px; line-height: 1.35; }
+	.role-figure__banner-bonus { margin-top: 2px; font-size: 10px; line-height: 1.35; }
+
+	.role-pager { position: fixed; left: 50%; bottom: 100px; margin: 0; gap: 16px; transform: translateX(-50%); }
+	.role-pager__arrow { width: 42px; height: 42px; border-width: 1px; font-size: 22px; }
+	.role-pager__dots { gap: 7px; }
+	.role-pager__dot { width: 7px; height: 7px; border-width: 1px; }
+	.role-pager__dot--active { width: 20px; }
+	.role-motto { display: none; }
+
+	.role-bottom { bottom: calc(env(safe-area-inset-bottom) + 16px); }
+	.role-confirm-token { flex-direction: row; animation: none; }
+	.role-confirm-token__cord { display: none; }
+	.role-confirm-token__head { width: 44px; height: 44px; border-width: 1px; z-index: 2; }
+	.role-confirm-token__head-char { font-size: 24px; }
+	.role-confirm-token__body { min-width: 190px; margin: 0 0 0 -7px; padding: 9px 18px 8px 22px; }
+	.role-confirm-token__body-char { font-size: 16px; letter-spacing: 5px; }
+	.role-confirm-token__body-sub { font-size: 9px; letter-spacing: 2px; }
 }
 </style>

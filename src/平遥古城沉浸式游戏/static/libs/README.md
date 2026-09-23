@@ -34,10 +34,12 @@
 
 8. `RoomEnvironment.js`：首屏按需加载，用 `PMREMGenerator` 生成低成本环境反射；失败时继续使用三灯光方案。
 9. `Sky.js`：首屏按需加载程序化天空；失败时继续使用 Canvas 渐变天空。
-10. `FXAAShader.js`：WebGL1 后处理抗锯齿备用。
+10. `FXAAShader.js`：WebGL1 及未启用多重采样的移动端 WebGL2 后处理抗锯齿；自适应分辨率和横竖屏变化时同步像素步长。
 11. `GLTFLoader.js`：只有配置了离线角色模型时才加载。
 12. `SkeletonUtils.js`：与 GLTFLoader 一起按需加载，供玩家和行人克隆骨骼模型。
 13. `RGBELoader.js`：将来接入小型 HDR 时按需加载；当前环境使用 RoomEnvironment。
+
+街景统一通过线性离屏目标、抗锯齿及颜色输出绘制昼夜画面，避免首次夜景因输出编码不同而重新编译整场材质。灯光特效开关只插入/释放辉光通道及其目标；基础颜色和抗锯齿资源保留到渲染器卸载，失败时仍可降级为直接绘制。辉光首次绘制在入场首帧完成，日间强度为零；低帧率策略只暂缓辉光，颜色输出路径保持稳定。测试监测实际辉光是否执行时，应检查 `UnrealBloomPass.enabled`，不能仅以 composer 是否绘制判断。
 
 运行时不访问 CDN。上述文件都随 APP 打包到 `static/libs/`。
 

@@ -20,6 +20,7 @@ export function localDateString(date = new Date()) {
 }
 
 const defaultState = {
+	[STORAGE_KEYS.redeemOrders]: [],
 	[STORAGE_KEYS.userProfile]: {
 		nickname: '\u5e73\u9065\u884c\u5ba2',
 		roleId: '',
@@ -145,6 +146,11 @@ function normalizeUserProfile(profile = {}) {
 	}
 }
 
+export function nonNegativeInteger(value, fallback = 0) {
+	const number = Number(value)
+	return Number.isFinite(number) ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(number))) : fallback
+}
+
 function normalizeUserProgress(progress = {}) {
 	const fallback = cloneValue(defaultState[STORAGE_KEYS.userProgress])
 	if (!isPlainObject(progress)) {
@@ -155,8 +161,8 @@ function normalizeUserProgress(progress = {}) {
 	const checkInRaw = isPlainObject(progress.checkIn) ? progress.checkIn : {}
 	const checkIn = {
 		lastDate: typeof checkInRaw.lastDate === 'string' ? checkInRaw.lastDate : fallback.checkIn.lastDate,
-		streak: Math.max(0, Number(checkInRaw.streak) || 0),
-		totalDays: Math.max(0, Number(checkInRaw.totalDays) || 0),
+		streak: nonNegativeInteger(checkInRaw.streak),
+		totalDays: nonNegativeInteger(checkInRaw.totalDays),
 		stamps: Array.isArray(checkInRaw.stamps) ? [...new Set(checkInRaw.stamps.filter(Boolean))] : []
 	}
 
@@ -168,16 +174,16 @@ function normalizeUserProgress(progress = {}) {
 			typeof progress.levelName === 'string' && progress.levelName.trim()
 				? progress.levelName.trim()
 				: fallback.levelName,
-		exp: Math.max(0, Number(progress.exp) || 0),
-		silver: Math.max(0, Number(progress.silver) || 0),
-		silverKey: Math.max(0, Number(progress.silverKey) || 0),
-		score: Math.max(0, Number(progress.score) || 0),
-		steps: Math.max(0, Number(progress.steps) || 0),
+		exp: nonNegativeInteger(progress.exp),
+		silver: nonNegativeInteger(progress.silver ?? fallback.silver),
+		silverKey: nonNegativeInteger(progress.silverKey ?? fallback.silverKey),
+		score: nonNegativeInteger(progress.score),
+		steps: nonNegativeInteger(progress.steps),
 		discoveredPoiIds: Array.isArray(progress.discoveredPoiIds) ? [...new Set(progress.discoveredPoiIds.filter(Boolean))] : fallback.discoveredPoiIds,
 		visitedPoiIds: Array.isArray(progress.visitedPoiIds) ? [...new Set(progress.visitedPoiIds.filter(Boolean))] : fallback.visitedPoiIds,
 		visitedSceneIds: Array.isArray(progress.visitedSceneIds) ? [...new Set(progress.visitedSceneIds.filter(Boolean))] : fallback.visitedSceneIds,
-		npcTalkCount: Math.max(0, Number(progress.npcTalkCount) || 0),
-		totalQuestCompleted: Math.max(0, Number(progress.totalQuestCompleted) || 0),
+		npcTalkCount: nonNegativeInteger(progress.npcTalkCount),
+		totalQuestCompleted: nonNegativeInteger(progress.totalQuestCompleted),
 		ownedCostumes: Array.isArray(progress.ownedCostumes)
 			? [...new Set(['commoner', ...progress.ownedCostumes.filter(Boolean)])]
 			: fallback.ownedCostumes,
@@ -214,7 +220,7 @@ export function hasSelectedRole(profile = {}) {
 export function getStorage(key, fallback = null) {
 	try {
 		const value = uni.getStorageSync(key)
-		return value === '' || value === undefined ? fallback : value
+		return value === '' || value === undefined || value === null ? fallback : value
 	} catch (error) {
 		console.warn('[storage] \u8bfb\u53d6\u5931\u8d25', key, error)
 		return fallback
@@ -286,7 +292,7 @@ export function getUserProgress() {
 
 export function patchStorageObject(key, patch = {}) {
 	const current = getStorage(key, {})
-	const base = isPlainObject(current) ? current : {}
+	const base = isPlainObject(current) ? current : cloneValue(defaultState[key] || {})
 	const nextValue = {
 		...base,
 		...(isPlainObject(patch) ? patch : {})
@@ -303,8 +309,7 @@ export function patchStorageObject(key, patch = {}) {
 	if (isPlainObject(current) && JSON.stringify(current) === JSON.stringify(normalizedValue)) {
 		return normalizedValue
 	}
-	setStorage(key, normalizedValue)
-	return normalizedValue
+	return setStorage(key, normalizedValue) ? normalizedValue : null
 }
 
 const storage = {

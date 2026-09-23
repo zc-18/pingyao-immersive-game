@@ -15,7 +15,7 @@
 // 设计取舍：level/quest/achievement 类「条件达成即拥有」，给玩家自然的进阶惊喜；
 // silverKey/shop 类需主动获取（接通经济与 O2O 商城循环）。装备状态持久化在 userProgress.equippedCostume。
 
-import { STORAGE_KEYS, getStorage, patchStorageObject } from '../utils/storage.js'
+import { STORAGE_KEYS, getStorage, getUserProgress, patchStorageObject } from '../utils/storage.js'
 import { getLevelMeta } from '../utils/level.js'
 
 export const DEFAULT_COSTUME_ID = 'commoner'
@@ -111,7 +111,7 @@ export function getCostumeById(id) {
 
 /* userProgress 中显式获得的服饰 id 列表（silverKey 购买 / shop 兑换写入；default 兜底包含）。 */
 function getExplicitOwned() {
-	const progress = getStorage(STORAGE_KEYS.userProgress, {})
+	const progress = getUserProgress()
 	const owned = Array.isArray(progress.ownedCostumes) ? progress.ownedCostumes : []
 	return new Set([DEFAULT_COSTUME_ID, ...owned])
 }
@@ -138,7 +138,7 @@ export function isCostumeOwned(costume, progress = getStorage(STORAGE_KEYS.userP
 }
 
 export function getEquippedCostumeId() {
-	const progress = getStorage(STORAGE_KEYS.userProgress, {})
+	const progress = getUserProgress()
 	const id = progress.equippedCostume
 	// 已装备的服饰若已不再拥有（极端情况），回退默认。
 	if (id && costumeMap[id] && isCostumeOwned(costumeMap[id], progress)) return id
@@ -188,7 +188,7 @@ export function equipCostume(id) {
 	const costume = costumeMap[id]
 	if (!costume) return { ok: false, reason: '没有这件衣裳' }
 	if (!isCostumeOwned(costume)) return { ok: false, reason: '尚未拥有这件衣裳' }
-	patchStorageObject(STORAGE_KEYS.userProgress, { equippedCostume: id })
+	if (!patchStorageObject(STORAGE_KEYS.userProgress, { equippedCostume: id })) return { ok: false, reason: '保存失败，请重试' }
 	return { ok: true }
 }
 
@@ -198,28 +198,28 @@ export function purchaseCostume(id, { equip = true } = {}) {
 	if (!costume) return { ok: false, reason: '没有这件衣裳' }
 	const unlock = costume.unlock || {}
 	if (isCostumeOwned(costume)) {
-		if (equip) equipCostume(id)
+		if (equip) return equipCostume(id)
 		return { ok: true, reason: '已拥有，已为你换上' }
 	}
 	if (unlock.type !== 'silverKey') return { ok: false, reason: '这件衣裳无法直接购买' }
-	const progress = getStorage(STORAGE_KEYS.userProgress, {})
+	const progress = getUserProgress()
 	const balance = Number(progress.silverKey || 0)
 	const cost = unlock.cost || 0
 	if (balance < cost) return { ok: false, reason: '银钥不足' }
 	const owned = Array.isArray(progress.ownedCostumes) ? progress.ownedCostumes : []
-	patchStorageObject(STORAGE_KEYS.userProgress, {
+	const saved = patchStorageObject(STORAGE_KEYS.userProgress, {
 		silverKey: balance - cost,
 		ownedCostumes: [...new Set([...owned, id])],
 		...(equip ? { equippedCostume: id } : {})
 	})
-	return { ok: true }
+	return saved ? { ok: true } : { ok: false, reason: '保存失败，请重试' }
 }
 
 /* 商城兑换发放服饰（shop 类）：写入 ownedCostumes。shop.vue 兑换对应商品时调用。返回新解锁的服饰或 null。 */
 export function grantCostumeByShopItem(itemId) {
 	const costume = COSTUMES.find((c) => c.unlock?.type === 'shop' && c.unlock.itemId === itemId)
 	if (!costume) return null
-	const progress = getStorage(STORAGE_KEYS.userProgress, {})
+	const progress = getUserProgress()
 	const owned = Array.isArray(progress.ownedCostumes) ? progress.ownedCostumes : []
 	if (owned.includes(costume.id)) return null
 	patchStorageObject(STORAGE_KEYS.userProgress, {
@@ -230,7 +230,7 @@ export function grantCostumeByShopItem(itemId) {
 
 /* 衣橱列表（带状态）。 */
 export function getWardrobe() {
-	const progress = getStorage(STORAGE_KEYS.userProgress, {})
+	const progress = getUserProgress()
 	return COSTUMES.map((costume) => ({
 		...costume,
 		state: getCostumeState(costume, progress)

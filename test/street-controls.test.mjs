@@ -32,8 +32,3 @@ test('街景按真实移动距离计步并按帧率调整像素比', () => {
 	assert.match(streetSource, /renderer\.setPixelRatio\(renderPixelRatio\)/)
 	assert.match(streetSource, /fps < 36 && renderer\.shadowMap\.enabled/)
 })
-
-test('水墨屋脊使用内向全景筒覆盖环视边缘', () => {
-	assert.match(streetSource, /CylinderGeometry\(46, 46, 32/)
-	assert.match(streetSource, /THREE\.BackSide/)
-})

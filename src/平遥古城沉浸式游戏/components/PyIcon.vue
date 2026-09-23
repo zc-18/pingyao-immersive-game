@@ -38,6 +38,7 @@ const props = defineProps({
 })
 
 const glyphMap = {
+	close: '\u00d7',
 	home: '\u5b85',
 	map: '\u56fe',
 	shop: '\u8086',
@@ -68,7 +69,8 @@ const glyphMap = {
 
 const glyph = computed(() => glyphMap[props.name] || glyphMap.spark)
 
-const normalizedSize = computed(() => Number(props.size) || 40)
+const pixelSize = computed(() => typeof props.size === 'string' && /^\d+(\.\d+)?px$/.test(props.size))
+const normalizedSize = computed(() => Number.parseFloat(props.size) || 40)
 
 const boxStyle = computed(() => {
 	if (props.variant === 'plain') {
@@ -79,13 +81,13 @@ const boxStyle = computed(() => {
 	}
 
 	return {
-		width: `${normalizedSize.value}rpx`,
-		height: `${normalizedSize.value}rpx`
+		width: `${normalizedSize.value}${pixelSize.value ? 'px' : 'rpx'}`,
+		height: `${normalizedSize.value}${pixelSize.value ? 'px' : 'rpx'}`
 	}
 })
 
 const glyphStyle = computed(() => ({
-	fontSize: `${Math.max(20, Math.round(normalizedSize.value * 0.44))}rpx`,
+	fontSize: pixelSize.value ? `${normalizedSize.value}px` : `${Math.max(20, Math.round(normalizedSize.value * 0.44))}rpx`,
 	color: props.color || ''
 }))
 </script>

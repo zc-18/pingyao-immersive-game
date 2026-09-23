@@ -67,7 +67,7 @@ export function getCheckInPreview(progress = getUserProgress()) {
 	} else {
 		nextStreak = 1
 	}
-	const slot = (nextStreak - 1) % REWARD_TABLE.length
+	const slot = (Math.max(1, nextStreak) - 1) % REWARD_TABLE.length
 	const reward = REWARD_TABLE[slot]
 	return {
 		state,
@@ -115,6 +115,7 @@ export function claimDailyCheckIn() {
 		}
 	})
 
+	if (!next) return { ok: false, reason: 'storage' }
 	return {
 		ok: true,
 		reward,

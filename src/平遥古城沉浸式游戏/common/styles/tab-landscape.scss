@@ -1,0 +1,16 @@
+// APP WebView excludes the native tab bar; H5 exposes its occupied height.
+@mixin tab-landscape-viewport {
+	--tab-reserve: 0px;
+	/* #ifdef H5 */
+	--tab-reserve: var(--window-bottom, 50px);
+	/* #endif */
+	width: 100%;
+	height: calc(100vh - var(--tab-reserve));
+	height: calc(100dvh - var(--tab-reserve));
+	min-height: 0;
+	box-sizing: border-box;
+	padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+	font-size: 14px;
+	letter-spacing: 0;
+	overflow: hidden;
+}

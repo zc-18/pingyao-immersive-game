@@ -1,5 +1,5 @@
 import { questList, questMap, QUEST_STATUS, QUEST_TYPE } from '../data/quests.js'
-import { STORAGE_KEYS, patchStorageObject, getStorage, localDateString } from './storage.js'
+import { STORAGE_KEYS, patchStorageObject, getStorage, getUserProgress, nonNegativeInteger, localDateString } from './storage.js'
 import { getLevelMeta } from './level.js'
 
 export const EVENT_TYPES = {
@@ -18,19 +18,26 @@ const OBJECTIVE_MICRO_REWARD = {
 	score: 4
 }
 
-function getQuestData() {
-	const progress = getStorage(STORAGE_KEYS.userProgress, {})
-	return progress.questData || {
-		activeQuests: [],
-		completedQuests: [],
-		claimedQuests: [],
-		questProgress: {},
-		dailyReset: ''
+function getQuestData(progress = getUserProgress()) {
+	const data = progress.questData
+	// Recover malformed old saves from the authoritative objective definitions.
+	data.activeQuests = data.activeQuests.filter((id) => questMap[id] && !data.completedQuests.includes(id))
+	Object.keys(data.questProgress).forEach((id) => {
+		if (!questMap[id]) { delete data.questProgress[id]; return }
+	})
+	for (const id of new Set([...data.activeQuests, ...Object.keys(data.questProgress)])) {
+		const old = data.questProgress[id]
+		const objectives = questMap[id].objectives.map((definition) => {
+			const saved = Array.isArray(old?.objectives) ? old.objectives.find((item) => item?.id === definition.id) : null
+			return { ...definition, current: Math.min(definition.required, nonNegativeInteger(saved?.current)) }
+		})
+		data.questProgress[id] = { objectives, stage: Math.min(objectives.filter((o) => o.current >= o.required).length, Math.max(0, objectives.length - 1)) }
 	}
+	return data
 }
 
-function saveQuestData(questData) {
-	patchStorageObject(STORAGE_KEYS.userProgress, { questData })
+function saveQuestData(questData, patch = {}) {
+	return patchStorageObject(STORAGE_KEYS.userProgress, { ...patch, questData })
 }
 
 function patchQuestRuntime(patch = {}) {
@@ -50,7 +57,11 @@ function checkDailyReset() {
 	// UTC+8 下每日任务要到本地 08:00 才重置，且会在 08:00 开出同一本地日二次发奖窗口。
 	const today = localDateString()
 	if (questData.dailyReset === today) return
+	resetDailyQuestData(questData, today)
+	saveQuestData(questData)
+}
 
+function resetDailyQuestData(questData, day) {
 	questList.filter((quest) => quest.resetDaily).forEach((quest) => {
 		delete questData.questProgress[quest.id]
 		questData.activeQuests = questData.activeQuests.filter((id) => id !== quest.id)
@@ -58,14 +69,11 @@ function checkDailyReset() {
 		questData.claimedQuests = questData.claimedQuests.filter((id) => id !== quest.id)
 	})
 
-	questData.dailyReset = today
-	saveQuestData(questData)
+	questData.dailyReset = day
 }
 
-function checkTriggerCondition(quest) {
+function checkTriggerCondition(quest, progress = getUserProgress(), questData = getQuestData(progress)) {
 	const profile = getStorage(STORAGE_KEYS.userProfile, {})
-	const progress = getStorage(STORAGE_KEYS.userProgress, {})
-	const questData = getQuestData()
 	const runtime = getStorage(STORAGE_KEYS.appRuntime, {})
 	const { trigger } = quest
 
@@ -161,7 +169,7 @@ export function startQuest(questId) {
 		objectives: cloneObjectives(quest.objectives),
 		stage: 0
 	}
-	saveQuestData(questData)
+	if (!saveQuestData(questData)) return false
 	patchQuestRuntime({
 		lastQuestId: questId,
 		lastQuestStageLine: quest.introLine || quest.description
@@ -186,10 +194,13 @@ export function ensureJourneyQuest() {
 	return getTrackedQuest()
 }
 
-export function updateObjective(questId, objectiveId, increment = 1) {
+export function updateObjective(questId, objectiveId, increment = 1, rewardPatch = {}) {
+	checkDailyReset()
+	increment = nonNegativeInteger(increment)
+	if (!increment) return false
 	const questData = getQuestData()
 	const progress = questData.questProgress[questId]
-	if (!progress) return false
+	if (!progress || !questData.activeQuests.includes(questId)) return false
 
 	const objective = progress.objectives.find((item) => item.id === objectiveId)
 	if (!objective || objective.current >= objective.required) return false
@@ -197,7 +208,7 @@ export function updateObjective(questId, objectiveId, increment = 1) {
 	objective.current = Math.min(objective.required, objective.current + increment)
 	const completedCount = progress.objectives.filter((item) => item.current >= item.required).length
 	progress.stage = Math.min(completedCount, Math.max(progress.objectives.length - 1, 0))
-	saveQuestData(questData)
+	if (!saveQuestData(questData, rewardPatch)) return false
 	return objective.current >= objective.required
 }
 
@@ -206,7 +217,7 @@ export function checkQuestComplete(questId) {
 	return !!progress && progress.objectives.every((item) => item.current >= item.required)
 }
 
-function shouldAdvanceObjective(objective, eventType, payload = {}) {
+function shouldAdvanceObjective(objective, eventType, payload = {}, quest) {
 	if (!objective || objective.current >= objective.required) return false
 	const target = objective.target
 
@@ -219,9 +230,13 @@ function shouldAdvanceObjective(objective, eventType, payload = {}) {
 		case EVENT_TYPES.buildingInteracted:
 			return objective.type === 'explore'
 				&& (payload.buildingId === target || payload.buildingType === target || payload.poiId === target)
-		case EVENT_TYPES.npcDialogCompleted:
+		case EVENT_TYPES.npcDialogCompleted: {
+			const location = quest.objectives.find((item) => item.type === 'visit')?.target
+			if (location && payload.poiId !== location) return false
+			if (payload.sceneId && quest.sceneId && payload.sceneId !== quest.sceneId) return false
 			return objective.type === 'talk'
 				&& (!target || target === 'npc-owl' || payload.poiId === target || payload.topic === target)
+		}
 		case EVENT_TYPES.sceneLoaded:
 			return objective.type === 'explore' && payload.sceneId === target
 		default:
@@ -235,11 +250,16 @@ export function advanceQuestByEvent(eventType, payload = {}) {
 
 	const progress = getQuestData().questProgress[quest.id]
 	if (!progress) return { quest, updated: false, completed: false, stageLine: '' }
+	// A previous reward write may have failed after the final objective was saved.
+	// A later interaction must offer settlement again instead of stranding a full quest.
+	if (progress.objectives.every((item) => item.current >= item.required)) {
+		return { quest, updated: false, completed: true, stageLine: quest.completionLine || quest.description, microReward: null }
+	}
 
 	// 找到第一个「未完成且能被本事件推进」的目标，而非只取数组里第一个未完成目标，
 	// 否则玩家乱序触发（如先建筑交互后对话）会被静默丢弃，造成"点了没反应"。
 	const pendingObjective = progress.objectives.find(
-		(item) => item.current < item.required && shouldAdvanceObjective(item, eventType, payload)
+		(item) => item.current < item.required && shouldAdvanceObjective(item, eventType, payload, quest)
 	)
 	if (!pendingObjective) {
 		return {
@@ -250,55 +270,60 @@ export function advanceQuestByEvent(eventType, payload = {}) {
 		}
 	}
 
-	const objectiveCompleted = updateObjective(quest.id, pendingObjective.id, 1)
-	const completed = checkQuestComplete(quest.id)
+	const objectiveCompleted = pendingObjective.current + 1 >= pendingObjective.required
+	const completed = objectiveCompleted && progress.objectives.every((item) => item.id === pendingObjective.id || item.current >= item.required)
 	const stageLine = completed ? (quest.completionLine || quest.description) : getQuestStageLine(quest.id)
-	patchQuestRuntime({
-		lastQuestId: quest.id,
-		lastQuestStageLine: stageLine
-	})
-
-	/* objective 完成但任务未通关：发放节奏奖励 */
 	let microReward = null
+	let rewardPatch = {}
 	if (objectiveCompleted && !completed) {
 		const profile = getStorage(STORAGE_KEYS.userProfile, {})
-		const progress = getStorage(STORAGE_KEYS.userProgress, {})
+		const saved = getUserProgress()
 		const bonus = quest.roleBonus?.[profile.roleId] || {}
 		microReward = {
 			silverKey: Math.floor(OBJECTIVE_MICRO_REWARD.silverKey * (bonus.silverKey || 1)),
 			exp: Math.floor(OBJECTIVE_MICRO_REWARD.exp * (bonus.exp || 1)),
 			score: Math.floor(OBJECTIVE_MICRO_REWARD.score * (bonus.score || 1))
 		}
-		patchStorageObject(STORAGE_KEYS.userProgress, {
-			exp: (Number(progress.exp) || 0) + microReward.exp,
-			silverKey: (Number(progress.silverKey) || 0) + microReward.silverKey,
-			score: (Number(progress.score) || 0) + microReward.score
-		})
+		rewardPatch = { exp: saved.exp + microReward.exp, silverKey: saved.silverKey + microReward.silverKey, score: saved.score + microReward.score }
 	}
+	updateObjective(quest.id, pendingObjective.id, 1, rewardPatch)
+	const persisted = getQuestData().questProgress[quest.id]?.objectives.find((item) => item.id === pendingObjective.id)
+	if (!persisted || persisted.current <= pendingObjective.current) {
+		return { quest, updated: false, completed: false, stageLine: getQuestStageLine(quest.id), microReward: null, error: 'storage' }
+	}
+	patchQuestRuntime({ lastQuestId: quest.id, lastQuestStageLine: completed ? stageLine : getQuestStageLine(quest.id) })
 
 	return {
 		quest: getTrackedQuest(),
 		updated: true,
 		completed,
 		objectiveCompleted,
-		stageLine,
+		stageLine: completed ? stageLine : getQuestStageLine(quest.id),
 		objective: pendingObjective,
 		microReward
 	}
 }
 
 export function completeQuest(questId) {
-	const quest = questMap[questId]
-	if (!quest || !checkQuestComplete(questId)) return null
+	checkDailyReset()
+	const progress = getUserProgress()
+	const questData = getQuestData(progress)
+	const result = applyQuestCompletion(questId, progress, questData)
+	if (!result || !saveQuestData(questData, progress)) return null
+	return result
+}
 
-	const questData = getQuestData()
+// 只修改待保存的同一份进度；普通任务与步数任务共用奖励和去重规则。
+function applyQuestCompletion(questId, progress, questData) {
+	const quest = questMap[questId]
+	const objectives = questData.questProgress[questId]?.objectives
+	if (!quest || !objectives?.length || !objectives.every((item) => item.current >= item.required)) return null
 	// 幂等保护：已在 completedQuests 则不再发奖。completeQuest 仅在 checkQuestComplete 为真时发奖并移出 activeQuests，
 	// 但 questProgress[questId] 仍保留满目标——若同一通关事件被二次派发（多事件处理器/竞态），第二次 checkQuestComplete
 	// 仍为真而重复发奖。此守卫与 claimQuestReward 的去重一致，杜绝双倍 银钥/经验/积分。
 	if (questData.completedQuests.includes(questId)) return null
 
 	const profile = getStorage(STORAGE_KEYS.userProfile, {})
-	const progress = getStorage(STORAGE_KEYS.userProgress, {})
 	const roleBonus = quest.roleBonus?.[profile.roleId] || {}
 	const rewards = {
 		exp: Math.floor(quest.rewards.exp * (roleBonus.exp || 1)),
@@ -311,17 +336,15 @@ export function completeQuest(questId) {
 		rewards.silverKey = Math.floor(rewards.silverKey * roleBonus.random)
 	}
 
-	patchStorageObject(STORAGE_KEYS.userProgress, {
-		exp: (progress.exp || 0) + rewards.exp,
-		silver: (progress.silver || 0) + rewards.silver,
-		silverKey: (progress.silverKey || 0) + rewards.silverKey,
-		score: (progress.score || 0) + rewards.score,
-		totalQuestCompleted: Math.max(0, Number(progress.totalQuestCompleted || 0)) + 1
-	})
-
 	questData.completedQuests = [...new Set([...questData.completedQuests, questId])]
 	questData.activeQuests = questData.activeQuests.filter((id) => id !== questId)
-	saveQuestData(questData)
+	Object.assign(progress, {
+		exp: progress.exp + rewards.exp,
+		silver: progress.silver + rewards.silver,
+		silverKey: progress.silverKey + rewards.silverKey,
+		score: progress.score + rewards.score,
+		totalQuestCompleted: progress.totalQuestCompleted + 1
+	})
 
 	return {
 		quest,
@@ -351,44 +374,55 @@ export function completeQuestAndCollectFeedback(questId) {
 /* 步数任务结算：把本次步数增量累加进所有「collect/steps」目标（如每日 daily-walk）。
    步数链路独立于 tracked-quest 事件流——原先 collect/steps 没有任何事件能推进，
    每日步数任务永远卡在 0/1000。这里自动激活可接的步数任务并按增量结算，满足后即时发奖。 */
-export function recordSteps(delta = 0) {
-	const inc = Math.max(0, Math.floor(Number(delta) || 0))
-	if (inc <= 0) return { updated: false, completed: [] }
+export function recordSteps(delta = 0, recordedDay = localDateString()) {
+	const inc = nonNegativeInteger(delta)
+	if (inc <= 0) return { ok: true, accepted: 0, updated: false, completed: [] }
+	const today = localDateString()
+	if (!/^\d{4}-\d{2}-\d{2}$/.test(recordedDay) || recordedDay > today) {
+		return { ok: false, accepted: 0, updated: false, completed: [], error: 'date' }
+	}
+	const saved = getUserProgress()
+	const questData = getQuestData(saved)
+	if (questData.dailyReset < recordedDay || (recordedDay === today && questData.dailyReset !== today)) {
+		resetDailyQuestData(questData, recordedDay)
+	}
+	// 昨天未落盘的移动仍计入总步数；如果日任务已经翻日，不把它补到今天。
+	const acceptsSteps = (quest) => quest.objectives.some((o) => o.type === 'collect' && o.target === 'steps')
+		&& (!quest.resetDaily || questData.dailyReset === recordedDay)
 
-	// 自动激活含 steps 目标且当前可接的任务（保证每日步数任务能被推进）
+	// 激活、增量、达成奖励与总步数只写入一次，任一失败都可以重试整批。
 	questList.forEach((quest) => {
-		const hasSteps = (quest.objectives || []).some((o) => o.type === 'collect' && o.target === 'steps')
-		if (hasSteps && getQuestStatus(quest.id) === QUEST_STATUS.available) {
-			startQuest(quest.id)
-		}
+		if (!acceptsSteps(quest) || questData.activeQuests.includes(quest.id)
+			|| questData.completedQuests.includes(quest.id) || questData.claimedQuests.includes(quest.id)) return
+		if (quest.prerequisite && !questData.completedQuests.includes(quest.prerequisite)) return
+		if (!checkTriggerCondition(quest, saved, questData)) return
+		questData.activeQuests.push(quest.id)
+		questData.questProgress[quest.id] = { objectives: cloneObjectives(quest.objectives), stage: 0 }
 	})
 
-	const questData = getQuestData()
 	let updated = false
-	const touchedQuestIds = []
 	questData.activeQuests.forEach((qid) => {
+		if (!acceptsSteps(questMap[qid])) return
 		const progress = questData.questProgress[qid]
 		if (!progress) return
-		let touched = false
 		progress.objectives.forEach((o) => {
 			if (o.type === 'collect' && o.target === 'steps' && o.current < o.required) {
 				o.current = Math.min(o.required, o.current + inc)
 				updated = true
-				touched = true
 			}
 		})
-		if (touched) touchedQuestIds.push(qid)
+		progress.stage = Math.min(progress.objectives.filter((o) => o.current >= o.required).length, Math.max(0, progress.objectives.length - 1))
 	})
-	if (updated) saveQuestData(questData)
 
 	const completed = []
-	touchedQuestIds.forEach((qid) => {
-		if (checkQuestComplete(qid)) {
-			const result = completeQuest(qid)
-			if (result) completed.push(result)
-		}
+	questData.activeQuests.forEach((qid) => {
+		if (!acceptsSteps(questMap[qid])) return
+		const result = applyQuestCompletion(qid, saved, questData)
+		if (result) completed.push(result)
 	})
-	return { updated, completed }
+	saved.steps = nonNegativeInteger(saved.steps + inc)
+	if (!saveQuestData(questData, saved)) return { ok: false, accepted: 0, updated: false, completed: [], error: 'storage' }
+	return { ok: true, accepted: inc, updated, completed }
 }
 
 export function claimQuestReward(questId) {

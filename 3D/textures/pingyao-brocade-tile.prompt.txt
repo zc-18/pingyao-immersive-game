@@ -1,0 +1,6 @@
+Scene/background: a perfectly flat square textile swatch filling the entire canvas.
+Subject: seamless repeating Chinese brocade pattern inspired by Pingyao merchant seals, abstract cloud scrolls, ancient coin geometry, and very small geometric key-fret borders. Deep muted cinnabar ground with restrained aged-gold and dark jade threads. Medium-small repeat suitable for the collar, cuffs, sash, and robe panels of a mobile game character.
+Style/medium: physically believable woven silk-jacquard texture, subtle thread direction, elegant handcrafted irregularity, premium game PBR albedo reference.
+Composition/framing: straight-on orthographic, uniform scale, edge-to-edge seamless tile, no folds and no perspective.
+Lighting/atmosphere: completely diffuse and shadowless, color-balanced, no highlights or directional shading.
+Constraints: seamless on all four edges; flat albedo only; no text, calligraphy, logos, watermark, people, garments, borders around the image, large central medallion, photographic fabric folds, metallic glare, strong contrast, tiny high-frequency noise.

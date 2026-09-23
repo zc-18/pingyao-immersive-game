@@ -12,9 +12,6 @@
 			<view id="street-move-knob" class="street-stage__move-knob"></view>
 		</view>
 
-		<!-- 飘落物（按时辰可切换：banyan / cherry / snow / firefly）-->
-		<FallingLeaves :type="seasonType" :density="seasonDensity" />
-
 		<!-- 右上角：时辰印章 + 迷你地图 -->
 		<view class="street-stage__rightcorner">
 			<view class="street-stage__phase" :class="phaseStamp.tone">
@@ -28,12 +25,16 @@
 				:buildings="miniMapBuildings"
 				:pois="miniMapPois"
 				:map-size="54"
+				:enclosure="streetWorldLayout.enclosure"
 				:label="currentStreet.title"
 			/>
 		</view>
 
 		<!-- 街景 HUD（覆盖在 3D 画面上）-->
+		<SceneControls :open="sceneControlOpen" :phases="getPhaseList()" :phase-mode="phaseMode" :running="runningMode" :portrait="portraitMode"
+			@toggle="sceneControlOpen = !sceneControlOpen" @phase="selectScenePhase" @action="handleSceneControl" />
 		<StreetHud
+			:settings-open="settingsOpen"
 			:level="levelMeta.level"
 			:level-name="levelMeta.title"
 			:role-name="userProfile.roleName || '平遥行客'"
@@ -46,7 +47,7 @@
 			:exp-percent="expPercent"
 			:quest-tracker="questTrackerData"
 			:role-bonus="currentRoleBonus"
-			:scene-hint="sceneHint"
+			:scene-hint="interactionCard ? '' : sceneHint"
 			:plaque-flipping="plaqueFlipping"
 			@action="handleHudAction"
 		/>
@@ -58,9 +59,9 @@
 		<RewardPopup :visible="showRewardPopup" :title="rewardData.title" :rewards="rewardData.rewards" :role-bonus="rewardData.roleBonus" :npc-message="rewardData.npcMessage" @claim="handleClaimReward" />
 		<FloatingText :visible="floatingText.visible" :text="floatingText.text" :type="floatingText.type" @complete="handleFloatingComplete" />
 		<LevelUpEffect :visible="showLevelUp" :old-level="levelUpData.oldLevel" :new-level="levelUpData.newLevel" :old-level-name="levelUpData.oldLevelName" :new-level-name="levelUpData.newLevelName" />
-		<InteractionButton v-if="interactionCard" :label="interactionCard.label" @action="handleSceneInteraction" />
+		<InteractionButton v-if="interactionCard" :label="interactionCard.label" @action="openNearbyPoi" />
 
-		<!-- 加载（毛笔画圈 + 灯笼 + 晋小鸦正在张望…）；stage/hint 为可观测面包屑，escape 为兜底逃生 -->
+		<!-- 画面成功显示前保持遮罩；失败可重试或返回。 -->
 		<BrushLoader
 			:visible="isLoading"
 			:progress="loadProgress"
@@ -68,7 +69,9 @@
 			:hint="loadHint"
 			:tips="loadingTips"
 			:show-escape="showEscape"
-			@escape="forceEnterCity"
+			:failed="loadFailed"
+			@escape="retryScene"
+			@return="returnToCity"
 		/>
 
 		<!-- POI 详情（卷轴样式）-->
@@ -77,51 +80,58 @@
 			<view class="street-stage__poi-paper" @tap.stop>
 				<view class="street-stage__poi-roll street-stage__poi-roll--top"></view>
 				<view class="street-stage__poi-roll street-stage__poi-roll--bot"></view>
-				<view class="street-stage__poi-paper-fiber"></view>
+				<view class="street-stage__poi-content" @touchmove.stop="$event.stopPropagation && $event.stopPropagation()">
+					<view class="street-stage__poi-paper-fiber"></view>
 
-				<view class="street-stage__poi-head">
-					<view>
-						<text class="street-stage__poi-eyebrow">— 古城点位 —</text>
-						<text class="street-stage__poi-name">{{ activePoi.name }}</text>
-					</view>
-					<view class="street-stage__poi-stamp">
-						<text>{{ statusLabelMap[activePoi.status] || '可探索' }}</text>
-					</view>
-				</view>
-
-				<text class="street-stage__poi-desc">{{ activePoi.description }}</text>
-
-				<view class="street-stage__poi-story">
-					<text class="street-stage__poi-story-label">— 晋小鸦提示 —</text>
-					<text class="street-stage__poi-story-text">{{ activePoi.npcTopic }}</text>
-					<text v-if="poiDeepLines[activePoi.id]" class="street-stage__poi-story-deep">{{ poiDeepLines[activePoi.id] }}</text>
-				</view>
-
-				<!-- 我的札记（写过才显示）-->
-				<view v-if="poiNote" class="street-stage__poi-mynote">
-					<text class="street-stage__poi-mynote-label">— 我的札记 —</text>
-					<text class="street-stage__poi-mynote-text">{{ poiNote }}</text>
-				</view>
-
-				<view class="street-stage__poi-footer">
-					<view class="street-stage__poi-tools">
-						<view class="street-stage__poi-tool" :class="{ 'street-stage__poi-tool--on': poiFavorited }" @tap.stop="toggleFav">
-							<text>{{ poiFavorited ? '★ 收藏' : '☆ 收藏' }}</text>
+					<view class="street-stage__poi-head">
+						<view>
+							<text class="street-stage__poi-eyebrow">— 古城点位 —</text>
+							<text class="street-stage__poi-name">{{ activePoi.name }}</text>
 						</view>
-						<view class="street-stage__poi-tool" @tap.stop="editNote">
-							<text>{{ poiNote ? '✎ 改札记' : '✎ 札记' }}</text>
+						<view class="street-stage__poi-stamp">
+							<text>{{ statusLabelMap[activePoi.status] || '可探索' }}</text>
 						</view>
 					</view>
-					<view class="street-stage__poi-action" @tap.stop="playPoiTopic">
-						<text>继续讲解 ›</text>
-					</view>
-					<view class="street-stage__poi-action street-stage__poi-investigate" @tap.stop="handleSceneInteraction">
-						<text>查看线索</text>
-					</view>
-				</view>
 
-				<view class="street-stage__poi-close" @tap="closePoi">
-					<text>收起</text>
+					<text class="street-stage__poi-desc">{{ activePoi.description }}</text>
+
+					<view class="street-stage__poi-story">
+						<text class="street-stage__poi-story-label">— 晋小鸦提示 —</text>
+						<text class="street-stage__poi-story-text">{{ activePoi.npcTopic }}</text>
+						<text v-if="poiDeepLines[activePoi.id]" class="street-stage__poi-story-deep">{{ poiDeepLines[activePoi.id] }}</text>
+					</view>
+
+					<!-- 我的札记（写过才显示）-->
+					<view v-if="poiNote" class="street-stage__poi-mynote">
+						<text class="street-stage__poi-mynote-label">— 我的札记 —</text>
+						<text class="street-stage__poi-mynote-text">{{ poiNote }}</text>
+					</view>
+
+					<view v-if="poiProgressError" class="street-stage__poi-error" role="alert">
+						<text>本次进度未保存，请重试。</text>
+						<button role="button" tabindex="0" aria-label="重试保存点位进度" @tap.stop="retryPoiProgress">重试保存</button>
+					</view>
+
+					<view class="street-stage__poi-footer">
+						<view class="street-stage__poi-tools">
+							<view class="street-stage__poi-tool" :class="{ 'street-stage__poi-tool--on': poiFavorited }" @tap.stop="toggleFav">
+								<text>{{ poiFavorited ? '★ 收藏' : '☆ 收藏' }}</text>
+							</view>
+							<view class="street-stage__poi-tool" @tap.stop="editNote">
+								<text>{{ poiNote ? '✎ 改札记' : '✎ 札记' }}</text>
+							</view>
+						</view>
+						<view class="street-stage__poi-action" @tap.stop="playPoiTopic">
+							<text>继续讲解 ›</text>
+						</view>
+						<view class="street-stage__poi-action street-stage__poi-investigate" @tap.stop="handleSceneInteraction">
+							<text>查看线索</text>
+						</view>
+					</view>
+
+					<view class="street-stage__poi-close" @tap="closePoi">
+						<text>收起</text>
+					</view>
 				</view>
 			</view>
 		</view>
@@ -138,6 +148,7 @@
 
 		<!-- 街景内衣橱：从 HUD「行囊」唤起，换装即时热切换到 3D 化身 -->
 		<OutfitWardrobe :visible="wardrobeOpen" compact-landscape @close="wardrobeOpen = false" @changed="onStreetWardrobeChanged" />
+		<StreetSettings :visible="settingsOpen" :settings="gameplaySettings" @close="settingsOpen = false" @setting="changeGameplaySetting" @guide="openGuide" @home="leaveForCity" />
 
 		<!-- 街景切换器（牌匾翻转）-->
 		<view class="street-stage__switch">
@@ -152,22 +163,22 @@
 </template>
 
 <script setup>
-import { computed, getCurrentInstance, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, getCurrentInstance, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { onLoad, onHide, onShow } from '@dcloudio/uni-app'
 import StreetHud from '@/components/StreetHud.vue'
+import StreetSettings from '@/components/StreetSettings.vue'
 import NpcOwl from '@/components/NpcOwl.vue'
 import InteractionButton from '@/components/InteractionButton.vue'
 import BrushLoader from '@/components/BrushLoader.vue'
 import RewardPopup from '@/components/RewardPopup.vue'
 import FloatingText from '@/components/FloatingText.vue'
 import LevelUpEffect from '@/components/LevelUpEffect.vue'
-import FallingLeaves from '@/components/FallingLeaves.vue'
 import GateTransition from '@/components/GateTransition.vue'
 import streetScenes from '@/common/data/streets.js'
 import { roleList } from '@/common/data/roles.js'
 import { getStorage, patchStorageObject, hasSelectedRole, STORAGE_KEYS } from '@/common/utils/storage.js'
 import { getLevelMeta, getLevelProgress } from '@/common/utils/level.js'
-import { playBGM, stopBGM, playSFX, SFX, BGM } from '@/common/utils/audio.js'
+import { playBGM, stopBGM, resumeBGM, playSFX, SFX, BGM } from '@/common/utils/audio.js'
 import {
 	getCurrentStreetScene,
 	getExploreDirectionLabel,
@@ -177,6 +188,7 @@ import {
 	markPageVisit,
 	markPoiVisited,
 	markPrologueComplete,
+	markStreetSceneVisited,
 	patchRuntimeState,
 	rememberReturnContext,
 	setCurrentPoi,
@@ -188,11 +200,12 @@ import {
 	completeQuestAndCollectFeedback,
 	ensureJourneyQuest,
 	getQuestNpcHint,
-	getQuestTargetPoi,
-	recordSteps
+	getQuestTargetPoi
 } from '@/common/utils/quest-manager.js'
+import { stepBuffer } from '@/common/utils/step-buffer.js'
+import { getGameplaySettings, updateGameplaySetting } from '@/common/utils/game-settings.js'
 import { syncAchievementUnlocks } from '@/common/utils/achievements.js'
-import { getCurrentPhase } from '@/common/utils/phase.js'
+import { getCurrentPhase, getPhase, getPhaseList } from '@/common/utils/phase.js'
 import { getContextualNpcCue } from '@/common/utils/npc-cue.js'
 import { getEquippedCostumeSkin } from '@/common/data/costumes.js'
 import { loadingTips, poiDeepLines } from '@/common/data/culture-tips.js'
@@ -201,6 +214,7 @@ import { buildStreetWorldLayout } from '@/common/utils/street-world.js'
 import { lockGameLandscape, releaseOrientationLock } from '@/common/utils/orientation.js'
 import MiniMap from '@/components/MiniMap.vue'
 import OutfitWardrobe from '@/components/OutfitWardrobe.vue'
+import SceneControls from '@/components/SceneControls.vue'
 
 const statusLabelMap = { nearby: '已靠近', discoverable: '待点亮', quest: '主线热点', hot: '必看地标', route: '顺路可达' }
 
@@ -208,14 +222,16 @@ const userProfile = ref(getStorage(STORAGE_KEYS.userProfile, {}))
 const userProgress = ref(getStorage(STORAGE_KEYS.userProgress, {}))
 const currentStreetIndex = ref(0)
 const activePoiId = ref('')
+const poiProgressFailure = ref(null)
 /* 当前是否正贴在某 POI 的进入半径内（独立于驱动卷轴遮罩的 activePoiId）：
-   进入 poi-enter 置位、离开 poi-leave 清空，仅供 approach 浮空门控用，避免 activePoiId 粘滞导致预告哑火。*/
+   进入 poi-enter 置位、离开 poi-leave 清空，供附近查看入口及 approach 预告使用。*/
 const nearActivePoiId = ref('')
 const npcVisible = ref(false)
 const npcMessage = ref('')
 const npcAutoHide = ref(false)
 const isLoading = ref(true)
 const loadProgress = ref(0)
+const loadFailed = ref(false)
 /* 加载可观测面包屑 + 兜底逃生（三轮排查的教训：盲调太久。stage 停在哪一步=卡在哪一步） */
 const loadStage = ref('正在唤起街景…')
 const loadHint = ref('')
@@ -232,6 +248,12 @@ const questTargetPoiId = ref('')
 const pendingSceneAfterClaim = ref('')
 const plaqueFlipping = ref(false)
 const currentPhase = ref(getCurrentPhase())
+const phaseMode = ref('auto')
+const runningMode = ref(false)
+const portraitMode = ref(false)
+const sceneControlOpen = ref(false)
+const settingsOpen = ref(false)
+const gameplaySettings = ref(getGameplaySettings())
 const playerWorldPos = ref({ x: 0, z: 13 })
 const playerHeading = ref(0)
 const wardrobeOpen = ref(false)
@@ -252,14 +274,16 @@ let lastSceneCmdPayload = null
 let lastSceneCmdAction = 'init'
 let loadWatchdog = null
 let initAttempts = 0
+let sceneRequestId = 0
+let completedSceneRequestId = 0
 const MAX_INIT_ATTEMPTS = 2
 const LOAD_TIMEOUT = 10000
 /* 绝对兜底（独立于 initScene 是否被调用）：onMounted 里无条件武装，杜绝任何「init 从未触发」的路径永久卡死。
-   entryEscapeTimer：到点亮出「直接进入古城」按钮；entryFailsafeTimer：到点强制收起加载层。 */
+   entryEscapeTimer：到点显示重试和返回；entryFailsafeTimer：视图无回应时显示失败状态。 */
 let entryEscapeTimer = null
 let entryFailsafeTimer = null
 const ENTRY_ESCAPE_DELAY = 5000
-const ENTRY_FAILSAFE_TIMEOUT = 14000
+const ENTRY_FAILSAFE_TIMEOUT = 25000
 
 const roleMap = roleList.reduce((map, role) => {
 	map[role.id] = role
@@ -274,6 +298,8 @@ const streetMap = streetScenes.reduce((map, item, index) => {
 const currentStreet = computed(() => streetScenes[currentStreetIndex.value] || streetScenes[0])
 const streetPois = computed(() => getScenePoiList(currentStreet.value.id, { trackedQuest: trackedQuest.value }).sort((a, b) => a.distance - b.distance))
 const activePoi = computed(() => streetPois.value.find((item) => item.id === activePoiId.value) || null)
+const nearbyPoi = computed(() => streetPois.value.find((item) => item.id === nearActivePoiId.value) || null)
+const poiProgressError = computed(() => Boolean(activePoiId.value && poiProgressFailure.value?.poiId === activePoiId.value))
 /* 当前 POI 的收藏/札记态（journalTick 变化时重算）。 */
 const poiFavorited = computed(() => { journalTick.value; return activePoiId.value ? isFavoritePoi(activePoiId.value) : false })
 const poiNote = computed(() => { journalTick.value; return activePoiId.value ? getJournalNote(activePoiId.value) : '' })
@@ -311,7 +337,8 @@ const questTrackerData = computed(() => {
 	}
 })
 const currentRoleBonus = computed(() => trackedQuest.value?.roleBonus?.[userProfile.value.roleId]?.desc || '')
-const interactionCard = computed(() => activePoi.value ? { label: activePoi.value.status === 'quest' ? `查看${activePoi.value.name}` : `走近${activePoi.value.name}` } : null)
+const interactionCard = computed(() => nearbyPoi.value && !activePoi.value && !isLoading.value && !wardrobeOpen.value && !settingsOpen.value && !showRewardPopup.value && !showEntranceAnim.value && !sceneControlOpen.value
+	? { label: `查看${nearbyPoi.value.name}` } : null)
 
 /* 逻辑层与 renderjs 共用同一份街巷世界坐标，避免画面和迷你地图各算一套。 */
 const streetWorldLayout = computed(() => buildStreetWorldLayout(currentStreet.value, streetPois.value))
@@ -338,10 +365,6 @@ const miniMapPois = computed(() => {
 		}
 	})
 })
-
-/* 时辰 -> 飘落物类型 / 密度（统一走 phase.js）*/
-const seasonType = computed(() => currentPhase.value.fallingType || 'leaf')
-const seasonDensity = computed(() => currentPhase.value.fallingDensity || 12)
 
 /* 顶栏时辰印章数据 */
 const phaseStamp = computed(() => ({
@@ -378,12 +401,14 @@ function buildScenePayload() {
 		phase: serializePhase(currentPhase.value),
 		effectsEnabled: readEffectsEnabled(),
 		playerSkin: getEquippedCostumeSkin(userProfile.value.roleId),
+		controls: { running: runningMode.value, portrait: portraitMode.value, blocked: Boolean(isLoading.value || activePoiId.value || wardrobeOpen.value || settingsOpen.value || showRewardPopup.value || showEntranceAnim.value) },
 		worldLayout: streetWorldLayout.value
 	}
 }
 
 watch(currentStreet, (street) => {
 	activePoiId.value = ''
+	poiProgressFailure.value = null
 	nearActivePoiId.value = ''            // 切换街景后清空贴靠态，否则新街景的 approach 预告被旧 poiId 门控住而哑火
 	playerWorldPos.value = { ...streetWorldLayout.value.spawn }
 	playerHeading.value = 0
@@ -392,10 +417,24 @@ watch(currentStreet, (street) => {
 	setTimeout(() => { plaqueFlipping.value = false }, 600)
 })
 
-function sendToRenderjs(type, data) {
+const renderCommandQueue = []
+let renderCommandFlushing = false
+let renderCommandDisposed = false
+async function sendToRenderjs(type, data) {
 	// 逻辑层 → renderjs：改变响应式 prop sceneCmd，触发 renderjs 的 :change 观察器。
 	// APP 端逻辑层与视图层是两个 JS 上下文、不共享 window，故不能再用 window 事件。
-	sceneCmd.value = { action: type, data: data || {}, ts: Date.now() }
+	if (renderCommandDisposed) return
+	renderCommandQueue.push({ action: type, data: data || {}, ts: Date.now() })
+	if (renderCommandFlushing) return
+	renderCommandFlushing = true
+	try {
+		while (renderCommandQueue.length && !renderCommandDisposed) {
+			sceneCmd.value = renderCommandQueue.shift()
+			// Reward dismissal, scene change and input unlock can share one Vue tick.
+			// Commit each command separately so the final unlock cannot erase loadScene.
+			await nextTick()
+		}
+	} finally { renderCommandFlushing = false }
 }
 
 /* renderjs → 逻辑层：renderjs 通过 this.$ownerInstance.callMethod('handleRenderMsg', {detail}) 回调。
@@ -407,38 +446,45 @@ function handleRenderMsg(msg) {
 		// renderjs 视图层已挂载、:change 观察器就绪：若仍在加载且有缓存命令，补发一次，
 		// 杜绝首帧 init 在观察器注册前被当「初始值」丢弃而永不 bootScene。
 		renderViewReady = true
-		loadStage.value = '视图就绪 · 加载 3D 引擎…'
-		if (isLoading.value && lastSceneCmdPayload) {
+		loadStage.value = '正在准备古城画面…'
+		if (isLoading.value && !loadFailed.value && lastSceneCmdPayload) {
 			sendToRenderjs(lastSceneCmdAction, lastSceneCmdPayload)
 		}
 	} else if (type === 'render-stage') {
 		// renderjs 各阶段面包屑：卡住时这行会停在最后到达的阶段，直接指明失败点。
-		if (data) loadStage.value = String(data)
+		if (data && !loadFailed.value) loadStage.value = String(data)
 	} else if (type === 'render-ready') {
+		if (!matchesSceneRequest(data)) return
 		clearLoadWatchdog()
 		clearEntryTimers()
 		loadStage.value = ''
 		loadHint.value = ''
 		showEscape.value = false
+		loadFailed.value = false
 		isLoading.value = false
+		if (completedSceneRequestId !== data.requestId) {
+			completedSceneRequestId = data.requestId
+			settleLoadedScene()
+		}
 	} else if (type === 'render-progress') {
 		loadProgress.value = Math.max(0, Math.min(100, Number(data) || 0))
 	} else if (type === 'render-error') {
-		// 终态错误：把错误文案留在加载层（而非一闪而过的 toast）并亮出逃生按钮，供定位与继续；
-		// 不主动收起加载层——让开发者读到错误；绝对兜底计时器仍会在到点自动放行。
-		clearLoadWatchdog()
-		loadHint.value = '加载未完成：' + ((data && data.error) || '街景渲染失败')
-		showEscape.value = true
-		uni.showToast({ title: (data && data.error) || '街景加载失败', icon: 'none' })
+		if (!matchesSceneRequest(data)) return
+		console.warn('[street] render failed:', data.error)
+		setSceneLoadFailure(data.contextLost ? '画面暂时中断，正在等待恢复。也可以重新加载院落。' : undefined)
 	} else if (type === 'poi-enter') {
 		handlePoiEnter(data)
 	} else if (type === 'poi-leave') {
-		handlePoiLeave()
+		handlePoiLeave(data)
 	} else if (type === 'poi-near') {
 		handlePoiApproach(data)
 	} else if (type === 'player-move') {
 		handlePlayerMove(data)
 	}
+}
+
+function matchesSceneRequest(data) {
+	return !renderCommandDisposed && data?.requestId === lastSceneCmdPayload?.requestId && data?.sceneId === currentStreet.value.id
 }
 
 function refreshRuntimeState() {
@@ -460,19 +506,16 @@ function clearLoadWatchdog() {
 	}
 }
 
-/* 加载兜底：到点仍未收到 render-ready/render-error 就先重试一次，再不行也强制收起加载层，绝不永久卡「张望」。 */
+/* 未收到首帧确认时自动重试一次，仍失败则保留可操作的错误界面。 */
 function armLoadWatchdog() {
 	clearLoadWatchdog()
 	loadWatchdog = setTimeout(() => {
-		if (!isLoading.value) return
+		if (!isLoading.value || loadFailed.value) return
 		initAttempts += 1
 		if (initAttempts < MAX_INIT_ATTEMPTS && lastSceneCmdPayload) {
-			// 再给一次机会：init 用 reinit（renderjs 端会先 dispose 旧场景再重建、绕过 isInitialized 闩锁）；切街景用 loadScene。
-			sendToRenderjs(lastSceneCmdAction === 'init' ? 'reinit' : 'loadScene', lastSceneCmdPayload)
-			armLoadWatchdog()
+			beginSceneLoad('reinit')
 		} else {
-			isLoading.value = false
-			uni.showToast({ title: '街景加载较慢，已先带你入城', icon: 'none', duration: 2200 })
+			setSceneLoadFailure('院落准备时间较长，请重新加载或先返回古城。')
 		}
 	}, LOAD_TIMEOUT)
 }
@@ -482,51 +525,69 @@ function clearEntryTimers() {
 	if (entryFailsafeTimer) { clearTimeout(entryFailsafeTimer); entryFailsafeTimer = null }
 }
 
-/* 绝对兜底：onMounted 无条件武装，完全独立于 initScene / renderjs。
-   即便 init 因任何路径从未被调用（如 onLoad 早抛），到点也必亮出逃生按钮并强制放行——
-   「永不被困在加载层」对所有代码路径成立，补上 watchdog 仅在 init 内武装的盲区。 */
+/* 独立于视图回传的超时出口，保留用户重试和返回的选择。 */
 function armEntryFailsafe() {
 	clearEntryTimers()
 	entryEscapeTimer = setTimeout(() => {
 		if (isLoading.value) showEscape.value = true
 	}, ENTRY_ESCAPE_DELAY)
 	entryFailsafeTimer = setTimeout(() => {
-		if (isLoading.value) {
-			isLoading.value = false
-			uni.showToast({ title: '街景加载较慢，已先带你入城', icon: 'none', duration: 2200 })
-		}
+		if (isLoading.value) setSceneLoadFailure('院落准备时间较长，请重新加载或先返回古城。')
 	}, ENTRY_FAILSAFE_TIMEOUT)
 }
 
-/* 逃生按钮回调：用户主动放行，立即收起加载层并停掉所有计时器。 */
-function forceEnterCity() {
+function setSceneLoadFailure(hint = '院落暂未加载成功。请重新加载，或返回古城稍后再来。') {
 	clearLoadWatchdog()
 	clearEntryTimers()
-	loadHint.value = ''
+	isLoading.value = true
+	loadFailed.value = true
+	showEscape.value = true
+	loadProgress.value = 0
+	loadStage.value = ''
+	loadHint.value = hint
+}
+
+function beginSceneLoad(action) {
+	isLoading.value = true
+	loadFailed.value = false
 	showEscape.value = false
-	isLoading.value = false
+	loadProgress.value = 0
+	loadHint.value = ''
+	loadStage.value = action === 'loadScene' ? '正在前往下一座院落…' : '正在准备古城院落…'
+	lastSceneCmdAction = action
+	lastSceneCmdPayload = { ...buildScenePayload(), requestId: ++sceneRequestId }
+	armLoadWatchdog()
+	armEntryFailsafe()
+	sendToRenderjs(action, lastSceneCmdPayload)
+}
+
+function retryScene() {
+	if (!showEscape.value) return
+	activePoiId.value = ''
+	nearActivePoiId.value = ''
+	initAttempts = 0
+	beginSceneLoad('reinit')
+}
+
+function returnToCity() {
+	clearLoadWatchdog()
+	clearEntryTimers()
+	sendToRenderjs('pause')
+	uni.switchTab({ url: '/pages/index/index' })
 }
 
 function initScene() {
-	isLoading.value = true
-	loadProgress.value = 0
-	loadStage.value = '正在准备街景数据…'
 	initAttempts = 0
-	lastSceneCmdAction = 'init'
-	lastSceneCmdPayload = buildScenePayload()
-	armLoadWatchdog()
-	sendToRenderjs('init', lastSceneCmdPayload)
+	beginSceneLoad('init')
 }
 
 function loadCurrentScene() {
-	isLoading.value = true
-	loadProgress.value = 0
-	loadStage.value = '正在切换街景…'
 	initAttempts = 0
-	lastSceneCmdAction = 'loadScene'
-	lastSceneCmdPayload = buildScenePayload()
-	armLoadWatchdog()
-	sendToRenderjs('loadScene', lastSceneCmdPayload)
+	beginSceneLoad('loadScene')
+}
+
+function settleLoadedScene() {
+	markStreetSceneVisited(currentStreet.value.id)
 	const result = advanceQuestByEvent(EVENT_TYPES.sceneLoaded, { sceneId: currentStreet.value.id })
 	if (result.updated) {
 		scenePulseText.value = result.stageLine
@@ -539,6 +600,7 @@ function loadCurrentScene() {
 		handleQuestComplete(trackedQuest.value.id)
 		return
 	}
+	refreshRuntimeState()
 	// 换幕开场白：接通此前从未被调用的 SCENE_CUES（kind:'scene'），晋小鸦按街景道一句开场，
 	// 强化"切场也有引导"。不覆盖常驻消息（刚领奖 / 任务卷轴等 autoHide=false 的气泡）。
 	if (!(npcVisible.value && !npcAutoHide.value)) {
@@ -557,9 +619,27 @@ function applyPhaseToScene() {
 	sendToRenderjs('applyPhase', { phase: serializePhase(currentPhase.value) })
 }
 
+function selectScenePhase(key) {
+	phaseMode.value = key
+	currentPhase.value = key === 'auto' ? getCurrentPhase() : getPhase(key)
+	applyPhaseToScene()
+}
+
+function handleSceneControl(action) {
+	if (action === 'run') runningMode.value = !runningMode.value
+	if (action === 'portrait') portraitMode.value = !portraitMode.value
+	if (action === 'reset') portraitMode.value = false
+	sendToRenderjs('sceneControl', { action, running: runningMode.value, portrait: portraitMode.value })
+}
+
+watch(() => Boolean(isLoading.value || activePoiId.value || wardrobeOpen.value || settingsOpen.value || showRewardPopup.value || showEntranceAnim.value), (blocked) => {
+	sendToRenderjs('blockInput', { blocked })
+})
+
 function watchPhase() {
 	if (phaseWatchTimer) return
 	phaseWatchTimer = setInterval(() => {
+		if (phaseMode.value !== 'auto') return
 		const next = getCurrentPhase()
 		if (next.key !== currentPhase.value.key) {
 			currentPhase.value = next
@@ -590,11 +670,14 @@ function handlePoiEnter(poiId) {
 	if (!poi) return
 	activePoiId.value = poiId
 	nearActivePoiId.value = poiId
-	markPoiVisited(poiId)
+	const visited = markPoiVisited(poiId)
 	setCurrentPoi(poiId, poi.npcTopic)
 	userProgress.value = getStorage(STORAGE_KEYS.userProgress, {})
+	if (visited === null) { recordPoiProgressFailure('visit', poiId); return }
 
 	const result = advanceQuestByEvent(EVENT_TYPES.poiEntered, { poiId, sceneId: currentStreet.value.id })
+	if (result.error) { recordPoiProgressFailure('visit', poiId); return }
+	clearPoiProgressFailure('visit', poiId)
 	scenePulseText.value = result.stageLine || poi.npcTopic
 	npcMessage.value = getContextualNpcCue({
 		kind: 'enter',
@@ -628,7 +711,8 @@ function handlePoiEnter(poiId) {
 	refreshRuntimeState()
 }
 
-function handlePoiLeave() {
+function handlePoiLeave(poiId) {
+	if (poiId && poiId !== nearActivePoiId.value) return
 	nearActivePoiId.value = ''
 	if (npcAutoHide.value) {
 		npcVisible.value = false
@@ -660,12 +744,14 @@ function handlePoiApproach(poiId) {
 
 function playPoiTopic() {
 	if (!activePoi.value) return
-	markNpcTalk(activePoi.value.npcTopic)
-	playSFX(SFX.NPC_TALK)
 	const result = advanceQuestByEvent(EVENT_TYPES.npcDialogCompleted, {
 		poiId: activePoi.value.id,
 		topic: activePoi.value.npcTopic
 	})
+	if (result.error) { recordPoiProgressFailure('talk', activePoi.value.id); return }
+	clearPoiProgressFailure('talk', activePoi.value.id)
+	markNpcTalk(activePoi.value.npcTopic)
+	playSFX(SFX.NPC_TALK)
 	scenePulseText.value = result.stageLine || activePoi.value.npcTopic
 	npcMessage.value = result.stageLine || activePoi.value.npcTopic
 	npcVisible.value = true
@@ -685,11 +771,13 @@ function handleSceneInteraction() {
 		buildingId: activePoi.value.id,
 		buildingType: activePoi.value.type
 	})
-	scenePulseText.value = result.stageLine || `你已在 ${activePoi.value.name} 留下新的旅程印记。`
+	if (result.error) { recordPoiProgressFailure('explore', activePoi.value.id); return }
+	clearPoiProgressFailure('explore', activePoi.value.id)
+	scenePulseText.value = result.stageLine || `你已查看 ${activePoi.value.name} 的线索。`
 	if (result.microReward) {
 		announceMicroReward(result.microReward)
 	} else {
-		showFloatingText(result.objectiveCompleted ? '线索已记入行旅册' : '街景回响已收录', 'exp')
+		showFloatingText(result.objectiveCompleted ? '线索已记入行旅册' : '已查看此处线索', 'exp')
 	}
 	npcMessage.value = scenePulseText.value
 	npcVisible.value = true
@@ -704,7 +792,10 @@ function handleSceneInteraction() {
 function handleQuestComplete(questId) {
 	const oldLevel = getLevelMeta(userProgress.value.exp || 0)
 	const result = completeQuestAndCollectFeedback(questId)
-	if (!result) return
+	if (!result) {
+		uni.showToast({ title: '奖励未保存，请再次交互重试', icon: 'none' })
+		return
+	}
 	playSFX(SFX.QUEST_COMPLETE)
 
 	userProgress.value = getStorage(STORAGE_KEYS.userProgress, {})
@@ -789,12 +880,41 @@ function handleNpcClose() {
 
 function closePoi() {
 	activePoiId.value = ''
+	npcVisible.value = false
+}
+
+function openNearbyPoi() {
+	if (!interactionCard.value) return
+	activePoiId.value = nearbyPoi.value.id
+	setCurrentPoi(nearbyPoi.value.id, nearbyPoi.value.npcTopic)
+	npcVisible.value = false
+}
+
+function recordPoiProgressFailure(action, poiId) {
+	poiProgressFailure.value = { action, poiId }
+	floatingText.value.visible = false
+	npcVisible.value = false
+	refreshRuntimeState()
+}
+
+function clearPoiProgressFailure(action, poiId) {
+	const failure = poiProgressFailure.value
+	if (failure?.action === action && failure.poiId === poiId) poiProgressFailure.value = null
+}
+
+function retryPoiProgress() {
+	if (!poiProgressError.value) return
+	const { action, poiId } = poiProgressFailure.value
+	if (action === 'visit') handlePoiEnter(poiId)
+	else if (action === 'talk') playPoiTopic()
+	else if (action === 'explore') handleSceneInteraction()
 }
 
 /* 收藏当前 POI（行旅册「心头好」）。 */
 function toggleFav() {
 	if (!activePoi.value) return
 	const r = toggleFavoritePoi(activePoi.value.id)
+	if (!r.ok) { uni.showToast({ title: '保存失败，请重试', icon: 'none' }); return }
 	journalTick.value++
 	playSFX(SFX.REWARD)
 	uni.showToast({ title: r.favorited ? '已收入心头好' : '已取消收藏', icon: 'none' })
@@ -811,7 +931,10 @@ function editNote() {
 		content: getJournalNote(poiId),
 		success: (res) => {
 			if (!res.confirm) return
-			setJournalNote(poiId, res.content || '')
+			if (setJournalNote(poiId, res.content || '') === null) {
+				uni.showToast({ title: '保存失败，请重试', icon: 'none' })
+				return
+			}
 			journalTick.value++
 			uni.showToast({ title: '已记入行旅册', icon: 'none' })
 		}
@@ -825,8 +948,30 @@ function handleHudAction(action) {
 	} else if (action === 'quest') {
 		uni.switchTab({ url: '/pages/user/user' })
 	} else if (action === 'settings') {
-		uni.navigateTo({ url: '/pages_game/dialog/dialog' })
+		gameplaySettings.value = getGameplaySettings()
+		sceneControlOpen.value = false
+		settingsOpen.value = true
 	}
+}
+
+function changeGameplaySetting({ key, enabled }) {
+	const result = updateGameplaySetting(key, enabled)
+	gameplaySettings.value = result.settings
+	if (!result.ok) {
+		uni.showToast({ title: '设置未能保存，请重试', icon: 'none' })
+		return
+	}
+	if (key === 'enableEffect') sendToRenderjs('applySettings', { effectsEnabled: result.settings.enableEffect })
+}
+
+function openGuide() {
+	settingsOpen.value = false
+	uni.navigateTo({ url: '/pages_game/dialog/dialog' })
+}
+
+function leaveForCity() {
+	settingsOpen.value = false
+	returnToCity()
 }
 
 /* 街景内换装回调：把新装备的化身皮肤热下发给 renderjs，立刻重建玩家化身（不重载整场景）。 */
@@ -849,37 +994,62 @@ function switchStreetById(sceneId) {
 	loadCurrentScene()
 }
 
-// 步数批量写入：避免每步都触发 storage 同步
-let pendingStepDelta = 0
+// 步数批量写入：停止移动也会定时落盘，失败不丢增量、不高频重试。
 let lastStepFlush = 0
-const STEP_FLUSH_INTERVAL = 800  // ms
-const STEP_FLUSH_MIN_DELTA = 5   // 至少累积 5 步再写
+let stepFlushTimer = null
+let stepRetryAt = 0
+let stepSavingSuspended = false
+let stepSaveWarningShown = false
+const STEP_FLUSH_INTERVAL = 800
+const STEP_FLUSH_MIN_DELTA = 5
+const STEP_RETRY_INTERVAL = 3000
+
+function clearStepFlushTimer() {
+	if (stepFlushTimer !== null) clearTimeout(stepFlushTimer)
+	stepFlushTimer = null
+}
+
+function scheduleStepFlush(delay) {
+	if (stepSavingSuspended || renderCommandDisposed || stepFlushTimer !== null || !stepBuffer.pending) return
+	stepFlushTimer = setTimeout(() => { stepFlushTimer = null; flushSteps(true) }, delay)
+}
 
 function flushSteps(force = false) {
-	if (pendingStepDelta <= 0) return
+	if (force) clearStepFlushTimer()
+	if (!stepBuffer.pending) return
 	const now = Date.now()
-	if (!force && pendingStepDelta < STEP_FLUSH_MIN_DELTA && now - lastStepFlush < STEP_FLUSH_INTERVAL) return
-	const delta = pendingStepDelta
-	const nextSteps = Number(userProgress.value.steps || 0) + delta
-	pendingStepDelta = 0
+	const wait = Math.max(0, stepRetryAt - now, lastStepFlush + STEP_FLUSH_INTERVAL - now)
+	if (!force && (now < stepRetryAt || (stepBuffer.pending < STEP_FLUSH_MIN_DELTA && wait > 0))) {
+		scheduleStepFlush(wait)
+		return
+	}
+	clearStepFlushTimer()
+	const stepResult = stepBuffer.flush()
 	lastStepFlush = now
-	patchStorageObject(STORAGE_KEYS.userProgress, { steps: nextSteps })
-	userProgress.value = getStorage(STORAGE_KEYS.userProgress, {})
-	// 把步数增量结算进「古城漫步」等步数任务（此前步数与任务系统零耦合，每日任务永远 0/1000）
-	const stepResult = recordSteps(delta)
-	if (stepResult.completed && stepResult.completed.length) {
+	if (!stepResult.ok) {
+		stepRetryAt = now + STEP_RETRY_INTERVAL
+		if (!stepSaveWarningShown) uni.showToast({ title: '步数暂未保存，请保留游戏，将自动重试', icon: 'none', duration: 2600 })
+		stepSaveWarningShown = true
+		scheduleStepFlush(STEP_RETRY_INTERVAL)
+	} else {
+		stepRetryAt = 0
+		stepSaveWarningShown = false
+	}
+	if (stepResult.accepted) {
 		userProgress.value = getStorage(STORAGE_KEYS.userProgress, {})
+	}
+	if (stepResult.completed.length) {
+		refreshRuntimeState()
 		const done = stepResult.completed[0]
 		uni.showToast({ title: `${done.quest.title} 达成 · 银钥+${done.rewards.silverKey}`, icon: 'none', duration: 2200 })
 	}
 }
 
 function handlePlayerMove(detail) {
-	// steps 为 renderjs 按实际移动距离（约 0.72m/步）累计的步数；显式传入即按其计（含 0），未传入按 1 兜底。
-	const stepDelta = (detail && detail.steps !== undefined) ? Math.max(0, Number(detail.steps) || 0) : 1
-	pendingStepDelta += stepDelta
-	flushSteps(false)
-	if (detail && typeof detail.x === 'number' && typeof detail.z === 'number') {
+	// renderjs 按碰撞后真实移动距离计步；只有明确的有限正整数增量能进入存档。
+	stepBuffer.add(detail?.steps)
+	flushSteps(Boolean(detail?.flush) || stepSavingSuspended || renderCommandDisposed)
+	if (Number.isFinite(detail?.x) && Number.isFinite(detail?.z)) {
 		const prev = playerWorldPos.value
 		const dx = detail.x - prev.x
 		const dz = detail.z - prev.z
@@ -919,7 +1089,6 @@ onLoad(() => {
 
 		markPageVisit('street', { returnPage: '/pages_game/street/street' })
 		rememberReturnContext('/pages_game/street/street', '')
-		uni.hideTabBar()
 
 		const initialStreet = getCurrentStreetScene()
 		if (initialStreet?.id && streetMap[initialStreet.id]) {
@@ -947,7 +1116,7 @@ onLoad(() => {
 onMounted(() => {
 	// 绝对兜底最先武装：不依赖 initScene / onLoad 的任何分支，保证所有路径都不会永久卡在加载层。
 	armEntryFailsafe()
-	loadStage.value = '等待 3D 视图就绪…'
+	loadStage.value = '正在准备古城画面…'
 	try {
 		// 非序章玩家：在此触发场景初始化。此时 renderjs 视图已挂载，
 		// sceneCmd 的变更会被 :change 观察器稳定捕获（renderjs → 逻辑层回调走 callMethod('handleRenderMsg')）。
@@ -959,13 +1128,15 @@ onMounted(() => {
 		// 街景是核心沉浸场景：进入即起环境 BGM（受"音效"开关与素材是否就位双重兜底，缺文件不报错）。
 		playBGM(BGM.STREET_AMBIENT)
 	} catch (e) {
-		// 即便初始化链抛错，加载层也由 armEntryFailsafe 到点兜底放行，绝不永久卡死。
+		setSceneLoadFailure()
 	}
 })
 
 onUnmounted(() => {
+	renderCommandDisposed = true
+	stepSavingSuspended = true
+	renderCommandQueue.length = 0
 	releaseOrientationLock()
-	uni.showTabBar()
 	flushSteps(true)
 	stopWatchPhase()
 	stopBGM()
@@ -973,8 +1144,14 @@ onUnmounted(() => {
 	clearEntryTimers()
 })
 
-onHide(() => { flushSteps(true); sendToRenderjs('pause') })
-onShow(() => { sendToRenderjs('resume') })
+onHide(() => { stepSavingSuspended = true; flushSteps(true); stopBGM(); sendToRenderjs('pause') })
+onShow(() => {
+	stepSavingSuspended = false
+	flushSteps(true)
+	gameplaySettings.value = getGameplaySettings()
+	sendToRenderjs('applySettings', { effectsEnabled: gameplaySettings.value.enableEffect })
+	resumeBGM(); playBGM(BGM.STREET_AMBIENT); sendToRenderjs('resume')
+})
 
 /* 显式暴露给 renderjs 的 $ownerInstance.callMethod('handleRenderMsg') 调用：
    确保 Vue3 <script setup> 下回传通道可达，不依赖编译器隐式暴露（否则 render-ready 可能永远到不了逻辑层）。 */
@@ -982,7 +1159,7 @@ defineExpose({ handleRenderMsg })
 
 /* H5(vue3) 关键修复：uni-h5 的 callMethod 实现是 `this.$vm[funcName]`，即在「页面公共实例代理」上找方法；
    而 <script setup> 里 defineExpose 的方法只进 instance.exposed、不在公共代理上，故 H5 端 callMethod 静默落空、
-   renderjs→逻辑层桥彻底失效（render-ready/poi/player-move 全到不了，加载层只能靠 14s 兜底收起）。
+   renderjs→逻辑层桥彻底失效（render-ready/poi/player-move 全到不了，成功画面也无法解除加载状态）。
    这里把 handleRenderMsg 直接挂到实例代理上，让 callMethod 能命中。APP 端走 ownerId/JSBridge 路径，不受影响。 */
 const __inst = getCurrentInstance()
 if (__inst && __inst.proxy) {
@@ -997,6 +1174,7 @@ let camera = null
 let renderer = null
 let composer = null
 let bloomPassRef = null
+let bloomPrepared = false
 let fxaaPassRef = null
 let gradePassRef = null
 let environmentTarget = null
@@ -1015,6 +1193,7 @@ let particles = null
 let ambientActors = []
 let animationMixers = []
 let phaseTransition = null
+let phaseVisualState = { environment: .36, effects: 0, warmth: .018, bloom: .16 }
 let calligraphyReady = false
 let calligraphyLoading = null
 let playerModelGeneration = 0
@@ -1034,6 +1213,10 @@ let currentWorldLayout = null
 let ownerInstanceRef = null
 let resizeHandlerRef = null
 let cameraTargetVec = null
+let cameraOriginVec = null
+let cameraPlacementCandidate = null
+let cameraPlacementBest = null
+let cameraProbeHit = null
 let cameraPositionVec = null
 let cameraYaw = 0
 let cameraYawCenter = 0
@@ -1046,14 +1229,30 @@ let qualityFrameCount = 0
 let qualityAdjusted = false
 let assetLoadGeneration = 0
 let bootGeneration = 0
+let activeRenderRequest = null
+let pendingSceneReady = null
 let pagePaused = false
 let visibilityHandlerRef = null
 let contextLostHandlerRef = null
 let contextRestoredHandlerRef = null
 let bloomSuppressed = false
+let bloomRetryAfter = 0
+let bloomRecoverySamples = 0
 let lanternLightSources = []
+let lanternShellMaterials = []
 let lastLightUpdate = 0
 let sceneMaterialPool = new Map()
+let worldColliders = []
+let cameraOccluders = []
+let windClothMeshes = []
+let collisionSphere = null, collisionNearest = null, collisionNearby = []
+let cameraProbe = null
+let cameraProbeDirection = null
+let inputBlocked = false
+let runningEnabled = false
+let portraitCamera = false
+let phaseSkyBlend = null
+let stoneTextureLoading = false
 /* 摇杆监听清理句柄：createJoystick 绑定时赋值，dispose/reinit 时调用，避免重复进入时监听堆叠（僵尸监听泄漏）。*/
 let joystickCleanup = null
 /* 画面特效（Bloom 后处理）总开关：由逻辑层依 gameSettings.enableEffect 下发。关闭则直接渲染、跳过 composer，
@@ -1097,7 +1296,11 @@ let skyTextureCache = {}
 let brocadeTextureLoading = false
 let rooflineTextureLoading = false
 
-const PLAYER_MODEL_PATH = 'static/models/pingyao-character.glb'
+const PLAYER_MODEL_PATH = 'static/models/pingyao-merchant-hero.glb'
+// Mesh samples across the actual clips, with clearance for interpolation and cloth motion.
+const CHARACTER_COLLISION_RADIUS = { player: .79, pedestrian: .56 }
+// Calibrated against actual sole travel during contact, in model metres/clip second.
+const CHARACTER_GAIT_SPEED = { walk: 1.15, run: 5.1 }
 const CALLIGRAPHY_FAMILY = 'PingyaoBrush'
 
 /* renderjs → 逻辑层：通过 $ownerInstance.callMethod 回调逻辑层的 handleRenderMsg。
@@ -1118,6 +1321,14 @@ function flushEmits() {
 	queued.forEach((item) => ownerInstanceRef.callMethod('handleRenderMsg', { detail: { type: item.name, data: item.detail } }))
 }
 
+function sceneRequest(data) {
+	return { requestId: data?.requestId, sceneId: data?.streetData?.id }
+}
+
+function emitRenderError(error, request = activeRenderRequest, contextLost = false) {
+	emit('render-error', { ...request, error: error?.message || String(error), contextLost })
+}
+
 function colorHex(value, fallback) {
 	const raw = typeof value === 'string' && value.startsWith('#') ? value.slice(1) : null
 	if (raw && /^[0-9a-fA-F]{6}$/.test(raw)) return parseInt('0x' + raw)
@@ -1135,10 +1346,56 @@ export default {
 		this.dispose()
 	},
 	methods: {
+		configureColorManagement() {
+			// r146 defaults to legacy input colors; hexadecimal art colors are sRGB.
+			if (THREE.ColorManagement && 'legacyMode' in THREE.ColorManagement) THREE.ColorManagement.legacyMode = false
+		},
+		makeSceneColor(value) {
+			const color = new THREE.Color(value)
+			return THREE.ColorManagement?.legacyMode === false ? color : color.convertSRGBToLinear()
+		},
 		setColorTexture(texture) {
 			if ('colorSpace' in texture) texture.colorSpace = THREE.SRGBColorSpace
 			else texture.encoding = THREE.sRGBEncoding
 			return texture
+		},
+		prepareSurfaceColorTexture(texture) {
+			this.setColorTexture(texture)
+			// r146 disables mipmaps for WebGL1 EXT_sRGB textures. Decode static
+			// surface images once so distant masonry and paving can use mipmaps.
+			// Keep animated sky canvases on their existing live sRGB path.
+			if (renderer?.capabilities?.isWebGL2 === false && texture.image) {
+				if (texture.userData.linearSurfaceImage !== texture.image) {
+					texture.image = this.decodeSurfaceColorImage(texture.image)
+					texture.userData.linearSurfaceImage = texture.image
+				}
+				texture.encoding = THREE.LinearEncoding
+				texture.format = THREE.RGBAFormat
+				texture.generateMipmaps = true
+				texture.minFilter = THREE.LinearMipmapLinearFilter
+			}
+			return texture
+		},
+		decodeSurfaceColorImage(image) {
+			let canvas = null, context = null, pixels
+			if (image.data) pixels = { data: image.data.slice(), width: image.width, height: image.height }
+			else {
+				canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height
+				context = canvas.getContext('2d'); context.drawImage(image, 0, 0)
+				pixels = context.getImageData(0, 0, image.width, image.height)
+			}
+			const lookup = new Uint8Array(256)
+			for (let value = 0; value < 256; value++) {
+				const channel = value / 255
+				lookup[value] = Math.round(255 * (channel <= .04045 ? channel / 12.92 : Math.pow((channel + .055) / 1.055, 2.4)))
+			}
+			// Alpha is coverage, not an sRGB color channel. The r146 ImageUtils
+			// conversion also changes alpha, so use an explicit RGB-only pass.
+			for (let index = 0; index < pixels.data.length; index += 4) {
+				for (let channel = 0; channel < 3; channel++) pixels.data[index + channel] = lookup[pixels.data[index + channel]]
+			}
+			if (context) { context.putImageData(pixels, 0, 0); return canvas }
+			return pixels
 		},
 		readBinaryAsset(src) {
 			const candidates = getAssetCandidates(src)
@@ -1200,7 +1457,10 @@ export default {
 			root?.traverse((item) => {
 				const materials = Array.isArray(item.material) ? item.material : [item.material]
 				materials.filter(Boolean).forEach((material) => {
-					if ('envMapIntensity' in material) material.envMapIntensity = intensity
+					if ('envMapIntensity' in material) {
+						material.envMapIntensity = intensity
+						phaseTransition?.environmentMaterials.add(material)
+					}
 				})
 			})
 		},
@@ -1230,8 +1490,8 @@ export default {
 					const m = mesh.material
 					if (!mesh.isMesh || !m || Array.isArray(m) || m.transparent || mesh.isInstancedMesh) return
 					const materialKey = JSON.stringify([m.type, m.color?.getHex(), m.emissive?.getHex(), m.emissiveIntensity,
-						m.map?.uuid, m.emissiveMap?.uuid, m.roughness, m.metalness, m.side, m.flatShading, m.toneMapped,
-						Boolean(mesh.userData.isWindowGlow), Boolean(mesh.userData.isBuildingLantern)])
+						m.map?.uuid, m.emissiveMap?.uuid, m.bumpMap?.uuid, m.bumpScale, m.roughnessMap?.uuid, m.roughness, m.metalness, m.side, m.flatShading, m.toneMapped,
+						Boolean(mesh.userData.isWindowGlow), Boolean(mesh.userData.isBuildingLantern), Boolean(mesh.userData.isLanternShell)])
 					if (!sceneMaterialPool.has(materialKey)) sceneMaterialPool.set(materialKey, m)
 					const key = materialKey + ':' + mesh.castShadow + ':' + mesh.receiveShadow
 					if (!buckets.has(key)) buckets.set(key, { material: sceneMaterialPool.get(materialKey), meshes: [] })
@@ -1271,24 +1531,141 @@ export default {
 			removedGeometries.forEach((g) => { if (!liveGeometries.has(g)) g.dispose() })
 			removedMaterials.forEach((m) => { if (!liveMaterials.has(m)) m.dispose() })
 		},
-		syncBloomSize() {
-			if (!renderer || !bloomPassRef) return
+		getRenderResolutionLimit(width, height) {
+			const compact = Math.min(width, height) <= 520
+			const deviceRatio = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1
+			// Bound render-target area as well as pixel density. High-DPI phones can
+			// recover finer detail without allocating their full native-resolution buffers.
+			const pixelBudget = compact ? 1600000 : 3200000
+			return Math.min(deviceRatio, compact ? 1.75 : 1.6, Math.sqrt(pixelBudget / Math.max(1, width * height)))
+		},
+		setRenderResolution(width, height, pixelRatio = renderPixelRatio) {
+			if (!renderer) return
+			const limit = this.getRenderResolutionLimit(width, height)
+			renderPixelRatio = Math.max(Math.min(.85, limit), Math.min(limit, pixelRatio))
+			renderer.setPixelRatio(renderPixelRatio)
+			renderer.setSize(width, height)
+			if (composer) {
+				if (composer.setPixelRatio) composer.setPixelRatio(renderPixelRatio)
+				composer.setSize(width, height)
+			}
+			this.syncPostprocessingSize()
+		},
+		syncPostprocessingSize() {
+			if (!renderer) return
 			const size = renderer.getSize(new THREE.Vector2())
+			const bufferWidth = Math.max(1, Math.floor(size.x * renderPixelRatio))
+			const bufferHeight = Math.max(1, Math.floor(size.y * renderPixelRatio))
+			if (fxaaPassRef) fxaaPassRef.material.uniforms.resolution.value.set(1 / bufferWidth, 1 / bufferHeight)
 			const compact = Math.min(size.x, size.y) <= 520
-			bloomPassRef.setSize(Math.max(1, Math.floor(size.x * renderPixelRatio * (compact ? 0.5 : 0.75))), Math.max(1, Math.floor(size.y * renderPixelRatio * (compact ? 0.5 : 0.75))))
+			if (bloomPassRef) bloomPassRef.setSize(Math.max(1, Math.floor(bufferWidth * (compact ? 0.5 : 0.75))), Math.max(1, Math.floor(bufferHeight * (compact ? 0.5 : 0.75))))
 		},
 		pauseRendering() {
+			this.flushPendingMovement()
 			if (animationId) cancelAnimationFrame(animationId)
 			animationId = null
 			joystickInput = { dx: 0, dy: 0 }
 			movementVelocity.x = 0
 			movementVelocity.z = 0
+			if (player?.userData) { player.userData.motionTurning = false; player.userData.turnRate = 0 }
+		},
+		disposeEffects() {
+			for (const pass of [bloomPassRef, fxaaPassRef, gradePassRef]) if (pass?.dispose) pass.dispose()
+			if (composer?.dispose) composer.dispose()
+			else if (composer) {
+				composer.renderTarget1?.dispose()
+				composer.renderTarget2?.dispose()
+			}
+			composer = null; bloomPassRef = null; fxaaPassRef = null; gradePassRef = null; bloomPrepared = false
+		},
+		setEffectsEnabled(enabled) {
+			effectsEnabled = enabled
+			if (!renderer || !scene || !camera) return
+			if (composer) {
+				try {
+					if (!enabled && bloomPassRef) {
+						composer.removePass(bloomPassRef); bloomPassRef.dispose(); bloomPassRef = null; bloomPrepared = false
+					} else if (enabled && !bloomPassRef) {
+						const size = renderer.getSize(new THREE.Vector2())
+						bloomPassRef = new THREE.UnrealBloomPass(size, phaseVisualState.bloom, .28, .78)
+						composer.insertPass(bloomPassRef, 1); bloomPrepared = false
+						bloomSuppressed = false; bloomRecoverySamples = 0; bloomRetryAfter = 0
+						this.syncPostprocessingSize()
+					}
+					this.syncPhaseEffects()
+				} catch (error) {
+					this.disposeEffects()
+					console.warn('[street] 灯光特效暂不可用', error)
+				}
+				return
+			}
+			const size = renderer.getSize(new THREE.Vector2()), width = size.x, height = size.y
+			const compact = Math.min(width, height) <= 520 || (typeof navigator !== 'undefined' && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent || ''))
+			let target = null
+			try {
+				target = renderer.capabilities.isWebGL2
+					? new THREE.WebGLRenderTarget(width, height, { samples: compact ? 0 : 4, type: renderer.extensions.has('EXT_color_buffer_float') ? THREE.HalfFloatType : THREE.UnsignedByteType })
+					: undefined
+				composer = new THREE.EffectComposer(renderer, target)
+				composer.addPass(new THREE.RenderPass(scene, camera))
+				if (composer.setPixelRatio) composer.setPixelRatio(renderPixelRatio)
+				if (enabled) {
+					bloomPassRef = new THREE.UnrealBloomPass(new THREE.Vector2(width, height), phaseVisualState.bloom, .28, .78)
+					composer.addPass(bloomPassRef)
+				}
+				// Compact WebGL2 targets have no MSAA; they need the same edge pass
+				// as WebGL1. Canvas antialiasing does not apply to offscreen targets.
+				if ((!renderer.capabilities.isWebGL2 || compact) && THREE.FXAAShader) {
+					fxaaPassRef = new THREE.ShaderPass(THREE.FXAAShader)
+					fxaaPassRef.material.uniforms.resolution.value.set(1 / (width * renderPixelRatio), 1 / (height * renderPixelRatio))
+					composer.addPass(fxaaPassRef)
+				}
+				gradePassRef = new THREE.ShaderPass({
+					uniforms: { tDiffuse: { value: null }, warmth: { value: phaseVisualState.warmth }, effectAmount: { value: phaseVisualState.effects } },
+					vertexShader: 'varying vec2 vUv; void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+					// r146 RenderPass tone-maps into a linear target. Encode only at screen output.
+					fragmentShader: 'uniform sampler2D tDiffuse;uniform float warmth;uniform float effectAmount;varying vec2 vUv;float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}void main(){vec4 c=texture2D(tDiffuse,vUv);float v=1.-smoothstep(.22,.78,distance(vUv,vec2(.5)));c.rgb*=mix(1.,mix(.9,1.,v),effectAmount);c.r+=warmth*effectAmount;c.b-=warmth*.42*effectAmount;c.rgb+=(hash(vUv*900.)-.5)*.003*effectAmount;gl_FragColor=c;\n#include <encodings_fragment>\n}'
+				})
+				gradePassRef.material.toneMapped = false
+				composer.addPass(gradePassRef)
+				this.syncPhaseEffects()
+				bloomSuppressed = false; bloomRecoverySamples = 0; bloomRetryAfter = 0
+				this.syncPostprocessingSize()
+			} catch (error) {
+				if (!composer && target) target.dispose()
+				this.disposeEffects()
+				console.warn('[street] 灯光特效暂不可用', error)
+			}
+		},
+		flushPendingMovement() {
+			if (!player || moveStepAccum <= 0) return
+			const steps = moveStepAccum
+			moveStepAccum = 0
+			emit('player-move', { x: player.position.x, z: player.position.z, steps, flush: true })
+		},
+		updateBloomBudget(fps, now) {
+			if (!composer || !effectsEnabled) return
+			if (fps < 30) {
+				bloomRecoverySamples = 0
+					// The base color/AA pipeline remains active; suppress only the costly glow.
+				if (currentPhaseData?.lanternsLit || phaseVisualState.effects > 0) {
+					bloomSuppressed = true; bloomRetryAfter = now + 20000
+				}
+			} else if (bloomSuppressed) {
+				bloomRecoverySamples = fps > 55 ? bloomRecoverySamples + 1 : 0
+				if (bloomRecoverySamples >= 3 && now >= bloomRetryAfter) {
+					bloomSuppressed = false; bloomRecoverySamples = 0
+				}
+			}
 		},
 		/* ===== 程序化纹理工具（CanvasTexture，零外部图片） ===== */
 		getTexture(key, factory) {
 			if (textureCache[key]) return textureCache[key]
 			const tex = factory()
-			if (tex) textureCache[key] = tex
+			if (tex) {
+				if (tex.encoding === THREE.sRGBEncoding) this.prepareSurfaceColorTexture(tex)
+				textureCache[key] = tex
+			}
 			return tex
 		},
 		makeCanvas(size) {
@@ -1296,6 +1673,254 @@ export default {
 			canvas.width = size
 			canvas.height = size
 			return canvas
+		},
+		makeClothWeaveTexture() {
+			return this.getTexture('hanfu_weave', () => {
+				const canvas = this.makeCanvas(256), ctx = canvas.getContext('2d')
+				ctx.fillStyle = '#858585'; ctx.fillRect(0, 0, 256, 256)
+				for (let y = 0; y < 256; y += 4) for (let x = 0; x < 256; x += 4) {
+					ctx.fillStyle = (x + y) % 8 ? '#a4a4a4' : '#676767'
+					ctx.fillRect(x, y, 3, 1); ctx.fillRect(x, y + 1, 1, 3)
+				}
+				const texture = new THREE.CanvasTexture(canvas)
+				texture.wrapS = texture.wrapT = THREE.RepeatWrapping; texture.repeat.set(5, 5)
+				return texture
+			})
+		},
+		prepareCharacterDeformation(root) {
+			const blinkMeshes = [], clothMeshes = []
+			root.traverse((mesh) => {
+				if (!mesh.isSkinnedMesh) return
+				const blinking = /^(Eyes|Irises|Pupils|Eye_glints|Eyelids|Lashes)/.test(mesh.name)
+				const cloth = /^(Skirt_Robe|Hem_Trim|Sash_tails)/.test(mesh.name)
+				if (!blinking && !cloth) return
+				const base = mesh.geometry.attributes.position, target = base.clone()
+				for (let i = 0; i < base.count; i++) {
+					if (blinking) {
+						target.setY(i, 1.64818 + (base.getY(i) - 1.64818) * 0.035)
+						// The lids close over the eye instead of leaving a bright white slit.
+						if (!/^(Eyelids|Lashes)/.test(mesh.name)) target.setZ(i, base.getZ(i) - .006)
+						else {
+							// Preserve the rim's thickness while its centreline closes. Flattening
+							// every vertex makes eyelashes disappear into a subpixel line.
+							const side = Math.sign(base.getX(i)), center = side * .0365
+							const u = THREE.MathUtils.clamp((base.getX(i) - center) / .039 + .5, 0, 1)
+							const arch = Math.pow(Math.sin(u * Math.PI), .78)
+							const baseline = 1.64818 + side * (base.getX(i) - center) * .0378
+							const lash = /^Lashes/.test(mesh.name), upper = lash || base.getY(i) >= baseline
+							const openY = baseline + (upper ? 1 : -1) * .00675 * arch + (lash ? .000162 : 0)
+							target.setY(i, baseline - .0007 * arch + (base.getY(i) - openY) * .75)
+							target.setZ(i, base.getZ(i) + .0008)
+						}
+					}
+					else {
+						const hem = Math.max(0, (0.99 - base.getY(i)) / 0.68)
+						target.setZ(i, base.getZ(i) + Math.sin(base.getX(i) * 12) * 0.028 * hem)
+					}
+				}
+				mesh.geometry.morphAttributes.position = [target]
+				mesh.updateMorphTargets()
+				;(blinking ? blinkMeshes : clothMeshes).push(mesh)
+			})
+			root.userData.blinkMeshes = blinkMeshes; root.userData.clothMeshes = clothMeshes
+			const groundSamples = []
+			root.traverse(mesh => {
+				if (!mesh.isSkinnedMesh || mesh.material?.name !== 'Soles') return
+				const positions = mesh.geometry.attributes.position
+				// Only the two soles (550 vertices), not the complete character mesh.
+				// Sparse sampling misses the heel during foot roll and sinks it into the paving.
+				for (let i=0; i<positions.count; i++) groundSamples.push({ mesh, index:i })
+			})
+			root.userData.groundSamples = groundSamples
+			root.userData.groundSkeletons = [...new Set(groundSamples.map(sample=>sample.mesh.skeleton))]
+			root.userData.groundPoint = new THREE.Vector3()
+			this.prepareCharacterFootPlant(root)
+			const texture = this.getTexture('contact_shadow', () => {
+				const canvas = this.makeCanvas(128), ctx = canvas.getContext('2d')
+				const gradient = ctx.createRadialGradient(64, 64, 8, 64, 64, 62)
+				gradient.addColorStop(0, 'rgba(0,0,0,.5)'); gradient.addColorStop(.5, 'rgba(0,0,0,.22)'); gradient.addColorStop(1, 'rgba(0,0,0,0)')
+				ctx.fillStyle = gradient; ctx.fillRect(0, 0, 128, 128)
+				return new THREE.CanvasTexture(canvas)
+			})
+			const shadow = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.75), new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false, toneMapped: false }))
+			shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.006; root.add(shadow)
+			root.userData.contactShadow = shadow
+		},
+		prepareCharacterFootPlant(root) {
+			if (!root.getObjectByName('Detail_Soles')) return
+			root.updateMatrixWorld(true)
+			const feet = []
+			for (const side of ['l', 'r']) {
+				const upper = root.getObjectByName('upperleg' + side), lower = root.getObjectByName('lowerleg' + side), foot = root.getObjectByName('foot' + side)
+				if (!upper || !lower || !foot) continue
+				const sole = [], inverse = foot.matrixWorld.clone().invert()
+				for (const sample of root.userData.groundSamples) {
+					const mesh = sample.mesh, indices = mesh.geometry.attributes.skinIndex, weights = mesh.geometry.attributes.skinWeight
+					// This solver is only for the detailed model's rigidly weighted shoes.
+					if (mesh.skeleton.bones[indices.getX(sample.index)] !== foot || weights.getX(sample.index) < .999) continue
+					const point = new THREE.Vector3().fromBufferAttribute(mesh.geometry.attributes.position, sample.index)
+					;(mesh.applyBoneTransform || mesh.boneTransform).call(mesh, sample.index, point)
+					sole.push(point.applyMatrix4(mesh.matrixWorld).applyMatrix4(inverse))
+				}
+				if (!sole.length) continue
+				feet.push({ side, upper, lower, foot, sole, weight: 0, anchor: new THREE.Vector3(), rotation: new THREE.Quaternion(),
+					offset: new THREE.Vector3(), rotationOffset: new THREE.Quaternion(),
+					target: new THREE.Vector3(), desiredRotation: new THREE.Quaternion(),
+					bendPole: new THREE.Vector3(),
+					pose: [upper.quaternion.clone(), lower.quaternion.clone(), foot.quaternion.clone()], saved: false, wasContact: false })
+			}
+			const pelvis = root.getObjectByName('hips')
+			root.userData.footPlant = { feet, pelvis, pelvisPose: pelvis?.position.clone(), pelvisSaved: false, pelvisDrop: 0,
+				previous: root.position.clone(), yaw: root.rotation.y,
+				v: Array.from({ length: 12 }, () => new THREE.Vector3()), q: Array.from({ length: 6 }, () => new THREE.Quaternion()) }
+		},
+		restoreCharacterFootPose(root) {
+			// AnimationMixer caches its last output; restore it before every update so an
+			// unchanged track cannot accidentally accumulate last frame's IK rotations.
+			for (const leg of root.userData.footPlant?.feet || []) if (leg.saved) {
+				leg.upper.quaternion.copy(leg.pose[0]); leg.lower.quaternion.copy(leg.pose[1]); leg.foot.quaternion.copy(leg.pose[2])
+				leg.saved = false
+			}
+			const rig = root.userData.footPlant
+			if (rig?.pelvisSaved) { rig.pelvis.position.copy(rig.pelvisPose); rig.pelvisSaved = false }
+		},
+		releaseCharacterFootPlant(root) {
+			const rig = root.userData.footPlant
+			if (!rig) return
+			for (const leg of rig.feet) { leg.wasContact = false; leg.weight = 0; leg.offset.set(0, 0, 0); leg.rotationOffset.identity() }
+			rig.pelvisDrop = 0
+		},
+		updateCharacterFootPlant(root, speed, deltaTime) {
+			const data = root.userData, rig = data.footPlant
+			if (!rig || deltaTime <= 0) return
+			// Every bone read below goes through getWorld*(), which refreshes its own ancestor
+			// chain, so the whole 100-node hierarchy is not traversed again here.
+			const traveled = Math.hypot(root.position.x - rig.previous.x, root.position.z - rig.previous.z)
+			const yawChange = Math.abs(Math.atan2(Math.sin(root.rotation.y - rig.yaw), Math.cos(root.rotation.y - rig.yaw)))
+			const turning = yawChange / deltaTime > 1.1
+			const valid = speed > .08 && traveled > .00001 && traveled < .3 * root.scale.x && !turning && !data.gestureTime
+			rig.previous.copy(root.position); rig.yaw = root.rotation.y
+			if (!valid && rig.pelvisDrop < .000001 && rig.feet.every(leg => leg.weight < .001)) { this.releaseCharacterFootPlant(root); return }
+			const run = data.actions?.run?.getEffectiveWeight() || 0
+			const walk = data.actions?.walk || data.action
+			const phase = data.locomotionPhase ?? (walk ? walk.time / walk.getClip().duration : 0)
+			const [hip, knee, ankle, target, axis, pole, wantedKnee, from, to, point, scale, rawTarget] = rig.v
+			const [rawRotation, desiredRotation, worldRotation, parentRotation, rotationDelta, requestedRotation] = rig.q
+			let requiredDrop = 0
+			if (rig.pelvis) { rig.pelvisPose.copy(rig.pelvis.position); rig.pelvisSaved = true }
+			for (const leg of rig.feet) {
+				leg.pose[0].copy(leg.upper.quaternion); leg.pose[1].copy(leg.lower.quaternion); leg.pose[2].copy(leg.foot.quaternion); leg.saved = true
+				leg.upper.getWorldPosition(hip); leg.lower.getWorldPosition(knee); leg.foot.getWorldPosition(ankle)
+				axis.subVectors(ankle, hip).normalize()
+				leg.bendPole.subVectors(knee, hip).addScaledVector(axis, -leg.bendPole.dot(axis))
+				// The retargeted clip crosses straight by a fraction of a degree. That
+				// numerical bend must not become a deeply backwards knee after planting.
+				if (leg.bendPole.lengthSq() < .0001 * root.scale.x * root.scale.x) leg.bendPole.set(0, 0, 1).applyQuaternion(root.quaternion)
+				leg.foot.getWorldQuaternion(rawRotation); leg.foot.getWorldScale(scale)
+				let floor = Infinity
+				for (const vertex of leg.sole) floor = Math.min(floor, point.copy(vertex).multiply(scale).applyQuaternion(rawRotation).y + ankle.y)
+				const localPhase = (phase + (leg.side === 'r' ? .5 : 0)) % 1
+				const start = THREE.MathUtils.lerp(.045, .155, run), end = THREE.MathUtils.lerp(.535, .275, run)
+				const contact = valid && floor < .098 && localPhase >= start && localPhase < end && (data.airborneLift || 0) < .012
+				if (contact && !leg.wasContact) { leg.anchor.copy(ankle); leg.rotation.copy(rawRotation) }
+				leg.wasContact = contact
+				const envelope = THREE.MathUtils.smoothstep(localPhase, start, start + .035)
+				const offset = Math.hypot(ankle.x - leg.anchor.x, ankle.z - leg.anchor.z) / root.scale.x
+				const limit = THREE.MathUtils.lerp(.18, .09, run)
+				const release = 1 - THREE.MathUtils.smoothstep(offset, limit * .65, limit)
+				if (contact) {
+					leg.weight = THREE.MathUtils.clamp(envelope * release, Math.max(0, leg.weight - deltaTime * 8), Math.min(1, leg.weight + deltaTime * 24))
+					desiredRotation.copy(rawRotation).slerp(leg.rotation, leg.weight)
+					target.copy(ankle).lerp(leg.anchor, leg.weight)
+					const correction = Math.hypot(target.x - ankle.x, target.z - ankle.z)
+					if (correction > limit * root.scale.x) {
+						const fraction = limit * root.scale.x / correction
+						target.x = ankle.x + (target.x - ankle.x) * fraction; target.z = ankle.z + (target.z - ankle.z) * fraction
+					}
+				} else {
+					// Carry the last correction into the swing/stop and release it smoothly.
+					// Returning immediately to the clip on liftoff creates a visible foot snap.
+					const decay = Math.exp(-26 * deltaTime)
+					leg.weight *= decay; leg.offset.multiplyScalar(decay)
+					leg.rotationOffset.slerp(rotationDelta.identity(), 1 - decay)
+					target.copy(ankle).add(leg.offset)
+					desiredRotation.copy(leg.rotationOffset).multiply(rawRotation)
+				}
+				if (leg.weight < .001) {
+					leg.weight = 0; leg.offset.set(0, 0, 0); leg.rotationOffset.identity()
+					target.copy(ankle); desiredRotation.copy(rawRotation)
+				}
+				let bottom = Infinity
+				for (const vertex of leg.sole) bottom = Math.min(bottom, point.copy(vertex).multiply(scale).applyQuaternion(desiredRotation).y)
+				// Preserve foot roll on release, while keeping every sole vertex above the paving.
+				target.y = floor - bottom
+				const a = hip.distanceTo(knee), b = knee.distanceTo(ankle), maximum = a + b - .00001
+				rawTarget.copy(target)
+				requestedRotation.copy(desiredRotation)
+				// Fit the fixed-length leg and the existing collider. Reduce the correction,
+				// never scale a bone or move the collision body to reach an impossible anchor.
+				let fraction = 1, lowerFraction = 0, upperFraction = 1, safe = false
+				for (let attempt = 0; attempt < 10; attempt++) {
+					target.copy(ankle).lerp(rawTarget, fraction)
+					desiredRotation.copy(rawRotation).slerp(requestedRotation, fraction)
+					bottom = Infinity
+					for (const vertex of leg.sole) bottom = Math.min(bottom, point.copy(vertex).multiply(scale).applyQuaternion(desiredRotation).y)
+					target.y = floor - bottom
+					let radius = 0
+					for (const vertex of leg.sole) {
+						point.copy(vertex).multiply(scale).applyQuaternion(desiredRotation).add(target)
+						radius = Math.max(radius, Math.hypot(point.x - root.position.x, point.z - root.position.z))
+					}
+					const horizontal = Math.hypot(target.x - hip.x, target.z - hip.z)
+					const drop = hip.y - target.y - Math.sqrt(Math.max(0, maximum*maximum - horizontal*horizontal))
+					safe = horizontal < maximum && drop < .035 * root.scale.y && radius < (data.collisionRadius || .79 * root.scale.x) - .03 * root.scale.x
+					if (safe) { lowerFraction = fraction; if (attempt === 0 || attempt === 9) break }
+					else upperFraction = fraction
+					// Last pass returns the known safe point, without a half-weight discontinuity.
+					fraction = attempt === 8 ? lowerFraction : (lowerFraction + upperFraction) * .5
+				}
+				leg.weight *= fraction
+				if (!safe) { leg.weight = 0; target.copy(ankle); desiredRotation.copy(rawRotation) }
+				leg.offset.subVectors(target, ankle)
+				leg.rotationOffset.copy(rawRotation).invert().premultiply(desiredRotation)
+				leg.target.copy(target); leg.desiredRotation.copy(desiredRotation)
+				const horizontal = Math.hypot(target.x - hip.x, target.z - hip.z)
+				requiredDrop = Math.max(requiredDrop, hip.y - target.y - Math.sqrt(Math.max(0, maximum*maximum - horizontal*horizontal)))
+			}
+			// A small pelvis adjustment gives a planted, almost straight leg room to bend.
+			// Both ankles are solved afterwards, so lowering the hips cannot sink the other shoe.
+			rig.pelvisDrop = Math.min(.035 * root.scale.y, Math.max(requiredDrop, rig.pelvisDrop * Math.exp(-18 * deltaTime)))
+			if (rig.pelvis && rig.pelvisDrop > .000001) {
+				rig.pelvis.getWorldPosition(point); point.y -= rig.pelvisDrop
+				rig.pelvis.position.copy(rig.pelvis.parent.worldToLocal(point))
+			}
+			for (const leg of rig.feet) {
+				if (!leg.weight && rig.pelvisDrop < .000001) continue
+				leg.upper.getWorldPosition(hip); leg.lower.getWorldPosition(knee); leg.foot.getWorldPosition(ankle)
+				target.copy(leg.target); desiredRotation.copy(leg.desiredRotation)
+				const a = hip.distanceTo(knee), b = knee.distanceTo(ankle)
+				axis.subVectors(target, hip); const distance = axis.length(); axis.multiplyScalar(1 / Math.max(.00001, distance))
+				// Preserve the animated bend plane. Projecting the old knee directly onto
+				// the new ankle axis can flip the knee when a nearly straight leg plants.
+				pole.copy(leg.bendPole).addScaledVector(axis, -pole.dot(axis))
+				if (pole.lengthSq() < .000001) pole.set(0, 0, 1).applyQuaternion(root.quaternion).addScaledVector(axis, -pole.dot(axis))
+				pole.normalize()
+				const along = (a*a - b*b + distance*distance) / (2 * distance)
+				wantedKnee.copy(hip).addScaledVector(axis, along).addScaledVector(pole, Math.sqrt(Math.max(0, a*a - along*along)))
+				from.subVectors(knee, hip).normalize(); to.subVectors(wantedKnee, hip).normalize()
+				rotationDelta.setFromUnitVectors(from, to)
+				leg.upper.getWorldQuaternion(worldRotation); leg.upper.parent.getWorldQuaternion(parentRotation).invert()
+				leg.upper.quaternion.copy(parentRotation.multiply(rotationDelta.multiply(worldRotation)))
+				leg.upper.updateMatrixWorld(true)
+				leg.lower.getWorldPosition(knee); leg.foot.getWorldPosition(ankle)
+				from.subVectors(ankle, knee).normalize(); to.subVectors(target, knee).normalize()
+				rotationDelta.setFromUnitVectors(from, to)
+				leg.lower.getWorldQuaternion(worldRotation); leg.lower.parent.getWorldQuaternion(parentRotation).invert()
+				leg.lower.quaternion.copy(parentRotation.multiply(rotationDelta.multiply(worldRotation)))
+				leg.lower.updateMatrixWorld(true)
+				leg.foot.parent.getWorldQuaternion(parentRotation).invert()
+				leg.foot.quaternion.copy(parentRotation.multiply(desiredRotation)); leg.foot.updateMatrixWorld(true)
+			}
 		},
 		/* 生成式晋商织锦贴图按需加载：只有高阶服饰会触发，普通玩家首屏不增加下载负担。 */
 		getBrocadeTexture() {
@@ -1312,7 +1937,7 @@ export default {
 				texture.wrapS = THREE.RepeatWrapping
 				texture.wrapT = THREE.RepeatWrapping
 				texture.repeat.set(2.25, 2.25)
-				this.setColorTexture(texture)
+				this.prepareSurfaceColorTexture(texture)
 				texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy())
 				texture.needsUpdate = true
 				textureCache.pingyao_brocade = texture
@@ -1330,102 +1955,33 @@ export default {
 			return null
 		},
 		/* 青砖墙：横向砖块 + 砖缝 + 轻微做旧斑驳 */
-		makeBrickTexture(baseHex, mortarHex) {
-			return this.getTexture('brick_' + baseHex + '_' + mortarHex, () => {
-				const size = 512
-				const canvas = this.makeCanvas(size)
-				const ctx = canvas.getContext('2d')
-				ctx.fillStyle = mortarHex
-				ctx.fillRect(0, 0, size, size)
+		makeBrickTexture() { return this.getCourtyardTexture('brick') },
 
-				const rows = 14
-				const brickH = size / rows
-				for (let r = 0; r < rows; r++) {
-					const y = r * brickH
-					const offset = (r % 2) * (size / 12)
-					const cols = 6
-					const brickW = size / cols
-					for (let c = -1; c <= cols; c++) {
-						const x = c * brickW + offset
-						// 每块砖在基色上做轻微明暗扰动，营造做旧感
-						const shade = 0.86 + Math.random() * 0.18
-						ctx.fillStyle = this.tintHex(baseHex, shade)
-						ctx.fillRect(x + 2, y + 2, brickW - 4, brickH - 4)
-						// 偶尔点缀风化斑点
-						if (Math.random() < 0.3) {
-							ctx.fillStyle = 'rgba(60, 48, 36, 0.10)'
-							const sx = x + 4 + Math.random() * (brickW - 10)
-							const sy = y + 4 + Math.random() * (brickH - 8)
-							ctx.fillRect(sx, sy, 2 + Math.random() * 6, 1 + Math.random() * 3)
-						}
-					}
-				}
-				const tex = new THREE.CanvasTexture(canvas)
-				tex.wrapS = THREE.RepeatWrapping
-				tex.wrapT = THREE.RepeatWrapping
-				this.setColorTexture(tex)
-				tex.needsUpdate = true
-				return tex
+		makeRoofTexture() { return this.getCourtyardTexture('roof') },
+
+		makeWoodTexture() { return this.getCourtyardTexture('wood') },
+		getCourtyardTexture(kind, channel = 'albedo') {
+			const key = 'courtyard_' + kind + '_' + channel
+			return this.getTexture(key, () => {
+				const canvas = this.makeCanvas(16), ctx = canvas.getContext('2d')
+				ctx.fillStyle = channel === 'height' ? '#808080' : ({ brick: '#777970', wood: '#50382a', roof: '#484b4a', cloth: '#eeeeea' }[kind])
+				ctx.fillRect(0, 0, 16, 16)
+				const texture = new THREE.CanvasTexture(canvas)
+				texture.wrapS = texture.wrapT = THREE.RepeatWrapping
+				texture.anisotropy = renderer ? Math.min(8, renderer.capabilities.getMaxAnisotropy()) : 1
+				if (channel === 'albedo') this.setColorTexture(texture)
+				new THREE.ImageLoader().load(resolveAssetUrl('static/textures/courtyard/' + kind + '-' + channel + '.jpg'), image => {
+					if (textureCache[key] !== texture) return
+					// r146 WebGL2 uses immutable storage: retire the 16px fallback allocation.
+					texture.dispose()
+					texture.image = image
+					if (channel === 'albedo') this.prepareSurfaceColorTexture(texture)
+					texture.needsUpdate = true
+				})
+				return texture
 			})
 		},
-		/* 灰瓦屋顶：纵向瓦垄条纹 + 高光 */
-		makeRoofTexture(tileHex) {
-			return this.getTexture('roof_' + tileHex, () => {
-				const size = 256
-				const canvas = this.makeCanvas(size)
-				const ctx = canvas.getContext('2d')
-				ctx.fillStyle = tileHex
-				ctx.fillRect(0, 0, size, size)
-				const ridges = 16
-				const w = size / ridges
-				for (let i = 0; i < ridges; i++) {
-					const x = i * w
-					ctx.fillStyle = this.tintHex(tileHex, 1.18)
-					ctx.fillRect(x, 0, w * 0.32, size)
-					ctx.fillStyle = this.tintHex(tileHex, 0.72)
-					ctx.fillRect(x + w * 0.78, 0, w * 0.22, size)
-				}
-				// 横向瓦当暗缝
-				ctx.fillStyle = 'rgba(20, 20, 24, 0.18)'
-				for (let y = 0; y < size; y += size / 6) {
-					ctx.fillRect(0, y, size, 2)
-				}
-				const tex = new THREE.CanvasTexture(canvas)
-				tex.wrapS = THREE.RepeatWrapping
-				tex.wrapT = THREE.RepeatWrapping
-				this.setColorTexture(tex)
-				tex.needsUpdate = true
-				return tex
-			})
-		},
-		/* 木纹：竖向木纹 + 节疤，用于门框 / 木柱 */
-		makeWoodTexture(woodHex) {
-			return this.getTexture('wood_' + woodHex, () => {
-				const size = 256
-				const canvas = this.makeCanvas(size)
-				const ctx = canvas.getContext('2d')
-				ctx.fillStyle = woodHex
-				ctx.fillRect(0, 0, size, size)
-				for (let i = 0; i < 40; i++) {
-					const x = Math.random() * size
-					ctx.strokeStyle = Math.random() < 0.5
-						? this.tintHex(woodHex, 0.82)
-						: this.tintHex(woodHex, 1.14)
-					ctx.lineWidth = 0.5 + Math.random() * 1.5
-					ctx.beginPath()
-					ctx.moveTo(x, 0)
-					ctx.bezierCurveTo(x + 6, size * 0.33, x - 6, size * 0.66, x + 2, size)
-					ctx.stroke()
-				}
-				const tex = new THREE.CanvasTexture(canvas)
-				tex.wrapS = THREE.RepeatWrapping
-				tex.wrapT = THREE.RepeatWrapping
-				this.setColorTexture(tex)
-				tex.needsUpdate = true
-				return tex
-			})
-		},
-		/* 木格窗：透明底 + 暖色窗棂格栅，作为窗扇贴图 */
+
 		makeLatticeTexture(frameHex) {
 			return this.getTexture('lattice_' + frameHex, () => {
 				const size = 256
@@ -1614,7 +2170,18 @@ export default {
 			grad.addColorStop(1, bottomHex)
 			ctx.fillStyle = grad
 			ctx.fillRect(0, 0, w, h)
+			// Soft cloud banks live in the cached sky texture: no extra mobile draw calls.
+			for (let bank = 0; bank < 3; bank++) {
+				for (let puff = 0; puff < 9; puff++) {
+					const x = bank * 370 + puff * 29 - 100, y = h * (.18 + bank * .12) + Math.sin(puff * .9) * 8
+					ctx.save(); ctx.translate(x, y); ctx.scale(1, .2)
+					const cloud = ctx.createRadialGradient(0, 0, 2, 0, 0, 83)
+					cloud.addColorStop(0, withStars ? 'rgba(168,186,196,.035)' : 'rgba(255,247,227,.13)'); cloud.addColorStop(1, 'rgba(255,247,227,0)')
+					ctx.fillStyle = cloud; ctx.fillRect(-84, -84, 168, 168); ctx.restore()
+				}
+			}
 			if (withStars) {
+				ctx.fillStyle = 'rgba(238,232,205,.8)'; ctx.beginPath(); ctx.arc(w * .7, h * .22, 9, 0, Math.PI * 2); ctx.fill()
 				// 仅在上半部撒星，避免压到地平线
 				for (let i = 0; i < 150; i++) {
 					const sx = Math.random() * w
@@ -1670,16 +2237,23 @@ export default {
 					isInitialized = true
 					ctx.bootScene(data)
 				} else if (action === 'loadScene') {
+					activeRenderRequest = sceneRequest(data)
 					ctx.loadScene(data)
-					/* 换幕 / 路由重建完成即发 render-ready 隐藏加载层：动画循环在首次 init 时已启动，
-					   重建后的场景下一帧即呈现；首次 init 的 render-ready 仍由 initScene 末尾发出，故首屏不闪。*/
-					emit('render-ready')
+					if (!animationId) ctx.startAnimation()
 				} else if (action === 'highlightPoi') {
 					ctx.highlightQuestPoi(data.poiId)
 				} else if (action === 'applyPhase') {
 					ctx.applyPhase(data.phase)
+				} else if (action === 'applySettings') {
+					ctx.setEffectsEnabled(data.effectsEnabled !== false)
 				} else if (action === 'reskinPlayer') {
 					ctx.reskinPlayer(data.playerSkin)
+				} else if (action === 'blockInput') {
+					inputBlocked = Boolean(data.blocked)
+					joystickInput = { dx: 0, dy: 0 }
+					movementVelocity = { x: 0, z: 0 }
+				} else if (action === 'sceneControl') {
+					ctx.applySceneControl(data)
 				} else if (action === 'pause') {
 					pagePaused = true
 					ctx.pauseRendering()
@@ -1689,7 +2263,8 @@ export default {
 				}
 			} catch (err) {
 				// 观察器内任何同步抛错都转成终态信号，避免逻辑层永远收不到 ready/error 而卡「张望」。
-				emit('render-error', { error: (err && err.message) || '街景命令处理失败' })
+				if (ctx?.pauseRendering) ctx.pauseRendering()
+				emitRenderError(err, data.requestId ? sceneRequest(data) : activeRenderRequest)
 			}
 		},
 		loadScript(src) {
@@ -1736,6 +2311,7 @@ export default {
 		},
 		async bootScene(data) {
 			const generation = ++bootGeneration
+			activeRenderRequest = sceneRequest(data)
 			try {
 				// 快速路径：reinit / 二次进入时 window.THREE 及后处理类已就位，跳过 7 个 <script> 的重复注入，加速恢复。
 				if (window.THREE && window.THREE.EffectComposer && window.THREE.RenderPass && window.THREE.UnrealBloomPass) {
@@ -1743,7 +2319,7 @@ export default {
 					await this.loadCalligraphyFont()
 					if (generation !== bootGeneration) return
 					emit('render-progress', 70)
-					emit('render-stage', '渲染环境就绪 · 搭建街景…')
+					emit('render-stage', '正在布置院落与灯火…')
 					this.initScene(data)
 					return
 				}
@@ -1761,7 +2337,7 @@ export default {
 					'static/libs/UnrealBloomPass.js'
 				]
 				for (let i = 0; i < libs.length; i++) {
-					emit('render-stage', '加载 3D 引擎库 ' + (i + 1) + '/' + libs.length + '…')
+					emit('render-stage', '正在准备古城画面…')
 					await this.loadScript(libs[i])
 					if (generation !== bootGeneration) return
 					emit('render-progress', Math.round(((i + 1) / libs.length) * 70))
@@ -1769,13 +2345,13 @@ export default {
 				THREE = window.THREE
 				if (!THREE) {
 					isInitialized = false
-					emit('render-error', { error: 'Three.js 未能加载' })
+					emitRenderError('Three.js 未能加载', sceneRequest(data))
 					return
 				}
 				// 校验后处理类是否就位：任一缺失即发终态，避免到 new EffectComposer 才静默崩。
 				if (!THREE.EffectComposer || !THREE.RenderPass || !THREE.UnrealBloomPass) {
 					isInitialized = false
-					emit('render-error', { error: '后处理库未就位（加载顺序/缺文件）' })
+					emitRenderError('后处理库未就位（加载顺序/缺文件）', sceneRequest(data))
 					return
 				}
 				/* 小型可选插件均为离线文件；任一失败只关闭对应画质能力。 */
@@ -1785,19 +2361,21 @@ export default {
 				}
 				await this.loadCalligraphyFont()
 				if (generation !== bootGeneration) return
-				emit('render-stage', '渲染环境就绪 · 搭建街景…')
+				emit('render-stage', '正在布置院落与灯火…')
 				this.initScene(data)
 			} catch (err) {
+				if (generation !== bootGeneration) return
 				isInitialized = false
-				emit('render-error', { error: (err && err.message) || '街景资源加载失败' })
+				emitRenderError(err, sceneRequest(data))
 			}
 		},
 
 		initScene(data) {
 			if (!THREE) {
-				emit('render-error', { error: 'Three.js 未准备完成' })
+				emitRenderError('Three.js 未准备完成', sceneRequest(data))
 				return
 			}
+			this.configureColorManagement()
 
 			// 画面特效开关 + 化身皮肤：由逻辑层随载荷下发，先存模块态供 createPlayer / 后处理分支读取。
 			effectsEnabled = data.effectsEnabled !== false
@@ -1807,7 +2385,7 @@ export default {
 			// 绝不能把 <canvas type="2d"> 喂给 new WebGLRenderer({canvas})——取不到 WebGL 上下文会同步抛错（「一直在张望」根因之一）。
 			const container = document.getElementById('street-canvas')
 			if (!container) {
-				emit('render-error', { error: '未找到街景容器' })
+				emitRenderError('未找到街景容器', sceneRequest(data))
 				return
 			}
 
@@ -1815,6 +2393,7 @@ export default {
 			// 致两次进到 initScene。若已存在 renderer，先彻底拆除旧场景（dispose 会取消旧 rAF、摘除旧 canvas、释放纹理并复位状态），
 			// 再重建——保证任何路径下都只有一个 WebGL 上下文 / 一块 canvas / 一个渲染循环，杜绝叠加重影与上下文泄漏。
 			if (renderer) this.dispose()
+			activeRenderRequest = sceneRequest(data)
 
 			const width = container.clientWidth || window.innerWidth
 			const height = container.clientHeight || window.innerHeight
@@ -1838,10 +2417,10 @@ export default {
 			cameraYawCenter = Number(data.streetData.recommendedCamera?.azimuth || 0)
 			cameraYaw = cameraYawCenter
 			cameraPitch = 0.38
-			cameraDistance = Math.max(6.8, Math.min(9, Number(data.streetData.recommendedCamera?.distance || 10) * 0.76))
+			cameraDistance = Math.max(5.6, Math.min(6.6, Number(data.streetData.recommendedCamera?.distance || 10) * 0.58))
 
 			const compactDevice = Math.min(width, height) <= 520 || /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent || '')
-			renderPixelRatio = Math.min(window.devicePixelRatio || 1, compactDevice ? 1.25 : 1.6)
+			renderPixelRatio = Math.min(this.getRenderResolutionLimit(width, height), compactDevice ? 1.25 : 1.6)
 			renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
 			renderer.setSize(width, height)
 			renderer.setPixelRatio(renderPixelRatio)
@@ -1854,14 +2433,15 @@ export default {
 			renderer.domElement.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;'
 			container.appendChild(renderer.domElement)
 			bloomSuppressed = false
+			bloomRetryAfter = 0; bloomRecoverySamples = 0
 			contextLostHandlerRef = (event) => {
 				event.preventDefault()
 				this.pauseRendering()
-				emit('render-error', { error: '图形上下文已中断，请重试街景' })
+				emitRenderError('图形上下文已中断，请重试街景', activeRenderRequest, true)
 			}
 			contextRestoredHandlerRef = () => {
+				pendingSceneReady = activeRenderRequest
 				if (!pagePaused && !document.hidden) this.startAnimation()
-				emit('render-ready')
 			}
 			renderer.domElement.addEventListener('webglcontextlost', contextLostHandlerRef)
 			renderer.domElement.addEventListener('webglcontextrestored', contextRestoredHandlerRef)
@@ -1872,41 +2452,7 @@ export default {
 			}
 			document.addEventListener('visibilitychange', visibilityHandlerRef)
 
-			/* 后处理（Bloom）：失败则降级为直接渲染，绝不因后处理异常而黑屏或卡死。
-			   「画面特效」关闭时直接跳过 composer，省下整条 Bloom pass 的逐帧开销（低端机降负载）。*/
-			composer = null
-			bloomPassRef = null
-			fxaaPassRef = null
-			gradePassRef = null
-			if (effectsEnabled) {
-				try {
-					const composerTarget = renderer.capabilities.isWebGL2
-						? new THREE.WebGLRenderTarget(width, height, { samples: 4, type: THREE.HalfFloatType })
-						: undefined
-					composer = new THREE.EffectComposer(renderer, composerTarget)
-					composer.addPass(new THREE.RenderPass(scene, camera))
-					if (typeof composer.setPixelRatio === 'function') composer.setPixelRatio(renderPixelRatio)
-					bloomPassRef = new THREE.UnrealBloomPass(new THREE.Vector2(width, height), phase?.bloomStrength ?? 0.45, 0.28, 0.78)
-					composer.addPass(bloomPassRef)
-					if (!renderer.capabilities.isWebGL2 && THREE.FXAAShader) {
-						fxaaPassRef = new THREE.ShaderPass(THREE.FXAAShader)
-						fxaaPassRef.material.uniforms.resolution.value.set(1 / (width * renderPixelRatio), 1 / (height * renderPixelRatio))
-						composer.addPass(fxaaPassRef)
-					}
-					gradePassRef = new THREE.ShaderPass({
-						uniforms: { tDiffuse: { value: null }, warmth: { value: phase?.key === 'night' ? 0.015 : 0.045 } },
-						vertexShader: 'varying vec2 vUv; void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
-						fragmentShader: 'uniform sampler2D tDiffuse;uniform float warmth;varying vec2 vUv;float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}void main(){vec4 c=texture2D(tDiffuse,vUv);float v=smoothstep(.78,.22,distance(vUv,vec2(.5)));c.rgb*=mix(.82,1.,v);c.r+=warmth;c.b-=warmth*.42;c.rgb+=(hash(vUv*900.)-.5)*.012;gl_FragColor=c;}'
-					})
-					composer.addPass(gradePassRef)
-					this.syncBloomSize()
-				} catch (err) {
-					if (bloomPassRef) bloomPassRef.dispose()
-					if (composer) composer.dispose()
-					composer = null
-					bloomPassRef = null
-				}
-			}
+			this.setEffectsEnabled(effectsEnabled)
 
 			/* 横屏/尺寸变化时同步相机与渲染尺寸 */
 			if (!resizeHandlerRef) {
@@ -1914,10 +2460,8 @@ export default {
 					const w = container.clientWidth || window.innerWidth
 					const h = container.clientHeight || window.innerHeight
 					if (camera) { camera.aspect = w / h; camera.fov = w / h > 1.85 ? 55 : 58; camera.updateProjectionMatrix() }
-					if (renderer) renderer.setSize(w, h)
-					if (composer) composer.setSize(w, h)
-					if (fxaaPassRef) fxaaPassRef.material.uniforms.resolution.value.set(1 / (w * renderPixelRatio), 1 / (h * renderPixelRatio))
-					this.syncBloomSize()
+					this.setRenderResolution(w, h)
+					qualitySampleStartedAt = performance.now() + 1000; qualityFrameCount = 0
 				}
 				window.addEventListener('resize', resizeHandlerRef)
 			}
@@ -1934,10 +2478,10 @@ export default {
 			this.createJoystick()
 			this.startAnimation()
 			isInitialized = true
-			emit('render-ready')
 		},
 		loadScene(data) {
-			if (!scene) return
+			if (!scene || !renderer) throw new Error('街景尚未初始化')
+			pendingSceneReady = null
 			this.clearScene()
 
 			const phase = data.phase || currentPhaseData
@@ -1945,7 +2489,7 @@ export default {
 			cameraYawCenter = Number(data.streetData.recommendedCamera?.azimuth || 0)
 			cameraYaw = cameraYawCenter
 			cameraPitch = 0.38
-			cameraDistance = Math.max(6.8, Math.min(9, Number(data.streetData.recommendedCamera?.distance || 10) * 0.76))
+			cameraDistance = Math.max(5.6, Math.min(6.6, Number(data.streetData.recommendedCamera?.distance || 10) * 0.58))
 
 			const ambColor = phase?.lighting?.ambient?.color
 			const ambIntensity = phase?.lighting?.ambient?.intensity
@@ -1985,6 +2529,7 @@ export default {
 			this.createBuildings(data.streetData, currentWorldLayout)
 			this.createPoiBeacons(data.pois, data.streetData, currentWorldLayout)
 			this.createDecorations(data.streetData, currentWorldLayout)
+			this.buildStreetColliders()
 			this.createParticles(phase)
 			this.createPlayer()
 			this.tryLoadPlayerModel(playerSkinData?.modelPath || PLAYER_MODEL_PATH)
@@ -2000,6 +2545,11 @@ export default {
 			})
 			buildings = facadeRows
 			this.batchStaticRoots([...buildings, decorationBatchRoot, ...environment])
+			windClothMeshes = []
+			decorationBatchRoot.traverse(mesh => { if (mesh.userData?.isWindCloth && mesh.geometry?.attributes?.position) windClothMeshes.push(mesh) })
+			const shellMaterials = new Set()
+			decorationBatchRoot.traverse(mesh => { if (mesh.userData.isLanternShell && mesh.material) shellMaterials.add(mesh.material) })
+			lanternShellMaterials = [...shellMaterials]
 			scene.updateMatrixWorld(true)
 			lanternLightSources = lanternLights.map((light) => light.getWorldPosition(new THREE.Vector3()))
 			lanternLights.forEach((light) => light.removeFromParent())
@@ -2010,164 +2560,467 @@ export default {
 			this.highlightQuestPoi(data.questTargetPoiId)
 
 			if (phase) this.applyPhase(phase)
-			this.applyEnvironmentIntensity(scene, phase?.key === 'night' ? 0.72 : 0.48)
+			this.restoreSceneControls(data.controls)
+			// Do not count synchronous scene construction and initial shader uploads as play FPS.
+			qualitySampleStartedAt = performance.now() + 1500; qualityFrameCount = 0
 			emit('render-progress', 100)
+			pendingSceneReady = sceneRequest(data)
 		},
-		createStreetEnvironment(streetData, worldLayout) {
-			const earthMaterial = new THREE.MeshStandardMaterial({
-				color: colorHex(streetData.ambience?.groundColor, 0x827969),
-				map: this.makeEarthTexture(),
-				roughness: 1,
-				metalness: 0
-			})
-			ground = new THREE.Mesh(new THREE.PlaneGeometry(56, 72), earthMaterial)
-			ground.rotation.x = -Math.PI / 2
-			ground.position.set(0, -0.04, -7)
-			ground.receiveShadow = true
-			scene.add(ground)
-
-			const road = new THREE.Mesh(
-				new THREE.BoxGeometry(9.3, 0.12, 59),
-				new THREE.MeshStandardMaterial({
-					color: 0x8f8d84,
-					map: this.makeStoneGroundTexture(),
-					roughness: 0.96,
-					metalness: 0.02
-				})
-			)
-			road.position.set(0, 0.02, -6.5)
-			road.receiveShadow = true
-			scene.add(road)
-			environment.push(road)
-
-			;[-1, 1].forEach((side) => {
-				const gutter = new THREE.Mesh(
-					new THREE.BoxGeometry(0.42, 0.08, 59),
-					new THREE.MeshStandardMaterial({ color: 0x34342f, roughness: 1 })
-				)
-				gutter.position.set(side * 4.82, 0.01, -6.5)
-				gutter.receiveShadow = true
-				scene.add(gutter)
-				environment.push(gutter)
-
-				const curb = new THREE.Mesh(
-					new THREE.BoxGeometry(0.24, 0.2, 59),
-					new THREE.MeshStandardMaterial({ color: 0x79796f, roughness: 0.98 })
-				)
-				curb.position.set(side * 4.56, 0.08, -6.5)
-				curb.receiveShadow = true
-				scene.add(curb)
-				environment.push(curb)
-			})
-
-			/* 街道尽端门楼建立视觉锚点，避免道路直接掉进雾里。 */
-			const gate = new THREE.Group()
-			const gateWallMat = new THREE.MeshStandardMaterial({
-				color: 0xd0c0a4,
-				map: this.makeBrickTexture('#988a75', '#524a40'),
-				roughness: 0.94
-			})
-			const gateWoodMat = new THREE.MeshStandardMaterial({
-				color: 0xffffff,
-				map: this.makeWoodTexture('#47271b'),
-				roughness: 0.84
-			})
-			;[-1, 1].forEach((side) => {
-				const pier = new THREE.Mesh(new THREE.BoxGeometry(2.4, 4.8, 2), gateWallMat)
-				pier.position.set(side * 3.45, 2.4, 0)
-				pier.castShadow = true
-				pier.receiveShadow = true
-				gate.add(pier)
-			})
-			const lintel = new THREE.Mesh(new THREE.BoxGeometry(9.2, 0.72, 1.65), gateWoodMat)
-			lintel.position.y = 4.55
-			lintel.castShadow = true
-			gate.add(lintel)
-			this.addPitchedRoof(gate, 10.1, 2.6, 4.9, '#342d2b')
-			const gateSign = new THREE.Mesh(
-				new THREE.PlaneGeometry(2.7, 0.84),
-				new THREE.MeshBasicMaterial({ map: this.makeSignTexture(streetData.title || '平遥古城', 'gate'), transparent: true, toneMapped: false })
-			)
-			gateSign.position.set(0, 4.55, 1.02)
-			gate.add(gateSign)
-			gate.position.set(0, 0, -28.2)
-			scene.add(gate)
-			environment.push(gate)
-			/* 城墙向两侧没入雾中，并以雉堞加强街尽头的尺度。 */
-			;[-1, 1].forEach((side) => {
-				const wall = new THREE.Group()
-				const wallBody = new THREE.Mesh(new THREE.BoxGeometry(18, 3.7, 2.5), gateWallMat)
-				wallBody.position.set(side * 12.5, 1.85, -29.1)
-				wallBody.rotation.y = side * 0.09
-				wall.add(wallBody)
-				for (let i = 0; i < 7; i += 1) {
-					const merlon = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.68, 1.45), gateWallMat)
-					merlon.position.set(side * (5.1 + i * 2.25), 4.02, -29.1 - i * 0.2)
-					wall.add(merlon)
+		restoreSceneControls(controls = {}) {
+			inputBlocked = Boolean(controls.blocked)
+			runningEnabled = Boolean(controls.running)
+			portraitCamera = Boolean(controls.portrait)
+			joystickInput = { dx: 0, dy: 0 }
+			if (portraitCamera) this.applySceneControl({ action: 'portrait', portrait: true })
+		},
+		applySceneControl(data) {
+			if (data.action === 'run') runningEnabled = Boolean(data.running)
+			if (data.action === 'portrait') {
+				portraitCamera = Boolean(data.portrait)
+				cameraDistance = portraitCamera ? 3.2 : 6.2
+				cameraPitch = portraitCamera ? 0.12 : 0.38
+				if (portraitCamera && player) cameraYaw = player.rotation.y
+			}
+			if (data.action === 'zoom-in') cameraDistance = Math.max(2.6, cameraDistance - 0.8)
+			if (data.action === 'zoom-out') cameraDistance = Math.min(10, cameraDistance + 0.8)
+			if (data.action === 'reset') { portraitCamera = false; cameraYaw = cameraYawCenter; cameraPitch = 0.38; cameraDistance = 6.2 }
+			if (data.action === 'greet') this.playPlayerWave()
+		},
+		buildStreetColliders() {
+			worldColliders = []; cameraOccluders = []
+			scene.updateMatrixWorld(true)
+			// Bounds come from the rendered solid geometry, including stairs and stalls.
+			for (const root of [...buildings, ...decorations, ...environment.filter(root => root.userData.isSolidEnvironment)]) root.traverse(mesh => {
+				if (!mesh.isMesh || mesh.isInstancedMesh || !mesh.geometry || mesh.material?.transparent || mesh.userData?.isWindCloth || mesh.userData?.noCollision) return
+				if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox()
+				const box = mesh.geometry.boundingBox.clone().applyMatrix4(mesh.matrixWorld)
+				if (box.max.y > .18 && box.min.y < 8) cameraOccluders.push(box.clone().expandByScalar(.2))
+				if (box.max.y > .18 && box.min.y < 2.15) {
+					box.min.y = -1; box.max.y = 3
+					worldColliders.push(box)
 				}
-				scene.add(wall)
-				environment.push(wall)
 			})
-
-			/* 生成式水墨屋脊只作受雾效影响的远景层，近景建筑与碰撞仍全部由 3D 几何承担。 */
-			const phaseKey = currentPhaseData?.key || 'noon'
-			const backdropTints = { dawn: 0xB59678, noon: 0x8F8A80, dusk: 0x765044, night: 0x31384A }
-			const backdropMaterial = new THREE.MeshBasicMaterial({
-				color: backdropTints[phaseKey] || backdropTints.noon,
-				map: textureCache.pingyao_roofline || null,
-				transparent: true,
-				opacity: phaseKey === 'night' ? 0.48 : 0.42,
-				depthWrite: false,
-				fog: true,
-				toneMapped: false,
-				blending: THREE.NormalBlending
-			})
-			const backdrop = new THREE.Mesh(
-				new THREE.CylinderGeometry(46, 46, 32, 64, 1, true),
-				backdropMaterial
-			)
-			backdrop.material.side = THREE.BackSide
-			backdrop.position.set(0, 12, -7)
-			backdrop.rotation.y = Math.PI
-			backdrop.userData.isRooflineBackdrop = true
-			backdrop.renderOrder = -1
-			scene.add(backdrop)
-			environment.push(backdrop)
-			;[
-				{ radius: 44, height: 24, y: 10, texture: this.makeInkLayerTexture('mountain'), color: 0x8f8a80, opacity: 0.24, order: -3, kind: 'mountain' },
-				{ radius: 39, height: 18, y: 8, texture: this.makeInkLayerTexture('wall'), color: 0x686963, opacity: 0.3, order: -2, kind: 'wall' }
-			].forEach((layer) => {
-				const mesh = new THREE.Mesh(new THREE.CylinderGeometry(layer.radius, layer.radius, layer.height, 48, 1, true), new THREE.MeshBasicMaterial({ map: layer.texture, color: layer.color, transparent: true, opacity: layer.opacity, side: THREE.BackSide, depthWrite: false, fog: true }))
-				mesh.position.set(0, layer.y, -7); mesh.renderOrder = layer.order; mesh.userData.isParallaxLayer = layer.kind
-				scene.add(mesh); environment.push(mesh)
-			})
-			const cloudPositions = new Float32Array([-18,14,-10, -7,16,-24, 8,14,-17, 19,17,-4, -24,18,8, 25,15,-29])
-			const cloudGeometry = new THREE.BufferGeometry(); cloudGeometry.setAttribute('position', new THREE.BufferAttribute(cloudPositions, 3))
-			const clouds = new THREE.Points(cloudGeometry, new THREE.PointsMaterial({ map: this.makeCloudTexture(), color: 0xF5F0E8, size: 8, transparent: true, opacity: phaseKey === 'night' ? 0.11 : 0.3, depthWrite: false, sizeAttenuation: true }))
-			clouds.userData.isCloudLayer = true; scene.add(clouds); environment.push(clouds)
-
-			if (!textureCache.pingyao_roofline && !rooflineTextureLoading) {
-				rooflineTextureLoading = true
-				const generation = assetLoadGeneration
-				new THREE.TextureLoader().load(resolveAssetUrl('static/img/3d/pingyao-roofline-panorama.webp'), (texture) => {
-					if (generation !== assetLoadGeneration || !renderer) {
-						texture.dispose()
-						return
-					}
-					rooflineTextureLoading = false
-					this.setColorTexture(texture)
-					texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy())
-					texture.needsUpdate = true
-					textureCache.pingyao_roofline = texture
-					environment.forEach((item) => {
-						if (item.userData?.isRooflineBackdrop && item.material) {
-							item.material.map = texture
-							item.material.needsUpdate = true
+			cameraProbe = new THREE.Ray(); cameraProbeDirection = new THREE.Vector3()
+		},
+		resolveStreetMotion(position, dx, dz, radius = .38) {
+			const bounds = currentWorldLayout?.roadBounds || { xMin: -4.15, xMax: 4.15, zMin: -23, zMax: 15 }
+			const isPedestrian = actor => actor.userData.kind === 'rigged-pedestrian' || actor.userData.kind === 'pedestrian'
+			const movingCharacter = player?.position === position || ambientActors.some(actor => actor.position === position && isPedestrian(actor))
+			const neighbors = movingCharacter ? [player, ...ambientActors].filter(actor => actor && actor.position !== position && (actor === player || isPedestrian(actor))) : []
+			const steps = Math.max(1, Math.ceil(Math.hypot(dx, dz) / (radius * .4)))
+			if (!collisionSphere) { collisionSphere = new THREE.Sphere(); collisionNearest = new THREE.Vector3() }
+			const sphere = collisionSphere, nearest = collisionNearest
+			sphere.center.set(position.x, 1, position.z); sphere.radius = radius
+			// Broad phase: only colliders that can touch the swept segment (plus the depenetration margin).
+			// Distances are strictly smaller inside this window, so the narrow phase below is unchanged.
+			const margin = radius * 4 + Math.hypot(dx, dz) + .1
+			const minX = Math.min(position.x, position.x + dx) - margin, maxX = Math.max(position.x, position.x + dx) + margin
+			const minZ = Math.min(position.z, position.z + dz) - margin, maxZ = Math.max(position.z, position.z + dz) + margin
+			collisionNearby.length = 0
+			for (const box of worldColliders) if (box.max.x >= minX && box.min.x <= maxX && box.max.z >= minZ && box.min.z <= maxZ) collisionNearby.push(box)
+			const colliders = collisionNearby
+			const hasClearance = () => {
+				for (const box of colliders) {
+					box.clampPoint(sphere.center, nearest)
+					if (Math.hypot(sphere.center.x-nearest.x, sphere.center.z-nearest.z) < radius-.0001) return false
+				}
+				return neighbors.every(actor => Math.hypot(sphere.center.x-actor.position.x, sphere.center.z-actor.position.z) >= radius+(actor.userData.collisionRadius || .43)-.0001)
+			}
+			for (let step = 0; step < steps; step++) {
+				const startX = sphere.center.x, startZ = sphere.center.z, validStart = hasClearance()
+				sphere.center.x += dx / steps; sphere.center.z += dz / steps
+				for (let pass = 0; pass < 3; pass++) {
+					for (const box of colliders) {
+						if (!sphere.intersectsBox(box)) continue
+						box.clampPoint(sphere.center, nearest)
+						const x = sphere.center.x - nearest.x, z = sphere.center.z - nearest.z
+						const distance = Math.hypot(x, z)
+						if (distance > 0.00001) {
+							const depth = radius - distance + .001
+							sphere.center.x += x / distance * depth; sphere.center.z += z / distance * depth
+						} else {
+							const faces = [sphere.center.x - box.min.x, box.max.x - sphere.center.x, sphere.center.z - box.min.z, box.max.z - sphere.center.z]
+							const face = faces.indexOf(Math.min(...faces))
+							if (face === 0) sphere.center.x = box.min.x - radius - .001
+							if (face === 1) sphere.center.x = box.max.x + radius + .001
+							if (face === 2) sphere.center.z = box.min.z - radius - .001
+							if (face === 3) sphere.center.z = box.max.z + radius + .001
 						}
+					}
+					for (const actor of neighbors) {
+						const x = sphere.center.x - actor.position.x, z = sphere.center.z - actor.position.z
+						const distance = Math.hypot(x, z), separation = radius + (actor.userData.collisionRadius || .43)
+						if (distance < separation) {
+							if (distance > .0001) { sphere.center.x += x / distance * (separation - distance); sphere.center.z += z / distance * (separation - distance) }
+							else sphere.center.x += separation
+						}
+					}
+					sphere.center.x = THREE.MathUtils.clamp(sphere.center.x, bounds.xMin, bounds.xMax)
+					sphere.center.z = THREE.MathUtils.clamp(sphere.center.z, bounds.zMin, bounds.zMax)
+				}
+				// A neighbor's push cannot undo wall separation. If there is no room
+				// for both constraints, keep the last clear position for this substep.
+				// At a gatepost/edge corner, alternating projections can push backward
+				// and oscillate despite a clear start. Only accept motion that advances
+				// along the requested direction; true wall sliding still advances.
+				const advance = (sphere.center.x - startX) * dx + (sphere.center.z - startZ) * dz
+				if (validStart && (!hasClearance() || advance <= 1e-10)) { sphere.center.x = startX; sphere.center.z = startZ }
+			}
+			position.x = sphere.center.x; position.z = sphere.center.z
+		},
+		updateFollowCamera(deltaTime) {
+			if (!cameraTargetVec) cameraTargetVec = new THREE.Vector3()
+			if (!cameraPositionVec) cameraPositionVec = new THREE.Vector3()
+			if (!cameraOriginVec) cameraOriginVec = new THREE.Vector3()
+			const horizontalDistance = Math.cos(cameraPitch) * cameraDistance
+			const idleOrbit = 0
+			const viewYaw = cameraYaw + idleOrbit
+			cameraPositionVec.set(
+				player.position.x + Math.sin(viewYaw) * horizontalDistance,
+				1.2 + Math.sin(cameraPitch) * cameraDistance,
+				player.position.z + Math.cos(viewYaw) * horizontalDistance
+			)
+			const cameraBounds = currentWorldLayout?.cameraBounds
+			if (cameraBounds) {
+				cameraPositionVec.x = Math.max(cameraBounds.xMin, Math.min(cameraBounds.xMax, cameraPositionVec.x))
+				cameraPositionVec.z = Math.max(cameraBounds.zMin, Math.min(cameraBounds.zMax, cameraPositionVec.z))
+			}
+			const boomOrigin = cameraOriginVec.set(player.position.x, 1.35, player.position.z)
+			this.fitFollowCamera(boomOrigin, cameraPositionVec)
+			camera.position.lerp(cameraPositionVec, 1 - Math.exp(-8.5 * deltaTime))
+			this.resolveCameraBoom(boomOrigin, camera.position)
+			cameraTargetVec.set(player.position.x, player.position.y + 1.24, player.position.z)
+			const speedLength = Math.hypot(movementVelocity.x, movementVelocity.z)
+			const narrow = camera.aspect < .8 && !portraitCamera
+			const framing = THREE.MathUtils.smoothstep(camera.position.distanceTo(boomOrigin), 2.4, 4.4)
+			const ahead = .6 * framing * (narrow ? .25 : 1)
+			if (speedLength > 0.08) { cameraTargetVec.x += movementVelocity.x / speedLength * ahead; cameraTargetVec.z += movementVelocity.z / speedLength * ahead }
+			const offset = portraitCamera || narrow ? 0 : .65 * framing
+			cameraTargetVec.x -= Math.sin(viewYaw) * offset
+			cameraTargetVec.z -= Math.cos(viewYaw) * offset
+			cameraTargetVec.y = portraitCamera ? 1.35 : THREE.MathUtils.lerp(1.02, narrow ? 1.1 : 1.5, framing)
+			camera.lookAt(cameraTargetVec)
+			const baseFov = narrow ? 70 : camera.aspect > 1.85 ? 55 : 58
+			const wantedFov = baseFov + Math.min(3, speedLength * 0.72)
+			if (Math.abs(camera.fov - wantedFov) > 0.03) { camera.fov += (wantedFov - camera.fov) * (1 - Math.exp(-4 * deltaTime)); camera.updateProjectionMatrix() }
+		},
+		fitFollowCamera(origin, destination) {
+			this.resolveCameraBoom(origin, destination)
+			if (portraitCamera) return
+			const minimum = camera.aspect < .8 ? 3.6 : 2.8
+			let distance = destination.distanceTo(origin)
+			if (distance >= minimum) return
+			if (!cameraPlacementCandidate) cameraPlacementCandidate = new THREE.Vector3()
+			if (!cameraPlacementBest) cameraPlacementBest = new THREE.Vector3()
+			cameraPlacementBest.copy(destination)
+			const bounds = currentWorldLayout?.cameraBounds
+			// Search nearby views when a wall leaves too little room for a whole body.
+			// Every candidate respects the same shell and camera occluders as the main boom.
+			for (const offset of [.7, -.7, 1.4, -1.4, 2.1, -2.1, Math.PI]) {
+				const angle = cameraYaw + offset, horizontal = Math.cos(cameraPitch) * cameraDistance
+				cameraPlacementCandidate.set(origin.x + Math.sin(angle) * horizontal, 1.2 + Math.sin(cameraPitch) * cameraDistance, origin.z + Math.cos(angle) * horizontal)
+				if (bounds) {
+					cameraPlacementCandidate.x = THREE.MathUtils.clamp(cameraPlacementCandidate.x, bounds.xMin, bounds.xMax)
+					cameraPlacementCandidate.z = THREE.MathUtils.clamp(cameraPlacementCandidate.z, bounds.zMin, bounds.zMax)
+				}
+				this.resolveCameraBoom(origin, cameraPlacementCandidate)
+				const available = cameraPlacementCandidate.distanceTo(origin)
+				if (available > distance + .05) { cameraPlacementBest.copy(cameraPlacementCandidate); distance = available }
+				if (distance >= minimum) break
+			}
+			destination.copy(cameraPlacementBest)
+		},
+		resolveCameraBoom(origin, destination) {
+			if (!cameraProbe) return
+			cameraProbeDirection.subVectors(destination, origin)
+			const length = cameraProbeDirection.length()
+			if (length < .001) return
+			cameraProbeDirection.divideScalar(length)
+			cameraProbe.set(origin, cameraProbeDirection)
+			if (!cameraProbeHit) cameraProbeHit = new THREE.Vector3()
+			const hit = cameraProbeHit
+			let available = length
+			for (const box of cameraOccluders) {
+				if (cameraProbe.intersectBox(box, hit)) available = Math.min(available, Math.max(.65, origin.distanceTo(hit) - .12))
+			}
+			if (available < length) destination.copy(origin).addScaledVector(cameraProbeDirection, available)
+		},
+		loadStoneMaterial(road) {
+			const apply = () => {
+				if (!textureCache.stone_albedo) return
+				road.material.map = textureCache.stone_albedo
+				road.material.bumpMap = textureCache.stone_height || null
+				road.material.bumpScale = .045
+				road.material.roughnessMap = textureCache.stone_roughness || null
+				road.material.roughness = .94; road.material.color.setHex(0xb6bcb4)
+				road.material.needsUpdate = true
+			}
+			apply()
+			if (stoneTextureLoading || textureCache.stone_albedo) return
+			stoneTextureLoading = true
+			const generation = assetLoadGeneration
+			let pending = 3
+			for (const kind of ['albedo', 'height', 'roughness']) {
+				new THREE.TextureLoader().load(resolveAssetUrl('static/textures/pingyao-stone-' + kind + '.jpg'), texture => {
+					if (generation !== assetLoadGeneration || !renderer) { texture.dispose(); return }
+					if (kind === 'albedo') this.prepareSurfaceColorTexture(texture)
+					texture.wrapS = texture.wrapT = THREE.RepeatWrapping; texture.repeat.set(3.25, 11.6)
+					texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy())
+					textureCache['stone_' + kind] = texture
+					environment.filter(item => item.userData.isStoneRoad).forEach(item => {
+						item.material[kind === 'albedo' ? 'map' : kind === 'height' ? 'bumpMap' : 'roughnessMap'] = texture
+						item.material.bumpScale = .045; item.material.color.setHex(0xb6bcb4); item.material.needsUpdate = true
 					})
-				}, undefined, () => { if (generation === assetLoadGeneration) rooflineTextureLoading = false })
+					if (--pending === 0) stoneTextureLoading = false
+				}, undefined, () => { if (generation === assetLoadGeneration && --pending === 0) stoneTextureLoading = false })
 			}
 		},
+		makeCourtyardInlayTexture() {
+			return this.getTexture('courtyard_stone_inlay', () => {
+				const canvas = this.makeCanvas(1024), ctx = canvas.getContext('2d')
+				ctx.fillStyle = '#62675e'; ctx.fillRect(0, 0, 1024, 1024)
+				// A pebble mosaic, with an octagonal stone border and a square coin eye.
+				for (let row = 0; row < 58; row++) for (let col = 0; col < 58; col++) {
+					const n = Math.sin(row * 17.17 + col * 71.3) * .5 + .5
+					const shade = Math.round(116 + n * 38)
+					ctx.fillStyle = `rgb(${shade},${shade + 2},${shade - 7})`
+					ctx.beginPath(); ctx.ellipse(col * 18 + (row % 2) * 9, row * 18, 7, 4.5 + n * 2, n * Math.PI, 0, Math.PI * 2); ctx.fill()
+				}
+				ctx.strokeStyle = '#494f48'; ctx.lineWidth = 25; ctx.strokeRect(18, 18, 988, 988)
+				ctx.strokeStyle = '#b8b09a'; ctx.lineWidth = 9; ctx.strokeRect(47, 47, 930, 930)
+				const octagon = radius => {
+					ctx.beginPath()
+					for (let i = 0; i <= 8; i++) {
+						const a = i * Math.PI / 4 + Math.PI / 8
+						const x = 512 + Math.cos(a) * radius, y = 512 + Math.sin(a) * radius
+						i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)
+					}
+					ctx.stroke()
+				}
+				ctx.strokeStyle = '#515b51'; ctx.lineWidth = 27; octagon(375); octagon(320)
+				ctx.strokeStyle = '#b8af94'; ctx.lineWidth = 10; octagon(348)
+				ctx.strokeStyle = '#515b51'; ctx.lineWidth = 25; ctx.strokeRect(412, 412, 200, 200)
+				ctx.lineWidth = 14
+				for (let i = 0; i < 8; i++) {
+					const a = i * Math.PI / 4
+					ctx.beginPath(); ctx.moveTo(512 + Math.cos(a) * 170, 512 + Math.sin(a) * 170)
+					ctx.lineTo(512 + Math.cos(a) * 276, 512 + Math.sin(a) * 276); ctx.stroke()
+				}
+				const texture = this.setColorTexture(new THREE.CanvasTexture(canvas))
+				texture.anisotropy = renderer ? Math.min(8, renderer.capabilities.getMaxAnisotropy()) : 1
+				return texture
+			})
+		},
+		makeCourtyardShadeTexture(enclosure) {
+			const length = enclosure.zMax - enclosure.zMin
+			return this.getTexture('courtyard_contact_' + length, () => {
+				const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 2048
+				const ctx = canvas.getContext('2d')
+				ctx.scale(512 / 13, 2048 / length); ctx.translate(6.5, -enclosure.zMin)
+				for (const side of [-1, 1]) {
+					const edge = side * 6.5, gradient = ctx.createLinearGradient(edge, 0, edge - side * 2, 0)
+					gradient.addColorStop(0, 'rgba(25,29,23,.48)'); gradient.addColorStop(1, 'rgba(25,29,23,0)')
+					ctx.fillStyle = gradient; ctx.fillRect(side < 0 ? -6.5 : 4.5, enclosure.zMin, 2, length)
+				}
+				for (const z of [1, -11, enclosure.zMin, enclosure.zMax]) {
+					const gradient = ctx.createLinearGradient(0, z - 1.45, 0, z + 1.45)
+					gradient.addColorStop(0, 'rgba(25,29,23,0)'); gradient.addColorStop(.5, 'rgba(25,29,23,.24)'); gradient.addColorStop(1, 'rgba(25,29,23,0)')
+					ctx.fillStyle = gradient; ctx.fillRect(-6.5, z - 1.45, 13, 2.9)
+				}
+				const pool = (x, z, radius, strength) => {
+					const gradient = ctx.createRadialGradient(x, z, radius * .08, x, z, radius)
+					gradient.addColorStop(0, `rgba(20,27,20,${strength})`); gradient.addColorStop(1, 'rgba(20,27,20,0)')
+					ctx.fillStyle = gradient; ctx.fillRect(x - radius, z - radius, radius * 2, radius * 2)
+				}
+				for (const x of [-4.8, 4.8]) for (const z of [13.8, -22.2]) pool(x, z, 1.9, .5)
+				for (const x of [-6.1, -3.9, 3.9, 6.1]) for (const z of [1, -11]) pool(x, z, .7, .42)
+				return new THREE.CanvasTexture(canvas)
+			})
+		},
+		addCourtyardTree(parent, x, z) {
+			const barkMap = this.getTexture('sophora_bark', () => {
+				const canvas = this.makeCanvas(256), ctx = canvas.getContext('2d')
+				ctx.fillStyle = '#685947'; ctx.fillRect(0, 0, 256, 256)
+				for (let i = 0; i < 110; i++) {
+					ctx.strokeStyle = i % 3 ? '#463e32' : '#887861'; ctx.lineWidth = i % 3 + 1
+					ctx.beginPath(); ctx.moveTo((i * 37) % 256, 0)
+					for (let y = 0; y <= 256; y += 16) ctx.lineTo((i * 37) % 256 + Math.sin(i + y * .04) * 3, y)
+					ctx.stroke()
+				}
+				return this.setColorTexture(new THREE.CanvasTexture(canvas))
+			})
+			const bark = new THREE.MeshStandardMaterial({ map: barkMap, roughness: 1 })
+			const branch = (a, b, radius) => {
+				const start = new THREE.Vector3(x + a[0], a[1], z + a[2]), end = new THREE.Vector3(x + b[0], b[1], z + b[2])
+				const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius * .56, radius, start.distanceTo(end), 9), bark)
+				mesh.position.copy(start).add(end).multiplyScalar(.5); mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), end.sub(start).normalize())
+				mesh.castShadow = true; parent.add(mesh)
+			}
+			branch([0, .4, 0], [.13, 2.55, .04], .17)
+			for (let i = 0; i < 5; i++) {
+				const a = i * 2.39996, dx = Math.cos(a), dz = Math.sin(a)
+				branch([.1, 1.95 + i * .1, .03], [dx * .76, 3.18, dz * .76], .085)
+				branch([dx * .55, 2.94, dz * .55], [dx * 1.3, 3.55, dz * 1.3], .037)
+			}
+			const leafMap = this.getTexture('sophora_compound_leaf', () => {
+				const canvas = this.makeCanvas(128), ctx = canvas.getContext('2d')
+				ctx.strokeStyle = '#a1a87a'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(6, 64); ctx.lineTo(122, 64); ctx.stroke()
+				for (let i = 0; i < 6; i++) for (const side of [-1, 1]) {
+					ctx.fillStyle = i % 2 ? '#a9ba78' : '#8d9f63'
+					ctx.beginPath(); ctx.ellipse(20 + i * 16, 64 + side * 17, 15 - i * .55, 6.5, side * .85, 0, Math.PI * 2); ctx.fill()
+				}
+				ctx.beginPath(); ctx.ellipse(117, 64, 10, 6, 0, 0, Math.PI * 2); ctx.fill()
+				return this.setColorTexture(new THREE.CanvasTexture(canvas))
+			})
+			const foliage = new THREE.MeshStandardMaterial({ map: leafMap, alphaTest: .4, side: THREE.DoubleSide, roughness: 1 })
+			const count = 760, leaves = new THREE.InstancedMesh(new THREE.PlaneGeometry(.64, .38), foliage, count), dummy = new THREE.Object3D()
+			leaves.name = 'sophora-compound-foliage'
+			for (let i = 0; i < count; i++) {
+				const a = i * 2.39996, r = Math.sqrt((i + .5) / count) * 1.56
+				dummy.position.set(x + Math.cos(a) * r, 3.2 + Math.sin(i * 13.37) * .42 + (1 - r / 1.7) * .72, z + Math.sin(a) * r)
+				dummy.rotation.set(Math.sin(i) * 1.3, Math.cos(i * 3.1) * Math.PI, a)
+				dummy.scale.setScalar(.78 + (i % 7) * .06); dummy.updateMatrix(); leaves.setMatrixAt(i, dummy.matrix)
+				leaves.setColorAt(i, new THREE.Color().setHSL(.21 + (i % 5) * .008, .22, .42 + (i % 7) * .045))
+			}
+			leaves.userData.noCollision = true; leaves.castShadow = true; leaves.receiveShadow = true; parent.add(leaves)
+		},
+		addCourtyardLantern(parent, x, y, z, metal) {
+			const paper = this.getTexture('courtyard_lantern_paper', () => {
+				const canvas = this.makeCanvas(256), ctx = canvas.getContext('2d')
+				ctx.fillStyle = '#c04b35'; ctx.fillRect(0, 0, 256, 256)
+				for (let i = 0; i < 16; i++) {
+					const g = ctx.createLinearGradient(i * 16, 0, i * 16 + 16, 0)
+					g.addColorStop(0, '#913325'); g.addColorStop(.45, '#d46542'); g.addColorStop(1, '#913325')
+					ctx.fillStyle = g; ctx.fillRect(i * 16, 0, 16, 256)
+				}
+				ctx.fillStyle = '#b38b4a'; ctx.fillRect(0, 20, 256, 5); ctx.fillRect(0, 231, 256, 5)
+				return this.setColorTexture(new THREE.CanvasTexture(canvas))
+			})
+			const body = new THREE.Mesh(new THREE.SphereGeometry(.255, 20, 12), new THREE.MeshStandardMaterial({ map: paper, emissive: 0xffbb73, emissiveMap: paper, emissiveIntensity: .08, roughness: .82 }))
+			body.position.set(x, y, z); body.scale.y = 1.18; body.userData.isBuildingLantern = true; parent.add(body)
+			for (const side of [-1, 1]) {
+				const cap = new THREE.Mesh(new THREE.CylinderGeometry(.1, .1, .06, 12), metal)
+				cap.position.set(x, y + side * .28, z); parent.add(cap)
+			}
+			const cord = new THREE.Mesh(new THREE.CylinderGeometry(.008, .008, .23, 5), metal); cord.position.set(x, y + .41, z); parent.add(cord)
+			const tassel = new THREE.Mesh(new THREE.CylinderGeometry(.026, .052, .19, 8), new THREE.MeshStandardMaterial({ color: 0x8e3426, roughness: 1 }))
+			tassel.position.set(x, y - .42, z); parent.add(tassel)
+		},
+		createStreetEnvironment(streetData, worldLayout) {
+			const e = worldLayout.enclosure
+			const width = e.xMax - e.xMin, length = e.zMax - e.zMin, middleZ = (e.zMax + e.zMin) / 2
+			const shell = new THREE.Group(); shell.name = 'closed-courtyard'; shell.userData.isSolidEnvironment = true
+			const brick = new THREE.MeshStandardMaterial({ color: 0xd6d5c9, map: this.makeBrickTexture(), bumpMap: this.getCourtyardTexture('brick', 'height'), bumpScale: .024, roughness: .93 })
+			const stone = new THREE.MeshStandardMaterial({ color: 0x767c71, roughness: .94 })
+			const wood = new THREE.MeshStandardMaterial({ color: 0xffffff, map: this.makeWoodTexture(), bumpMap: this.getCourtyardTexture('wood', 'height'), bumpScale: .018, roughness: .8 })
+			const red = new THREE.MeshStandardMaterial({ color: 0x75392c, map: this.makeWoodTexture(), roughness: .8 })
+			const brass = new THREE.MeshStandardMaterial({ color: 0xb89959, roughness: .38, metalness: .6 })
+			const trim = new THREE.MeshStandardMaterial({ color: 0xb6ad95, roughness: .9 })
+			const darkStone = new THREE.MeshStandardMaterial({ color: 0x4f5c52, roughness: .95 })
+			const box = (parent, w, h, d, x, y, z, material) => {
+				const mesh = new THREE.Mesh(this.mapSurfaceUV(new THREE.BoxGeometry(w, h, d), material === brick ? 1.8 : 3.2, material === brick ? 1.6 : 3.2), material)
+				mesh.position.set(x, y, z); mesh.castShadow = true; mesh.receiveShadow = true; parent.add(mesh); return mesh
+			}
+			ground = new THREE.Mesh(new THREE.BoxGeometry(width+.6,.16,length+.6), stone)
+			ground.position.set(0,-.08,middleZ); ground.receiveShadow = true; scene.add(ground)
+			const road = new THREE.Mesh(new THREE.BoxGeometry(13,.12,length), new THREE.MeshStandardMaterial({ map: this.makeStoneGroundTexture(), roughness:.96 }))
+			road.position.set(0,.02,middleZ); road.receiveShadow = true; road.userData.isStoneRoad = true
+			scene.add(road); environment.push(road); this.loadStoneMaterial(road)
+			// Flush paving details enrich the route without adding steps or obstructions.
+			const inlayMaterial = new THREE.MeshStandardMaterial({ map: this.makeCourtyardInlayTexture(), roughness: .94 })
+			for (const z of [8, -5, -18]) {
+				const inlay = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 3.6), inlayMaterial)
+				inlay.rotation.x = -Math.PI / 2; inlay.position.set(0, .081, z); inlay.receiveShadow = true; inlay.userData.noCollision = true; shell.add(inlay)
+			}
+			for (const x of [-2.6, 2.6]) {
+				box(shell, .1, .002, length, x, .08, middleZ, darkStone).userData.noCollision = true
+				box(shell, .03, .002, length, x + Math.sign(x) * .1, .08, middleZ, trim).userData.noCollision = true
+			}
+			for (const z of [1, -11]) box(shell, 12.4, .002, .18, 0, .08, z, darkStone).userData.noCollision = true
+			// All four sides are physical walls. Side infill joins every building bay.
+			for (const side of [-1,1]) {
+				box(shell,e.thickness,e.height,length,side*(e.xMax-e.thickness/2),e.height/2,middleZ,brick)
+				box(shell,.4,2.9,length,side*(e.facadeLine+.22),1.45,middleZ,brick)
+				box(shell,.46,.3,length,side*(e.facadeLine+.22),.25,middleZ,stone)
+				const coping = new THREE.Group(); coping.position.set(side*(e.facadeLine+.22),0,middleZ); coping.rotation.y = Math.PI/2
+				this.addPitchedRoof(coping,length,.42,2.9,'#454741'); shell.add(coping)
+				// Recessed stone drain; flush edge does not create invisible walking barriers.
+				box(shell,.16,.035,length,side*6.22,.088,middleZ,stone).userData.noCollision = true
+				for (const z of [13.8,-22.2]) {
+					box(shell,1.05,.32,1.05,side*4.8,.24,z,stone)
+					box(shell,.86,.05,.86,side*4.8,.42,z,new THREE.MeshStandardMaterial({color:0x453d2e,roughness:1}))
+					for (const dx of [-.5, .5]) box(shell, .1, .07, 1.12, side * 4.8 + dx, .43, z, trim)
+					for (const dz of [-.5, .5]) box(shell, 1.12, .07, .1, side * 4.8, .43, z + dz, trim)
+					this.addCourtyardTree(shell, side * 4.8, z)
+				}
+			}
+			for (const [z, rotation] of [[e.zMin,0],[e.zMax,Math.PI]]) {
+				const gate = new THREE.Group(); gate.position.z=z; gate.rotation.y=rotation; gate.name='sealed-courtyard-gate'
+				// Inward-facing gatehouse with closed double doors and continuous lintel.
+				box(gate,(width-3.8)/2,e.height,.65,-(width+3.8)/4,e.height/2,0,brick)
+				box(gate,(width-3.8)/2,e.height,.65,(width+3.8)/4,e.height/2,0,brick)
+				box(gate,3.8,1.15,.65,0,e.height-.575,0,brick)
+				box(gate,width,.32,.78,0,.24,.06,stone)
+				box(gate,width,.12,.8,0,3.98,.06,trim)
+				box(gate,4.55,.2,.66,0,3.36,.28,wood)
+				box(gate,4.65,.07,.74,0,3.51,.28,trim)
+				for (const side of [-1,1]) {
+					box(gate,1.89,3.25,.2,side*.95,1.625,.11,red)
+					box(gate,.18,3.65,.5,side*2.02,1.825,.28,wood)
+					for (let row=0;row<5;row++) for(let col=0;col<3;col++) {
+						const stud=new THREE.Mesh(new THREE.SphereGeometry(.038,8,6),brass); stud.position.set(side*(.3+col*.57),.6+row*.43,.23); gate.add(stud)
+					}
+					const ring=new THREE.Mesh(new THREE.TorusGeometry(.11,.024,8,20),brass); ring.position.set(side*.24,1.65,.27); gate.add(ring)
+					box(gate,.19,3.65,.13,side*3.2,1.9,.4,stone)
+					box(gate,.36,.13,.2,side*3.2,3.69,.43,trim)
+					box(gate,.1,3.1,.1,side*2.21,1.92,.57,trim)
+					// Solid wall-backed lattice medallions, not walk-through openings.
+					const centerX = side * 4.8, centerY = 2.35
+					const recess = new THREE.Mesh(new THREE.CircleGeometry(.69,32), darkStone); recess.position.set(centerX,centerY,.335); gate.add(recess)
+					const rim = new THREE.Mesh(new THREE.TorusGeometry(.7,.075,8,36),trim); rim.position.set(centerX,centerY,.37); gate.add(rim)
+					for (let i = -3; i <= 3; i++) {
+						const offset = i * .17, span = 2 * Math.sqrt(.64 * .64 - offset * offset)
+						box(gate,.025,span,.04,centerX+offset,centerY,.37,wood)
+						box(gate,span,.025,.04,centerX,centerY+offset,.37,wood)
+					}
+					const drum = new THREE.Mesh(new THREE.CylinderGeometry(.27,.31,.35,16),stone); drum.position.set(side*2.02,.3,.44); gate.add(drum)
+					this.addCourtyardLantern(gate, side * 2.65, 3.12, .63, brass)
+				}
+				this.addPitchedRoof(gate,width,.9,e.height,'#343b37')
+				this.addPitchedRoof(gate,5.3,2.5,e.height+.25,'#343b37',true)
+				const sign=new THREE.Mesh(new THREE.PlaneGeometry(2.8,.64),new THREE.MeshBasicMaterial({map:this.makeSignTexture(z<0?streetData.title:'平遥古城','gate'),transparent:true,toneMapped:false}))
+				sign.position.set(0,3.84,.4); gate.add(sign); shell.add(gate)
+			}
+			// A pair of transverse covered galleries creates three connected courtyard rooms.
+			for (const z of [1,-11]) {
+				const gallery=new THREE.Group(); gallery.position.z=z; gallery.name='courtyard-gallery'
+				for (const x of [-6.1,-3.9,3.9,6.1]) {
+					box(gallery,.42,.22,.42,x,.19,0,stone)
+					const post=new THREE.Mesh(new THREE.CylinderGeometry(.1,.13,3.05,12),wood); post.position.set(x,1.72,0); post.castShadow=true; gallery.add(post)
+					box(gallery,.52,.14,.42,x,3.16,0,red)
+					for (const side of [-1, 1]) {
+						const bracket = box(gallery,.55,.09,.18,x+side*.23,2.98,0,wood); bracket.rotation.z=side*.55
+					}
+				}
+				box(gallery,12.9,.2,.3,0,3.22,0,wood)
+				box(gallery,12.8,.065,.36,0,3.08,0,trim)
+				box(gallery,7.5,.08,.14,0,2.8,0,wood)
+				for (let i = -8; i <= 8; i++) {
+					box(gallery,.045,.25,.07,i*.42,2.95,0,wood)
+					const rafter=box(gallery,.065,.09,1.7,i*.72,3.33,0,wood); rafter.castShadow=true
+				}
+				this.addPitchedRoof(gallery,12.8,1.4,3.36,'#343b37')
+				for(const x of [-5,5]) this.addCourtyardLantern(gallery,x,2.68,.25,brass)
+				shell.add(gallery)
+			}
+			scene.add(shell); environment.push(shell)
+			// Contact shade remains visible on phones when dynamic shadows are disabled.
+			const shadeRoot=new THREE.Group(); shadeRoot.name='courtyard-contact-shade'
+			const shade=new THREE.Mesh(new THREE.PlaneGeometry(13,length),new THREE.MeshBasicMaterial({map:this.makeCourtyardShadeTexture(e),transparent:true,depthWrite:false,toneMapped:false,opacity:.8}))
+			shade.rotation.x=-Math.PI/2; shade.position.set(0,.083,middleZ); shadeRoot.add(shade)
+			scene.add(shadeRoot); environment.push(shadeRoot)
+		},
+
 		getBuildingPalette(style) {
 			const palettes = {
 				gate: { brick: '#8f7357', mortar: '#443c35', wall: 0xb99e79, wood: '#4b1e19', roof: '#292220', accent: 0x832827 },
@@ -2186,12 +3039,14 @@ export default {
 			const roofMaterial = new THREE.MeshStandardMaterial({
 				color: 0xffffff,
 				map: this.makeRoofTexture(roofHex),
+				bumpMap: this.getCourtyardTexture('roof', 'height'),
+				bumpScale: 0.018,
 				roughness: 0.96,
 				metalness: 0,
 				flatShading: true
 			})
 			const half = depth / 2 + 0.48
-			const rise = depth * (ceremonial ? 0.3 : 0.24)
+			const rise = Math.max(.19, depth * (ceremonial ? 0.3 : 0.24))
 			const eaveLift = ceremonial ? 0.16 : 0.07
 			const profile = new THREE.Shape()
 			profile.moveTo(-half, eaveLift)
@@ -2208,47 +3063,89 @@ export default {
 			const roofGeometry = new THREE.ExtrudeGeometry(profile, { depth: width + 0.8, bevelEnabled: false, steps: 1 })
 			roofGeometry.rotateY(Math.PI / 2)
 			roofGeometry.translate(-(width + 0.8) / 2, 0, 0)
-			this.mapSurfaceUV(roofGeometry, 2.8, 2.8)
-			const roof = new THREE.Mesh(roofGeometry, roofMaterial)
+			// Match the tile pitch across differently sized roofs. V follows the
+			// actual bent slope, so the rows do not stretch on steep roof sections.
+			const columns = Math.max(1, Math.round((width + .8) / .18))
+			const tilePitch = (width + .8) / columns
+			const outerRun = half * .22, innerRun = half * .78
+			const outerLength = Math.hypot(outerRun, .14 - eaveLift)
+			const innerLength = Math.hypot(innerRun, rise - .14)
+			const positions = roofGeometry.attributes.position, uvs = roofGeometry.attributes.uv
+			for (let i = 0; i < positions.count; i++) {
+				const fromEave = half - Math.abs(positions.getZ(i))
+				const alongSlope = fromEave <= outerRun ? fromEave / outerRun * outerLength : outerLength + (fromEave - outerRun) / innerRun * innerLength
+				uvs.setXY(i, (positions.getX(i) + (width + .8) / 2) / (tilePitch * 16), alongSlope / 3.2)
+			}
+			// The cut edge is solid clay, not another stretched tile course.
+			// Split it from the upward faces so both can still join static batches.
+			const faces = [{ position: [], normal: [], uv: [] }, { position: [], normal: [], uv: [] }]
+			const normals = roofGeometry.attributes.normal
+			for (let i = 0; i < positions.count; i += 3) {
+				const target = faces[normals.getY(i) > .1 ? 0 : 1]
+				for (let j = i; j < i + 3; j++) {
+					target.position.push(positions.getX(j), positions.getY(j), positions.getZ(j))
+					target.normal.push(normals.getX(j), normals.getY(j), normals.getZ(j))
+					target.uv.push(uvs.getX(j), uvs.getY(j))
+				}
+			}
+			const [surfaceGeometry, edgeGeometry] = faces.map(attributes => {
+				const geometry = new THREE.BufferGeometry()
+				for (const key of ['position', 'normal', 'uv']) geometry.setAttribute(key, new THREE.Float32BufferAttribute(attributes[key], key === 'uv' ? 2 : 3))
+				return geometry
+			})
+			roofGeometry.dispose()
+			const roof = new THREE.Mesh(surfaceGeometry, roofMaterial)
 			roof.position.y = baseY + 0.1
 			roof.castShadow = true
 			roof.receiveShadow = true
+			roof.userData.isRoofShell = true
 			group.add(roof)
 			const ridge = new THREE.Mesh(
 				new THREE.CylinderGeometry(0.1, 0.1, width + 1.05, 8),
-				new THREE.MeshStandardMaterial({ color: 0x292a2a, roughness: 0.92 })
+				new THREE.MeshStandardMaterial({ color: 0x42453e, roughness: 0.96 })
 			)
 			ridge.rotation.z = Math.PI / 2
 			ridge.position.y = baseY + 0.1 + rise
 			ridge.castShadow = true
 			group.add(ridge)
+			const edge = new THREE.Mesh(edgeGeometry, ridge.material)
+			edge.position.y = roof.position.y
+			edge.castShadow = edge.receiveShadow = true
+			group.add(edge)
 			;[-1, 1].forEach((side) => {
 				const end = new THREE.Mesh(new THREE.BoxGeometry(0.16, ceremonial ? 0.38 : 0.2, 0.18), ridge.material)
 				end.position.set(side * (width / 2 + 0.38), baseY + rise + (ceremonial ? 0.23 : 0.14), 0)
 				group.add(end)
 			})
-			/* 筒瓦以实例覆盖两面坡，轮廓和檐口在近景可读，仍保持每座屋顶两个 draw call。 */
-			const columns = Math.max(8, Math.min(15, Math.round(width / 0.62)))
-			const slopeLength = Math.hypot(half * 0.88, rise)
-			const tileGeo = new THREE.CylinderGeometry(0.045, 0.065, slopeLength, 6, 1, true)
-			const tileMat = new THREE.MeshBasicMaterial({ color: 0x292827, toneMapped: true })
+			// Short half-round eave tiles supply the silhouette; the tiled bump
+			// surface supplies the remaining courses. Narrow wall coping needs no
+			// extra instances. Each full roof still uses one instanced tile draw.
+			if (depth < .6) return
+			const radius = tilePitch * .46
+			const tileGeo = new THREE.CylinderGeometry(radius, radius * .92, .26, 6, 1, false, Math.PI / 2, Math.PI)
+			tileGeo.rotateX(Math.PI / 2)
+			tileGeo.scale(1, .58, 1)
+			const tileMat = new THREE.MeshStandardMaterial({ color: 0x65675f, roughness: .96, metalness: 0 })
 			const tiles = new THREE.InstancedMesh(tileGeo, tileMat, columns * 2)
 			const dummy = new THREE.Object3D()
+			const tileColor = new THREE.Color()
+			const eaveSlope = (.14 - eaveLift) / outerRun
 			let tileIndex = 0
 			for (let column = 0; column < columns; column += 1) {
-				const x = -width / 2 + (column + 0.5) * width / columns
+				const x = -(width + .8) / 2 + (column + .5) * tilePitch
 				;[-1, 1].forEach((side) => {
-					dummy.position.set(x, baseY + 0.12 + rise * 0.5, side * half * 0.44)
-					dummy.rotation.set(side * Math.atan2(half * 0.88, rise), 0, 0)
+					dummy.position.set(x, baseY + .1 + eaveLift + .10 * eaveSlope - .012, side * (half - .10))
+					dummy.rotation.set(side * Math.atan(eaveSlope), 0, 0)
 					dummy.updateMatrix()
-					tiles.setMatrixAt(tileIndex++, dummy.matrix)
+					tiles.setMatrixAt(tileIndex, dummy.matrix)
+					tileColor.setScalar(.92 + ((column * 7 + (side + 1) * 3) % 11) * .012)
+					tiles.setColorAt(tileIndex++, tileColor)
 				})
 			}
 			tiles.castShadow = true
 			tiles.receiveShadow = true
 			tiles.userData.isRoofTiles = true
 			group.add(tiles)
-			/* 筒瓦末端直接形成滴水轮廓，避免为瓦当再增加逐屋 draw call。 */
 		},
 		createBuildings(streetData, worldLayout) {
 			const facades = worldLayout?.facades || []
@@ -2256,13 +3153,14 @@ export default {
 				const group = new THREE.Group()
 				const palette = this.getBuildingPalette(building.style)
 				const bodyMaterial = new THREE.MeshStandardMaterial({
-					color: 0xe5e4df,
+					color: building.slot % 2 ? 0xd5d5ca : 0xe2dfd2,
 					map: this.makeBrickTexture(palette.brick, palette.mortar),
 					roughness: 0.95,
 					metalness: 0,
 					flatShading: true
 				})
-				const body = new THREE.Mesh(this.mapSurfaceUV(new THREE.BoxGeometry(building.width, building.height, building.depth), 3.6, 2.5), bodyMaterial)
+				bodyMaterial.bumpMap = this.getCourtyardTexture('brick', 'height'); bodyMaterial.bumpScale = .024
+				const body = new THREE.Mesh(this.mapSurfaceUV(new THREE.BoxGeometry(building.width, building.height, building.depth), 1.8, 1.6), bodyMaterial)
 				body.position.y = building.height / 2 + 0.16
 				body.castShadow = true
 				body.receiveShadow = true
@@ -2287,7 +3185,7 @@ export default {
 				;[-1, 1].forEach((side) => {
 					const geo = new THREE.ShapeGeometry(gableShape)
 					geo.rotateY(side * Math.PI / 2)
-					this.mapSurfaceUV(geo, 3.6, 2.5)
+					this.mapSurfaceUV(geo, 1.8, 1.6)
 					const gable = new THREE.Mesh(geo, bodyMaterial)
 					gable.position.set(side * building.width / 2, building.height + 0.16, 0)
 					group.add(gable)
@@ -2387,6 +3285,12 @@ export default {
 				win.position.set(side * width * 0.28, Math.min(height * 0.6, 2.25), frontZ + 0.025)
 				win.userData.isWindowGlow = true
 				group.add(win)
+				for (const edge of [-1, 1]) {
+					const upright = new THREE.Mesh(new THREE.BoxGeometry(.065, winH+.12, .07), frameMat)
+					upright.position.set(side*width*.28+edge*winW/2,win.position.y,frontZ+.058); group.add(upright)
+					const rail = new THREE.Mesh(new THREE.BoxGeometry(winW+.12,.065,.07),frameMat)
+					rail.position.set(side*width*.28,win.position.y+edge*winH/2,frontZ+.058);group.add(rail)
+				}
 			})
 
 			const sign = new THREE.Mesh(
@@ -2565,7 +3469,7 @@ export default {
 						metalness: extras.metalness || 0,
 						map: useBrocade ? brocadeTexture : null,
 						flatShading: extras.flatShading !== false,
-						side: extras.side
+						side: extras.side ?? THREE.FrontSide
 					})
 					mat.userData.useBrocade = useBrocade
 					return mat
@@ -2739,6 +3643,7 @@ export default {
 
 				const spawn = currentWorldLayout?.spawn || { x: 0, z: 13 }
 				group.position.set(spawn.x, 0, spawn.z)
+				group.rotation.y = Math.PI
 				group.scale.y = shape.height
 				group.userData = { leftLeg, rightLeg, leftArm, rightArm, body: torso, robe, head, eyes, tassel, modelVersion: 2, silhouette, procedural: true }
 				scene.add(group)
@@ -2761,8 +3666,8 @@ export default {
 			try {
 				if (!THREE.GLTFLoader) await this.loadScript('static/libs/GLTFLoader.js')
 				if (!THREE.SkeletonUtils) await this.loadScript('static/libs/SkeletonUtils.js')
-				const buffer = playerModelBufferCache || await this.readBinaryAsset(modelPath)
-				playerModelBufferCache = buffer
+				const buffer = playerModelBufferCache?.path === modelPath ? playerModelBufferCache.buffer : await this.readBinaryAsset(modelPath)
+				playerModelBufferCache = { path: modelPath, buffer }
 				if (generation !== playerModelGeneration || !scene) return
 				const gltf = await new Promise((resolve, reject) => new THREE.GLTFLoader().parse(buffer, '', resolve, reject))
 				gltf.scene.traverse((item) => {
@@ -2777,28 +3682,113 @@ export default {
 				const root = gltf.scene
 				root.name = 'pingyao-player-gltf'
 				root.scale.setScalar(1.15)
-				root.traverse((item) => { if (item.isMesh) { item.castShadow = true; item.frustumCulled = true } })
+				root.traverse((item) => { if (item.isMesh) { item.castShadow = true; item.frustumCulled = false } })
+				root.userData.detailed = Boolean(root.getObjectByName('Face_Skin'))
+				this.shareCharacterSkeletons(root)
 				this.applyGlbSkin(root, playerSkinData || {})
+				this.applyEnvironmentIntensity(root, phaseVisualState.environment)
+				this.upgradePedestrians(root, gltf.animations)
 				const mixer = new THREE.AnimationMixer(root)
 				const actions = {}
 				;(gltf.animations || []).forEach((clip) => {
-					const key = /run/i.test(clip.name) ? 'run' : /walk/i.test(clip.name) ? 'walk' : /wave|cheer|interact/i.test(clip.name) ? 'wave' : /^idle$/i.test(clip.name) ? 'idle' : ''
+					const key = /run/i.test(clip.name) ? 'run' : /walk/i.test(clip.name) ? 'walk' : /^idle$/i.test(clip.name) ? 'idle' : ''
 					if (key && !actions[key]) actions[key] = mixer.clipAction(clip)
 				})
-				if (!actions.idle || !actions.walk) { mixer.stopAllAction(); return }
+				const gestureClip = (gltf.animations || []).find((clip) => /interact|wave/i.test(clip.name))
+					|| (gltf.animations || []).find((clip) => /cheer/i.test(clip.name))
+				if (gestureClip) actions.wave = mixer.clipAction(gestureClip)
+				if (!actions.idle || !actions.walk) { mixer.stopAllAction(); this.disposeObjectResources(root); return }
 				const oldPlayer = player
 				root.position.copy(oldPlayer.position)
+				root.position.y = .08
 				root.rotation.copy(oldPlayer.rotation)
 				scene.add(root)
 				scene.remove(oldPlayer)
 				this.disposeObjectResources(oldPlayer)
-				actions.idle.play()
-				root.userData = { ...root.userData, isGltf: true, mixer, actions, activeAction: actions.idle, modelVersion: 3 }
+				for (const key of ['idle', 'walk', 'run']) actions[key]?.play().setEffectiveWeight(key === 'idle' ? 1 : 0)
+				root.userData = { ...root.userData, isGltf: true, mixer, actions, activeAction: actions.idle, modelVersion: 5, gestureTime: 0, collisionRadius: CHARACTER_COLLISION_RADIUS.player }
+				this.prepareCharacterDeformation(root)
 				animationMixers.push(mixer)
 				player = root
+				this.applyEnvironmentIntensity(scene, phaseVisualState.environment)
 			} catch (_) { /* 程序化角色已经可玩，模型失败无需打断加载。 */ }
 		},
+		shareCharacterSkeletons(root) {
+			// GLTFLoader creates one Skeleton per skinned mesh even when every mesh uses the same bones,
+			// so a 49-part character updates 49 skeletons and uploads 49 bone textures per frame.
+			const shared = new Map()
+			root.traverse(mesh => {
+				if (!mesh.isSkinnedMesh) return
+				const key = mesh.skeleton.bones.map(bone => bone.uuid).join(',')
+				if (!shared.has(key)) { shared.set(key, mesh.skeleton); return }
+				const previous = mesh.skeleton
+				mesh.bind(shared.get(key), mesh.bindMatrix)
+				previous.dispose()
+			})
+		},
+		upgradePedestrians(source, clips) {
+			if (!source.userData.detailed || !THREE.SkeletonUtils) return
+			const clip = clips.find(item => /^Walking_A$/i.test(item.name))
+			if (!clip) return
+			source.updateMatrixWorld(true)
+			ambientActors = ambientActors.map((old, index) => {
+				if (old.userData.kind !== 'pedestrian') return old
+				const actor = THREE.SkeletonUtils.clone(source)
+				actor.name = 'pingyao-pedestrian-' + index
+				const materialCopies = new Map()
+				const skeletonCopies = new Map()
+				actor.traverse(mesh => {
+					if (!mesh.isMesh) return
+					mesh.geometry = mesh.geometry.clone()
+					if (mesh.isSkinnedMesh) {
+						const key = mesh.skeleton.bones.map(bone => bone.uuid).join(',')
+						if (!skeletonCopies.has(key)) skeletonCopies.set(key, mesh.skeleton)
+						mesh.bind(skeletonCopies.get(key), mesh.bindMatrix)
+					}
+					if (!materialCopies.has(mesh.material)) materialCopies.set(mesh.material, mesh.material.clone())
+					mesh.material = materialCopies.get(mesh.material)
+				})
+				this.applyGlbSkin(actor, { body: index % 2 ? '#587269' : '#64737d', robe: index % 2 ? '#354a41' : '#434d57', head: '#d8b18d', trim: '#c2ba9e', headwear: index % 2 ? 'scholar-scarf' : 'skullcap', accessory: index % 2 ? 'scroll' : 'ledger' })
+				actor.scale.setScalar(.93 + index*.035); actor.position.copy(old.position); actor.position.y = .08
+				actor.rotation.copy(old.rotation)
+				const mixer = new THREE.AnimationMixer(actor), action = mixer.clipAction(clip).play()
+				const idle = mixer.clipAction(clips.find(item=>item.name==='Idle')).play().setEffectiveWeight(0)
+				action.timeScale = old.userData.speed / (CHARACTER_GAIT_SPEED.walk * actor.scale.x)
+				action.time = (index * .37 % 1) * clip.duration
+				actor.userData = { ...old.userData, kind: 'rigged-pedestrian', mixer, action, idle, expressionOffset: .73 + index * 1.37, collisionRadius: CHARACTER_COLLISION_RADIUS.pedestrian * actor.scale.x }
+				this.prepareCharacterDeformation(actor)
+				actor.updateMatrixWorld(true)
+				animationMixers.push(mixer); old.removeFromParent(); this.disposeObjectResources(old); scene.add(actor)
+				return actor
+			})
+		},
 		applyGlbSkin(root, skin) {
+			if (root.userData.detailed) {
+				const slots = { Cloth: skin.body || '#8B4513', Robe: skin.robe || skin.body || '#754019', Trim: skin.trim || '#D2B48C', Skin: skin.head || '#e1b996', Hat: skin.hat || '#302d29' }
+				root.scale.setScalar(1)
+				const materials = new Set()
+				root.traverse((mesh) => {
+					if (!mesh.isMesh) return
+					const mat = mesh.material
+					if (!materials.has(mat)) {
+						materials.add(mat)
+						if (slots[mat.name]) {
+							mat.color.set(slots[mat.name])
+							if (THREE.ColorManagement?.legacyMode !== false) mat.color.convertSRGBToLinear()
+						}
+						if (['Cloth', 'Robe', 'Hat'].includes(mat.name)) {
+							mat.bumpMap = this.makeClothWeaveTexture(); mat.bumpScale = 0.003
+							mat.roughness = mat.name === 'Robe' && skin.pattern === 'brocade' ? 0.65 : 0.89
+							mat.map = mat.name === 'Robe' && skin.pattern === 'brocade' ? this.getBrocadeTexture() : this.getCourtyardTexture('cloth')
+							mat.userData.useBrocade = mat.name === 'Robe' && skin.pattern === 'brocade'
+						}
+						mat.needsUpdate = true
+					}
+					if (mesh.name.startsWith('hw_')) mesh.visible = mesh.name.replace(/_\d+$/, '') === 'hw_' + (skin.headwear || 'hair-bun')
+					if (mesh.name.startsWith('acc_')) mesh.visible = mesh.name.replace(/_\d+$/, '') === 'acc_' + (skin.accessory || 'satchel')
+				})
+				return
+			}
 			const slots = { Cloth: skin.body, Robe: skin.robe || skin.body, Trim: skin.trim, Skin: skin.head, Hair: skin.hat, Hat: skin.hat }
 			const proportions = { traveler: [0.98, 1], clerk: [1, 1.01], scholar: [0.97, 1.04], escort: [1.06, 1.03], merchant: [1.04, 1], festival: [1.08, 1.03], legend: [1.1, 1.06] }
 			const [width, height] = proportions[skin.silhouette] || proportions.traveler
@@ -2862,8 +3852,9 @@ export default {
 			}
 		},
 		disposeObjectResources(root) {
-			const geometries = new Set(), materials = new Set(), textures = new Set()
+			const geometries = new Set(), materials = new Set(), textures = new Set(), skeletons = new Set()
 			root?.traverse((item) => {
+				if (item.skeleton) skeletons.add(item.skeleton)
 				if (item.geometry) geometries.add(item.geometry)
 				;(Array.isArray(item.material) ? item.material : [item.material]).filter(Boolean).forEach((material) => {
 					materials.add(material)
@@ -2873,6 +3864,7 @@ export default {
 			geometries.forEach((geometry) => geometry.dispose())
 			materials.forEach((material) => material.dispose())
 			textures.forEach((texture) => texture.dispose())
+			skeletons.forEach((skeleton) => skeleton.dispose())
 		},
 		createLegacyPlayer() {
 			// 化身按已装备服饰着色：body/head 必有，robe（长衫下摆）/hat（冠帽）/accent（足部光环）按服饰可选，
@@ -3066,10 +4058,11 @@ export default {
 					const lantern = new THREE.Mesh(
 						new THREE.SphereGeometry(0.36, 12, 10),
 						new THREE.MeshStandardMaterial({
-							color: 0xC41E3A,
-							emissive: 0xC41E3A,
-							emissiveIntensity: 0.85,
-							flatShading: true
+							color: this.makeSceneColor(0xC41E3A),
+							emissive: this.makeSceneColor(0xff752e),
+							emissiveIntensity: 0.22,
+							roughness: .83,
+							flatShading: false
 						})
 					)
 					lantern.position.set(reach, 2.35, 0)
@@ -3125,7 +4118,7 @@ export default {
 					const cloth = new THREE.Mesh(
 						new THREE.PlaneGeometry(0.5, 1.6),
 						new THREE.MeshStandardMaterial({
-							color: 0xC41E3A,
+							color: this.makeSceneColor(0xC41E3A),
 							side: THREE.DoubleSide,
 							emissive: 0x3a0a14,
 							emissiveIntensity: 0.18,
@@ -3399,6 +4392,9 @@ export default {
 				}
 
 				group.position.set(d.x, 0, d.z)
+				if (group.userData.isLantern || group.userData.isLanternString) group.traverse(mesh => {
+					if (mesh.material?.emissive?.getHex()) mesh.userData.isLanternShell = true
+				})
 				scene.add(group)
 				decorations.push(group)
 			})
@@ -3423,7 +4419,8 @@ export default {
 				})
 				npc.scale.setScalar(0.9 + i * 0.035)
 				npc.position.set((i % 2 ? 1 : -1) * (3.15 + i * 0.16), 0, 10 - i * 8.5)
-				npc.userData = { kind: 'pedestrian', startZ: npc.position.z, range: 9 + i * 2, speed: 0.33 + i * 0.07, direction: i % 2 ? -1 : 1, limbs, phase: i * 2.1 }
+				npc.userData = { kind: 'pedestrian', startZ: npc.position.z, range: 9 + i * 2, speed: .72 + i * .12, direction: i % 2 ? -1 : 1, collisionRadius: CHARACTER_COLLISION_RADIUS.pedestrian * npc.scale.x, limbs, phase: i * 2.1 }
+				npc.rotation.y = npc.userData.direction > 0 ? 0 : Math.PI
 				scene.add(npc); this.batchStaticRoots([npc]); ambientActors.push(npc)
 			}
 
@@ -3464,16 +4461,14 @@ export default {
 		},
 		createParticles(phase) {
 			const type = phase?.fallingType || 'leaf'
-			// 粒子数下调（firefly 80→50，其余 40→26）：animate 每帧对每个粒子做 sin/cos + 改写 position buffer 并整体上传 GPU，
-			// 是逐帧最重的一项。减量后视觉仍连贯，低端机帧时间明显下降。
-			const count = type === 'firefly' ? 50 : 26
+			const count = type === 'firefly' ? 36 : 24
 			const positions = new Float32Array(count * 3)
 			const colorStr = type === 'firefly' ? 0xfff3a0 : type === 'cherry' ? 0xffcad4 : 0xd4a574
-
+			// Emit beside the four tree canopies, respecting scene depth and occlusion.
 			for (let i = 0; i < count; i++) {
-				positions[i * 3] = (Math.random() - 0.5) * 40
-				positions[i * 3 + 1] = Math.random() * 8 + 0.5
-				positions[i * 3 + 2] = (Math.random() - 0.5) * 24 - 4
+				positions[i * 3] = (i % 2 ? -4.8 : 4.8) + Math.sin(i * 2.4) * 1.2
+				positions[i * 3 + 1] = .5 + (i % 7) * .45
+				positions[i * 3 + 2] = (i % 4 < 2 ? 13.8 : -22.2) + Math.cos(i * 2.4) * 1.2
 			}
 
 			const geom = new THREE.BufferGeometry()
@@ -3481,9 +4476,19 @@ export default {
 
 			const mat = new THREE.PointsMaterial({
 				color: colorStr,
-				size: type === 'firefly' ? 0.16 : 0.1,
+				map: this.getTexture('courtyard_particle_' + type, () => {
+					const canvas = this.makeCanvas(32), ctx = canvas.getContext('2d')
+					if (type === 'firefly') {
+						const glow = ctx.createRadialGradient(16, 16, 1, 16, 16, 15)
+						glow.addColorStop(0, '#ffffff'); glow.addColorStop(.3, 'rgba(255,255,255,.8)'); glow.addColorStop(1, 'rgba(255,255,255,0)')
+						ctx.fillStyle = glow; ctx.fillRect(0, 0, 32, 32)
+					} else { ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(16, 16, 11, 6, .7, 0, Math.PI * 2); ctx.fill() }
+					return new THREE.CanvasTexture(canvas)
+				}),
+				size: type === 'firefly' ? .09 : .065,
 				transparent: true,
-				opacity: type === 'firefly' ? 0.95 : 0.55,
+				depthWrite: false,
+				opacity: type === 'firefly' ? .85 : .55,
 				sizeAttenuation: true
 			})
 
@@ -3491,150 +4496,335 @@ export default {
 			particles.userData.kind = type
 			scene.add(particles)
 		},
+		updatePhaseParticles(phase, seconds) {
+			if (!particles) return
+			const kind = phase.fallingType || 'leaf'
+			if (particles.userData.kind !== kind) {
+				particles.material.opacity = Math.max(0, particles.material.opacity - seconds * 1.4)
+				if (particles.material.opacity === 0) {
+					particles.removeFromParent(); particles.geometry.dispose(); particles.material.dispose()
+					particles = null; this.createParticles(phase); particles.material.opacity = 0
+				}
+			} else {
+				const target = kind === 'firefly' ? .85 : .55
+				particles.material.opacity = Math.min(target, particles.material.opacity + seconds * 1.4)
+			}
+		},
+		capturePhaseTargets(phase) {
+			const key = phase.key, lit = Boolean(phase.lanternsLit)
+			const tracks = [], seen = new Map(), environmentMaterials = new Set()
+			const add = (object, property, target) => {
+				if (!object || object[property] == null || target == null) return
+				if (!seen.has(object)) seen.set(object, new Map())
+				const properties = seen.get(object)
+				if (properties.has(property)) { properties.get(property).to = target; return }
+				const value = object[property]
+				const track = { object, property, from: value.clone ? value.clone() : value, to: target }
+				properties.set(property, track); tracks.push(track)
+			}
+			const color = (object, property, hex) => { if (hex) add(object, property, this.makeSceneColor(colorHex(hex, 0xffffff))) }
+			add(phaseVisualState, 'environment', key === 'night' ? .16 : key === 'dusk' ? .28 : .36)
+			add(phaseVisualState, 'effects', lit ? 1 : 0)
+			add(phaseVisualState, 'warmth', key === 'night' ? .005 : .018)
+			add(phaseVisualState, 'bloom', phase.bloomStrength ?? .3)
+			add(renderer, 'toneMappingExposure', phase.exposure ?? 1)
+			color(scene?.fog, 'color', phase.fog?.color); add(scene?.fog, 'density', phase.fog?.density)
+			for (const [light, values] of [[ambientLightRef, phase.lighting?.ambient], [directionalLightRef, phase.lighting?.directional], [hemiLightRef, phase.lighting?.hemi]]) {
+				if (!light || !values) continue
+				color(light, 'color', values.color || values.sky)
+				add(light, 'intensity', values.intensity)
+				if (values.ground) color(light, 'groundColor', values.ground)
+				if (values.angle) add(light, 'position', new THREE.Vector3(values.angle.x, values.angle.y, values.angle.z))
+			}
+			lanternLights.forEach(light => add(light, 'intensity', lit ? (key === 'night' ? .72 : .42) : .04))
+			const backdropTints = { dawn: 0xB59678, noon: 0x8F8A80, dusk: 0x765044, night: 0x31384A }
+			scene?.traverse(mesh => {
+				const flags = mesh.userData || {}
+				for (const material of (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).filter(Boolean)) {
+					if ('envMapIntensity' in material) environmentMaterials.add(material)
+					if (flags.isWindowGlow) add(material, 'emissiveIntensity', key === 'night' ? .68 : key === 'dusk' ? .34 : 0)
+					if (flags.isBuildingLantern) add(material, 'emissiveIntensity', key === 'night' ? .72 : key === 'dusk' ? .42 : .08)
+					if (flags.isLanternShell) add(material, 'emissiveIntensity', lit ? (key === 'night' ? .55 : .25) : .02)
+					if (flags.isLanternHalo) add(material, 'opacity', lit ? .58 : 0)
+					if (flags.isLanternPool) add(material, 'opacity', lit ? .2 : 0)
+					if (flags.isRooflineBackdrop) {
+						add(material, 'color', this.makeSceneColor(backdropTints[key] || backdropTints.noon))
+						add(material, 'opacity', key === 'night' ? .48 : .42)
+					}
+					if (flags.isParallaxLayer) add(material, 'opacity', key === 'night' ? .16 : flags.isParallaxLayer === 'mountain' ? .24 : .3)
+					if (flags.isCloudLayer) add(material, 'opacity', key === 'night' ? .11 : key === 'dusk' ? .22 : .3)
+				}
+			})
+			decorations.filter(group => group.userData?.isBanner || group.userData?.isSign).forEach(group => group.traverse(mesh => {
+				if (mesh.material?.emissive) add(mesh.material, 'emissiveIntensity', lit ? .3 : .1)
+			}))
+			return { tracks, environmentMaterials }
+		},
+		syncPhaseEffects() {
+			if (bloomPassRef) bloomPassRef.strength = phaseVisualState.bloom * phaseVisualState.effects
+			if (gradePassRef) {
+				gradePassRef.uniforms.warmth.value = phaseVisualState.warmth
+				gradePassRef.uniforms.effectAmount.value = effectsEnabled ? phaseVisualState.effects : 0
+			}
+		},
+		renderSceneFrame() {
+			if (composer) {
+				// Keep scene materials in the same linear target by day and night.
+				// The first zero-strength glow draw happens behind the entrance loader.
+				if (bloomPassRef) bloomPassRef.enabled = effectsEnabled && (!bloomPrepared || (phaseVisualState.effects > .00001 && !bloomSuppressed))
+				composer.render()
+				if (bloomPassRef?.enabled) bloomPrepared = true
+			} else if (renderer && scene && camera) renderer.render(scene, camera)
+		},
+		applyPhaseTracks(snapshot, t) {
+			for (const track of snapshot.tracks) {
+				if (track.from.clone) track.object[track.property].copy(track.from).lerp(track.to, t)
+				else track.object[track.property] = THREE.MathUtils.lerp(track.from, track.to, t)
+			}
+			snapshot.environmentMaterials.forEach(material => { material.envMapIntensity = phaseVisualState.environment })
+			this.syncPhaseEffects()
+		},
 		applyPhase(phase, immediate = false) {
 			if (!scene || !phase) return
+			if (!immediate && phaseTransition && phaseTransition.target.key === phase.key) return
 			const previousPhase = currentPhaseData
 			currentPhaseData = phase
-			if (particles && particles.userData.kind !== (phase.fallingType || 'leaf')) {
-				particles.removeFromParent()
-				particles.geometry.dispose()
-				particles.material.dispose()
-				particles = null
-				this.createParticles(phase)
+			const animate = !immediate && renderer && previousPhase?.key && previousPhase.key !== phase.key
+			if (!animate && particles && particles.userData.kind !== (phase.fallingType || 'leaf')) {
+				particles.removeFromParent(); particles.geometry.dispose(); particles.material.dispose()
+				particles = null; this.createParticles(phase)
 			}
-			if (!immediate && renderer && previousPhase?.key && previousPhase.key !== phase.key) {
-				phaseTransition = {
-					startedAt: performance.now(), duration: 2200, target: phase,
-					ambientColor: ambientLightRef?.color.clone(), ambientIntensity: ambientLightRef?.intensity || 0,
-					keyColor: directionalLightRef?.color.clone(), keyIntensity: directionalLightRef?.intensity || 0,
-					hemiColor: hemiLightRef?.color.clone(), hemiGround: hemiLightRef?.groundColor.clone(), hemiIntensity: hemiLightRef?.intensity || 0,
-					fogColor: scene.fog?.color.clone(), fogDensity: scene.fog?.density || 0,
-					exposure: renderer.toneMappingExposure, bloom: bloomPassRef?.strength || 0
-				}
+			const snapshot = this.capturePhaseTargets(phase)
+			if (animate) {
+				// Capture the visible sky and material values, including an interrupted transition.
+				const from = this.makeCanvas(1024); from.height = 512
+				from.getContext('2d').drawImage(scene.background.image, 0, 0, 1024, 512)
+				if (phaseSkyBlend) phaseSkyBlend.texture.dispose()
+				const canvas = this.makeCanvas(1024); canvas.height = 512
+				canvas.getContext('2d').drawImage(from, 0, 0)
+				const texture = new THREE.CanvasTexture(canvas); this.setColorTexture(texture)
+				phaseSkyBlend = { from, canvas, texture, target: this.makeSkyTexture(phase.sky.top, phase.sky.bottom, phase.key === 'night').image, lastDraw: -Infinity }
+				scene.background = texture
+				phaseTransition = { ...snapshot, lastTime: performance.now(), elapsed: 0, duration: 2200, target: phase }
 				return
 			}
-
-			const skyColor = colorHex(phase.sky?.top, 0xD7C0A2)
-			/* 渐变天空（夜晚带星空），随时辰刷新 */
+			phaseTransition = null
+			this.applyPhaseTracks(snapshot, 1)
+			if (particles) particles.material.opacity = particles.userData.kind === 'firefly' ? .85 : .55
+			if (phaseSkyBlend) { phaseSkyBlend.texture.dispose(); phaseSkyBlend = null }
 			this.refreshSky(phase)
-			if (scene.fog) {
-				scene.fog.color = new THREE.Color(colorHex(phase.fog?.color, skyColor))
-				scene.fog.density = phase.fog?.density ?? scene.fog.density
-			}
-
-			if (ambientLightRef) {
-				ambientLightRef.color = new THREE.Color(colorHex(phase.lighting?.ambient?.color, 0xF5F0E8))
-				ambientLightRef.intensity = phase.lighting?.ambient?.intensity ?? 0.55
-			}
-			if (directionalLightRef) {
-				directionalLightRef.color = new THREE.Color(colorHex(phase.lighting?.directional?.color, 0xffd77f))
-				directionalLightRef.intensity = phase.lighting?.directional?.intensity ?? 1.25
-				const angle = phase.lighting?.directional?.angle
-				if (angle) directionalLightRef.position.set(angle.x, angle.y, angle.z)
-			}
-			if (hemiLightRef) {
-				hemiLightRef.color = new THREE.Color(colorHex(phase.lighting?.hemi?.sky, 0xf6ead7))
-				hemiLightRef.groundColor = new THREE.Color(colorHex(phase.lighting?.hemi?.ground, 0x6e5541))
-				hemiLightRef.intensity = phase.lighting?.hemi?.intensity ?? 0.42
-			}
-			if (bloomPassRef && typeof phase.bloomStrength === 'number') {
-				bloomPassRef.strength = phase.bloomStrength
-			}
-			if (renderer && typeof phase.exposure === 'number') {
-				renderer.toneMappingExposure = phase.exposure
-			}
-			const backdropTints = { dawn: 0xB59678, noon: 0x8F8A80, dusk: 0x765044, night: 0x31384A }
-			environment.forEach((item) => {
-				if (!item.material) return
-				if (item.userData?.isRooflineBackdrop) {
-					item.material.color.setHex(backdropTints[phase.key] || backdropTints.noon)
-					item.material.opacity = phase.key === 'night' ? 0.48 : 0.42
-				}
-				if (item.userData?.isParallaxLayer) item.material.opacity = phase.key === 'night' ? 0.16 : item.userData.isParallaxLayer === 'mountain' ? 0.24 : 0.3
-				if (item.userData?.isCloudLayer) item.material.opacity = phase.key === 'night' ? 0.11 : phase.key === 'dusk' ? 0.22 : 0.3
-			})
-
-			/* 灯笼 / 旗幡 / 招幌：夜间增强发光 */
-			const lit = phase.lanternsLit
-			lanternLights.forEach((light) => {
-				light.intensity = lit ? (phase.key === 'night' ? 0.72 : 0.42) : 0.04
-			})
-			decorations.forEach((group) => {
-				if (group.userData?.isLantern || group.userData?.isLanternString) {
-					group.traverse((mesh) => {
-						if (mesh.isMesh && mesh.material && mesh.material.emissive) {
-							mesh.material.emissiveIntensity = lit ? 0.95 : 0.28
-						}
-						if (mesh.userData?.isLanternHalo && mesh.material) mesh.material.opacity = lit ? 0.58 : 0
-						if (mesh.userData?.isLanternPool && mesh.material) mesh.material.opacity = lit ? 0.2 : 0
-					})
-				}
-				if (group.userData?.isBanner || group.userData?.isSign) {
-					group.traverse((mesh) => {
-						if (mesh.isMesh && mesh.material && mesh.material.emissive) {
-							mesh.material.emissiveIntensity = lit ? 0.3 : 0.1
-						}
-					})
-				}
-			})
-
-			/* 建筑窗格：入夜后窗纸透暖光，配合 Bloom 晕染出灯火气 */
-			this.updateWindowGlow(phase)
-			this.applyEnvironmentIntensity(scene, phase.key === 'night' ? 0.72 : phase.key === 'dusk' ? 0.58 : 0.46)
 		},
 		updatePhaseTransition(now) {
 			const transition = phaseTransition
 			if (!transition || !scene || !renderer) return
-			const raw = Math.min(1, (now - transition.startedAt) / transition.duration)
-			const t = raw * raw * (3 - 2 * raw)
-			const phase = transition.target
-			const color = (from, hex) => from.clone().lerp(new THREE.Color(colorHex(hex, from.getHex())), t)
-			if (ambientLightRef) { ambientLightRef.color.copy(color(transition.ambientColor, phase.lighting?.ambient?.color)); ambientLightRef.intensity = THREE.MathUtils.lerp(transition.ambientIntensity, phase.lighting?.ambient?.intensity ?? 0.55, t) }
-			if (directionalLightRef) { directionalLightRef.color.copy(color(transition.keyColor, phase.lighting?.directional?.color)); directionalLightRef.intensity = THREE.MathUtils.lerp(transition.keyIntensity, phase.lighting?.directional?.intensity ?? 1.25, t) }
-			if (hemiLightRef) {
-				hemiLightRef.color.copy(color(transition.hemiColor, phase.lighting?.hemi?.sky))
-				hemiLightRef.groundColor.copy(color(transition.hemiGround, phase.lighting?.hemi?.ground))
-				hemiLightRef.intensity = THREE.MathUtils.lerp(transition.hemiIntensity, phase.lighting?.hemi?.intensity ?? 0.42, t)
+			// Shader compilation, backgrounding or a slow frame must not skip the whole dissolve.
+			const frameTime = Math.min(50, Math.max(0, now - transition.lastTime))
+			transition.elapsed += frameTime
+			transition.lastTime = now
+			const raw = Math.min(1, transition.elapsed / transition.duration), t = raw * raw * (3 - 2 * raw)
+			this.applyPhaseTracks(transition, t)
+			this.updatePhaseParticles(transition.target, frameTime / 1000)
+			if (phaseSkyBlend && (now - phaseSkyBlend.lastDraw >= 32 || raw === 1)) {
+				const ctx = phaseSkyBlend.canvas.getContext('2d')
+				ctx.globalAlpha = 1; ctx.drawImage(phaseSkyBlend.from, 0, 0, 1024, 512)
+				ctx.globalAlpha = t; ctx.drawImage(phaseSkyBlend.target, 0, 0, 1024, 512); ctx.globalAlpha = 1
+				phaseSkyBlend.texture.needsUpdate = true
+				phaseSkyBlend.lastDraw = now
 			}
-			if (scene.fog) { scene.fog.color.copy(color(transition.fogColor, phase.fog?.color)); scene.fog.density = THREE.MathUtils.lerp(transition.fogDensity, phase.fog?.density ?? transition.fogDensity, t) }
-			renderer.toneMappingExposure = THREE.MathUtils.lerp(transition.exposure, phase.exposure ?? 1, t)
-			if (bloomPassRef) bloomPassRef.strength = THREE.MathUtils.lerp(transition.bloom, phase.bloomStrength ?? 0.3, t)
-			if (gradePassRef) gradePassRef.uniforms.warmth.value = THREE.MathUtils.lerp(0.045, phase.key === 'night' ? 0.012 : 0.05, t)
-			const lights = decorations.filter((group) => group.userData?.isLantern || group.userData?.isLanternString)
-			lights.forEach((group, index) => {
-				const stagger = Math.max(0, Math.min(1, (raw * 1.45 - index / Math.max(1, lights.length) * 0.45)))
-				group.traverse((mesh) => { if (mesh.material?.emissive) mesh.material.emissiveIntensity = phase.lanternsLit ? 0.25 + stagger * 0.7 : 0.95 - stagger * 0.67 })
-			})
-			if (raw >= 1) { phaseTransition = null; this.applyPhase(phase, true) }
+			if (raw >= 1) {
+				phaseTransition = null
+				if (phaseSkyBlend) { phaseSkyBlend.texture.dispose(); phaseSkyBlend = null }
+				this.refreshSky(transition.target)
+			}
+		},
+		updatePlayerMotion(desiredX, desiredZ, deltaTime) {
+			const data = player.userData
+			const previousYaw = player.rotation.y
+			if (inputBlocked || portraitCamera || pagePaused) { desiredX = 0; desiredZ = 0 }
+			const hasInput = Math.hypot(desiredX, desiredZ) > .02
+			const angleDelta = (target) => Math.atan2(Math.sin(target - player.rotation.y), Math.cos(target - player.rotation.y))
+			const wantedYaw = hasInput ? Math.atan2(desiredX, desiredZ) : player.rotation.y
+			const inputAngle = angleDelta(wantedYaw)
+			if (!hasInput || Math.abs(inputAngle) < .35) data.motionTurning = false
+			else if (Math.abs(inputAngle) > 1.75) data.motionTurning = true
+			// Brake along the old heading before a reversal. Ordinary corners retain their arc.
+			const response = 1 - Math.exp(-(data.motionTurning ? 18 : hasInput ? 11 : 7) * deltaTime)
+			movementVelocity.x += ((data.motionTurning ? 0 : desiredX) - movementVelocity.x) * response
+			movementVelocity.z += ((data.motionTurning ? 0 : desiredZ) - movementVelocity.z) * response
+			let velocity = Math.hypot(movementVelocity.x, movementVelocity.z)
+			let targetYaw = velocity > .02 ? Math.atan2(movementVelocity.x, movementVelocity.z) : player.rotation.y
+			if (data.motionTurning && velocity < .16) {
+				movementVelocity.x = 0; movementVelocity.z = 0; velocity = 0
+				targetYaw = wantedYaw
+			}
+			const yawStep = THREE.MathUtils.clamp(angleDelta(targetYaw), -7 * deltaTime, 7 * deltaTime)
+			player.rotation.y += yawStep
+			data.turnRate = yawStep / deltaTime
+			// Input cancellation also cancels an unfinished pivot; it cannot finish by itself.
+			if (!hasInput && velocity < .02) {
+				movementVelocity.x = 0; movementVelocity.z = 0; data.turnRate = 0
+			}
+			const forwardX = Math.sin(player.rotation.y), forwardZ = Math.cos(player.rotation.y)
+			const backwards = Math.min(0, movementVelocity.x * forwardX + movementVelocity.z * forwardZ)
+			movementVelocity.x -= backwards * forwardX
+			movementVelocity.z -= backwards * forwardZ
+			const previousX = player.position.x, previousZ = player.position.z
+			const bounds = currentWorldLayout?.roadBounds || { xMin: -4.15, xMax: 4.15, zMin: -23, zMax: 15 }
+			this.resolveStreetMotion(player.position, movementVelocity.x * deltaTime, movementVelocity.z * deltaTime, data.collisionRadius || .43)
+			if (player.position.x === bounds.xMin || player.position.x === bounds.xMax) movementVelocity.x = 0
+			if (player.position.z === bounds.zMin || player.position.z === bounds.zMax) movementVelocity.z = 0
+			const movedX = player.position.x - previousX, movedZ = player.position.z - previousZ
+			const movedDistance = Math.hypot(movedX, movedZ)
+			if (movedDistance > .0004 && !data.motionTurning) {
+				// Sliding along a wall should face the resolved travel, within the same frame's turn budget.
+				const heading = Math.atan2(movedX, movedZ) - previousYaw
+				const resolvedStep = THREE.MathUtils.clamp(Math.atan2(Math.sin(heading), Math.cos(heading)), -7 * deltaTime, 7 * deltaTime)
+				player.rotation.y = previousYaw + resolvedStep
+				data.turnRate = resolvedStep / deltaTime
+			}
+			if (movedDistance < .00001) { movementVelocity.x = 0; movementVelocity.z = 0 }
+			const speed = movedDistance / deltaTime
+			return { movedDistance, speed, moving: movedDistance > .0004 && speed > .045 }
 		},
 		updatePlayerMixer(speed, moving, deltaTime) {
 			if (!player?.userData?.isGltf) return
 			const data = player.userData
+			const turn = moving ? 0 : Math.min(.45, Math.abs(data.turnRate || 0) * .07)
+			if (moving || turn > .01) data.gestureTime = 0
+			data.gestureTime = Math.max(0, (data.gestureTime || 0) - deltaTime)
+			const gesture = data.gestureTime > 0 ? Math.min(1, data.gestureTime / 0.22) : 0
+			const walk = moving ? THREE.MathUtils.smoothstep(speed, 0.03, 0.42) : turn
+			const run = data.actions.run ? THREE.MathUtils.smoothstep(speed, 2.7, 3.85) : 0
+			const weights = { idle: (1 - walk) * (1 - gesture), walk: walk * (1 - run) * (1 - gesture), run: walk * run * (1 - gesture), wave: gesture }
+			const response = 1 - Math.exp(-14 * deltaTime)
+			for (const key of Object.keys(weights)) {
+				const action = data.actions[key]
+				if (!action) continue
+				action.setEffectiveWeight(THREE.MathUtils.lerp(action.getEffectiveWeight(), weights[key], response))
+			}
+			// Both clips share the same left/right step phase while their weights change.
+			// An independent run clock can otherwise blend a left stride into a right stride.
+			const walkAction = data.actions.walk, runAction = data.actions.run
+			const walkDuration = walkAction?.getClip().duration || 1
+			const runDuration = runAction?.getClip().duration || walkDuration
+			const walkWeight = walkAction?.getEffectiveWeight() || 0, runWeight = runAction?.getEffectiveWeight() || 0
+			const runBlend = runWeight / Math.max(.001, walkWeight + runWeight)
+			const stride = THREE.MathUtils.lerp(walkDuration * CHARACTER_GAIT_SPEED.walk, runDuration * CHARACTER_GAIT_SPEED.run, runBlend) * player.scale.x
+			// Small alternating steps support a pivot without adding virtual travel or quest steps.
+			const phaseSpeed = Math.max(Math.max(0, speed) / stride, turn > .01 ? .8 : 0)
+			data.locomotionPhase = ((data.locomotionPhase || 0) + phaseSpeed * deltaTime) % 1
+			for (const action of [walkAction, runAction]) if (action) {
+				action.setEffectiveTimeScale(0)
+				action.time = data.locomotionPhase * action.getClip().duration
+			}
+			this.restoreCharacterFootPose(player)
 			data.mixer.update(deltaTime)
-			const next = speed > 3.4 && data.actions.run ? data.actions.run : moving ? data.actions.walk : data.actions.idle
-			if (next && next !== data.activeAction) {
-				next.reset().setEffectiveTimeScale(moving ? Math.max(0.65, speed / 2.6) : 1).play()
-				data.activeAction?.crossFadeTo(next, 0.2, true)
-				data.activeAction = next
-			} else if (next && moving) next.timeScale = Math.max(0.65, speed / 2.6)
+			this.groundCharacter(player)
+			this.updateCharacterFootPlant(player, speed, deltaTime)
+			this.updateCharacterDetailMotion(player, speed, moving)
+		},
+		updateCharacterDetailMotion(root, speed, moving) {
+			const data = root.userData, time = data.mixer.time + (data.expressionOffset || 0)
+			const blinkTime = time % 4.3
+			const blink = blinkTime > 3.98 ? Math.sin(Math.min(1, (blinkTime - 3.98) / .24) * Math.PI) : 0
+			data.blinkMeshes?.forEach(mesh => { mesh.morphTargetInfluences[0] = blink })
+			data.clothMeshes?.forEach(mesh => { mesh.morphTargetInfluences[0] = Math.sin(time * (moving ? 8 : 2.1)) * Math.min(1, .16 + speed * .19) })
+		},
+		groundCharacter(root) {
+			const data = root.userData
+			// Correct ground penetration while preserving the run clip's flight phase.
+			if (data.groundSamples?.length) {
+				let floor = Infinity
+				if (data.footPlant?.feet.length) {
+					// The shoes are rigidly bound to the foot bones (weight 1, identity bind), so the
+					// foot-local sole points through foot.matrixWorld equal the skinned vertices.
+					// This replaces 550 boneTransform calls, the skeleton updates and the full
+					// hierarchy refresh per character; only the two ankle chains are refreshed.
+					for (const leg of data.footPlant.feet) {
+						leg.foot.updateWorldMatrix(true, false)
+						for (const vertex of leg.sole) floor = Math.min(floor, data.groundPoint.copy(vertex).applyMatrix4(leg.foot.matrixWorld).y)
+					}
+				} else {
+					root.updateMatrixWorld(true)
+					data.groundSkeletons.forEach(skeleton=>skeleton.update())
+					for (const sample of data.groundSamples) {
+						data.groundPoint.fromBufferAttribute(sample.mesh.geometry.attributes.position,sample.index)
+						const deform = sample.mesh.applyBoneTransform || sample.mesh.boneTransform
+						deform.call(sample.mesh,sample.index,data.groundPoint).applyMatrix4(sample.mesh.matrixWorld)
+						floor = Math.min(floor,data.groundPoint.y)
+					}
+				}
+				const groundedY = root.position.y + .083 - floor
+				const runWeight = data.actions?.run?.getEffectiveWeight() || 0
+				root.position.y = THREE.MathUtils.lerp(groundedY, Math.max(.083, groundedY), runWeight)
+				data.airborneLift = Math.max(0, root.position.y - groundedY)
+				if (data.contactShadow) {
+					data.contactShadow.position.y = (.085-root.position.y)/root.scale.y
+					data.contactShadow.scale.setScalar(1 - Math.min(.2, data.airborneLift * .4))
+					data.contactShadow.material.opacity = 1 - Math.min(.45, data.airborneLift * .9)
+				}
+			}
 		},
 		playPlayerWave() {
 			const data = player?.userData
-			if (!data?.isGltf || !data.actions.wave) return
+			if (!data?.isGltf || !data.actions.wave || data.gestureTime > 0) return
 			const wave = data.actions.wave.reset()
-			wave.setLoop(THREE.LoopOnce, 1); wave.clampWhenFinished = true; wave.play()
-			data.activeAction?.crossFadeTo(wave, 0.2, true); data.activeAction = wave
+			wave.setLoop(THREE.LoopOnce, 1); wave.clampWhenFinished = true; wave.setEffectiveWeight(0).setEffectiveTimeScale(1).play()
+			data.gestureTime = wave.getClip().duration
+		},
+		updatePedestrianMotion(actor, deltaTime) {
+			const data = actor.userData
+			if (deltaTime <= 0) return 0
+			const heading = data.direction > 0 ? 0 : Math.PI
+			const angle = Math.atan2(Math.sin(heading - actor.rotation.y), Math.cos(heading - actor.rotation.y))
+			const turn = THREE.MathUtils.clamp(angle, -3.2 * deltaTime, 3.2 * deltaTime)
+			actor.rotation.y += turn; data.turnRate = Math.abs(turn) / deltaTime
+			if (Math.abs(angle) > .035) {
+				data.motionSpeed = 0; data.blockedTime = 0
+				return 0
+			}
+			actor.rotation.y = heading
+			const remaining = data.direction * (data.startZ + data.direction * data.range - actor.position.z)
+			if (remaining <= .025) {
+				data.direction *= -1; data.motionSpeed = 0; data.blockedTime = 0
+				return 0
+			}
+			const yieldDistance = data.collisionRadius + (player?.userData.collisionRadius || .43) + .22
+			const yielding = player && Math.hypot(actor.position.x-player.position.x, actor.position.z-player.position.z) < yieldDistance
+			const targetSpeed = yielding ? 0 : Math.min(data.speed, Math.sqrt(1.8 * remaining))
+			data.motionSpeed = THREE.MathUtils.lerp(data.motionSpeed || 0, targetSpeed, 1 - Math.exp(-6 * deltaTime))
+			const distance = Math.min(remaining, data.motionSpeed * deltaTime)
+			const x = actor.position.x, z = actor.position.z
+			this.resolveStreetMotion(actor.position, 0, data.direction * distance, data.collisionRadius)
+			const traveled = Math.hypot(actor.position.x-x, actor.position.z-z)
+			data.blockedTime = !yielding && distance > .0001 && traveled < distance * .1 ? (data.blockedTime || 0) + deltaTime : 0
+			if (data.blockedTime > .2) {
+				data.direction *= -1; data.motionSpeed = 0; data.blockedTime = 0
+			}
+			return traveled / deltaTime
 		},
 		updateAmbientLife(now, deltaTime) {
 			ambientActors.forEach((actor, index) => {
 				const data = actor.userData
-				if (data.kind === 'pedestrian') {
-					actor.position.z += data.direction * data.speed * deltaTime
-					if (Math.abs(actor.position.z - data.startZ) > data.range) { data.direction *= -1; actor.rotation.y += Math.PI }
-					if (player && actor.position.distanceTo(player.position) < 1.2) actor.position.x += Math.sign(actor.position.x || 1) * deltaTime * 0.55
-					const swing = Math.sin(now * 0.004 + data.phase) * 0.35
+				if (data.kind === 'rigged-pedestrian') {
+					const speed = this.updatePedestrianMotion(actor, deltaTime)
+					const turnWeight = Math.min(.45, data.turnRate * .15)
+					data.action.timeScale = turnWeight > .01 ? .7 : speed / (CHARACTER_GAIT_SPEED.walk * actor.scale.x)
+					const weight = THREE.MathUtils.lerp(data.action.getEffectiveWeight(), speed > .015 ? 1 : turnWeight, 1-Math.exp(-10*deltaTime))
+					data.action.setEffectiveWeight(weight); data.idle.setEffectiveWeight(1-weight)
+					this.restoreCharacterFootPose(actor)
+					data.mixer.update(deltaTime)
+					this.groundCharacter(actor)
+					// Foot planting is invisible beyond ~14 m; release it there instead of solving both legs.
+					if (camera && actor.position.distanceToSquared(camera.position) > 196) this.releaseCharacterFootPlant(actor)
+					else this.updateCharacterFootPlant(actor, speed, deltaTime)
+					this.updateCharacterDetailMotion(actor, speed, speed > .015 || turnWeight > .01)
+				} else if (data.kind === 'pedestrian') {
+					const speed = this.updatePedestrianMotion(actor, deltaTime)
+					const activity = Math.min(1, speed / data.speed + data.turnRate * .1)
+					const swing = Math.sin(now * 0.004 + data.phase) * .35 * activity
 					data.limbs.forEach((limb, limbIndex) => { limb.rotation.x = limbIndex ? swing : -swing })
-					actor.position.y = Math.abs(Math.sin(now * 0.004 + data.phase)) * 0.018
+					actor.position.y = .08 + Math.abs(Math.sin(now * 0.004 + data.phase)) * .018 * activity
 				} else if (data.kind === 'crow') {
 					if (!data.flying && player && actor.position.distanceTo(player.position) < 4.2) {
 						data.flying = true; data.flight = 0; data.from.copy(actor.position); data.perch = (data.perch + 1) % data.perches.length; data.to.copy(data.perches[data.perch])
@@ -3651,19 +4841,21 @@ export default {
 					actor.scale.setScalar(0.55 + cycle * 1.2); actor.material.opacity = (1 - cycle) * 0.3
 				}
 			})
-			decorations.forEach((group, index) => group.traverse((mesh) => {
-				if (!mesh.userData?.isWindCloth || !mesh.geometry?.attributes?.position) return
-				const pos = mesh.geometry.attributes.position
-				if (!mesh.userData.basePositions) mesh.userData.basePositions = new Float32Array(pos.array)
-				for (let i = 0; i < pos.count; i += 1) pos.setZ(i, mesh.userData.basePositions[i * 3 + 2] + Math.sin(now * 0.002 + pos.getX(i) * 4 + index) * 0.035)
+			// The cloth list is collected once per scene in loadScene (after batching), so the
+			// per-frame cost is only the vertex wave itself, not a traversal of every decoration.
+			windClothMeshes.forEach((mesh, index) => {
+				const pos = mesh.geometry.attributes.position, array = pos.array
+				if (!mesh.userData.basePositions) mesh.userData.basePositions = new Float32Array(array)
+				const base = mesh.userData.basePositions, t = now * 0.002 + index
+				for (let i = 0; i < pos.count; i += 1) array[i * 3 + 2] = base[i * 3 + 2] + Math.sin(t + array[i * 3] * 4) * 0.035
 				pos.needsUpdate = true
-			}))
+			})
 		},
 		/* 根据时辰调整建筑木格窗的透光强度（晨/午暗、昏微亮、夜最亮） */
 		updateWindowGlow(phase) {
 			const key = phase?.key
 			const glow = key === 'night' ? 0.68 : key === 'dusk' ? 0.34 : 0.0
-			buildings.forEach((group) => {
+			;[...buildings, ...environment].forEach((group) => {
 				group.traverse((mesh) => {
 					if (mesh.isMesh && mesh.userData?.isWindowGlow && mesh.material) {
 						mesh.material.emissiveIntensity = glow
@@ -3693,6 +4885,7 @@ export default {
 			let mouseLooking = false
 			let mouseLastX = 0
 			let mouseLastY = 0
+			let pinchDistance = 0
 			const keyDirections = {
 				w: [0, -1],
 				a: [-1, 0],
@@ -3761,8 +4954,8 @@ export default {
 			}
 
 			const rotateCamera = (dx, dy, sensitivity) => {
-				cameraYaw = Math.max(cameraYawCenter - 1.05, Math.min(cameraYawCenter + 1.05, cameraYaw - dx * sensitivity))
-				cameraPitch = Math.max(0.16, Math.min(0.72, cameraPitch + dy * sensitivity * 0.72))
+				cameraYaw -= dx * sensitivity
+				cameraPitch = Math.max(0.06, Math.min(0.82, cameraPitch + dy * sensitivity * 0.72))
 			}
 
 			const getTouch = (list, id) => {
@@ -3773,6 +4966,7 @@ export default {
 			}
 
 			const onTouchStart = (event) => {
+				if (inputBlocked) return
 				const bounds = canvas.getBoundingClientRect()
 				let handled = false
 				for (let i = 0; i < event.changedTouches.length; i += 1) {
@@ -3796,7 +4990,15 @@ export default {
 				if (handled) event.preventDefault()
 			}
 			const onTouchMove = (event) => {
+				if (inputBlocked) return
 				let handled = false
+				const lookTouches = Array.from(event.touches).filter(touch => touch.identifier !== moveTouchId)
+				if (lookTouches.length >= 2) {
+					const distance = Math.hypot(lookTouches[0].clientX - lookTouches[1].clientX, lookTouches[0].clientY - lookTouches[1].clientY)
+					if (pinchDistance) cameraDistance = THREE.MathUtils.clamp(cameraDistance * pinchDistance / Math.max(1, distance), 2.6, 10)
+					pinchDistance = distance; event.preventDefault(); return
+				}
+				pinchDistance = 0
 				if (moveTouchId !== null) {
 					const touch = getTouch(event.touches, moveTouchId)
 					if (touch) {
@@ -3816,6 +5018,7 @@ export default {
 				if (handled) event.preventDefault()
 			}
 			const onTouchEnd = (event) => {
+				pinchDistance = 0
 				for (let i = 0; i < event.changedTouches.length; i += 1) {
 					const id = event.changedTouches[i].identifier
 					if (id === moveTouchId) {
@@ -3847,11 +5050,12 @@ export default {
 				canvas.style.cursor = 'grab'
 			}
 			const onWheel = (event) => {
-				cameraDistance = Math.max(5.6, Math.min(10, cameraDistance + event.deltaY * 0.008))
+				cameraDistance = Math.max(2.6, Math.min(10, cameraDistance + event.deltaY * 0.008))
 				event.preventDefault()
 			}
 
 			const onKeyDown = (event) => {
+				if (inputBlocked || event.target?.isContentEditable) return
 				const key = event.key.toLowerCase()
 				if (!keyDirections[key]) return
 				const tag = event.target && event.target.tagName
@@ -3938,11 +5142,16 @@ export default {
 			})
 		},
 		clearScene() {
+			this.flushPendingMovement()
+			if (phaseSkyBlend) { phaseSkyBlend.texture.dispose(); phaseSkyBlend = null }
+			worldColliders = []; cameraOccluders = []; cameraProbe = null
 			const releasedGeometries = new Set(), releasedMaterials = new Set()
 			const disposeObject = (object) => {
 				if (!object) return
+				const skeletons = new Set()
 				if (scene) scene.remove(object)
 				object.traverse((item) => {
+					if (item.skeleton) skeletons.add(item.skeleton)
 					if (item.geometry && !releasedGeometries.has(item.geometry)) {
 						releasedGeometries.add(item.geometry)
 						item.geometry.dispose()
@@ -3951,6 +5160,7 @@ export default {
 						if (!releasedMaterials.has(material)) { releasedMaterials.add(material); material.dispose() }
 					})
 				})
+				skeletons.forEach(skeleton => skeleton.dispose())
 			}
 
 			/* 换幕前移除灯光与阴影贴图，防止叠灯导致过曝。 */
@@ -3971,9 +5181,11 @@ export default {
 			poiBeacons = []
 			decorations = []
 			decorationBatchRoot = null
+			windClothMeshes = []
 			lanternLights.forEach((light) => { if (scene) scene.remove(light) })
 			lanternLights = []
 			lanternLightSources = []
+			lanternShellMaterials = []
 			sceneMaterialPool.clear()
 			animationMixers.forEach((mixer) => { try { mixer.stopAllAction(); if (mixer.getRoot) mixer.uncacheRoot(mixer.getRoot()) } catch (_) {} })
 			animationMixers = []
@@ -3991,6 +5203,29 @@ export default {
 			movementVelocity.z = 0
 			walkCycle = 0
 		},
+		updatePoiProximity(beacon, distance) {
+			const trigger = beacon.userData.trigger
+			const previousState = beacon.userData.proximityState || 'far'
+			let nextState = previousState
+			if (previousState === 'active') {
+				if (distance >= trigger.exitRadius) nextState = distance < trigger.resetRadius ? 'near' : 'far'
+			} else if (previousState === 'near') {
+				if (distance <= trigger.interactionRadius) nextState = 'active'
+				else if (distance >= trigger.resetRadius) nextState = 'far'
+			} else if (distance <= trigger.interactionRadius) {
+				nextState = 'active'
+			} else if (distance <= trigger.discoveryRadius) {
+				nextState = 'near'
+			}
+			if (nextState !== previousState) {
+				if (nextState === 'active') { emit('poi-enter', beacon.userData.poiId); this.playPlayerWave() }
+				else if (previousState === 'active') emit('poi-leave', beacon.userData.poiId)
+				if (nextState === 'near' && previousState === 'far') emit('poi-near', beacon.userData.poiId)
+				beacon.userData.proximityState = nextState
+				beacon.userData.entered = nextState === 'active'
+				beacon.userData.nearHinted = nextState !== 'far'
+			}
+		},
 		startAnimation() {
 			if (animationId) { cancelAnimationFrame(animationId); animationId = null }
 			if (!renderer || pagePaused || document.hidden) return
@@ -4007,32 +5242,12 @@ export default {
 				lastTime = now
 
 				if (player) {
-					const inputLength = Math.min(1, Math.sqrt(joystickInput.dx * joystickInput.dx + joystickInput.dy * joystickInput.dy))
-					const desiredX = (joystickInput.dx * Math.cos(cameraYaw) + joystickInput.dy * Math.sin(cameraYaw)) * 4.15
-					const desiredZ = (-joystickInput.dx * Math.sin(cameraYaw) + joystickInput.dy * Math.cos(cameraYaw)) * 4.15
-					const velocityResponse = 1 - Math.exp(-(inputLength > 0.02 ? 11 : 7) * deltaTime)
-					movementVelocity.x += (desiredX - movementVelocity.x) * velocityResponse
-					movementVelocity.z += (desiredZ - movementVelocity.z) * velocityResponse
-
-					const previousX = player.position.x
-					const previousZ = player.position.z
-					const bounds = currentWorldLayout?.roadBounds || { xMin: -4.15, xMax: 4.15, zMin: -23, zMax: 15 }
-					player.position.x = Math.max(bounds.xMin, Math.min(bounds.xMax, player.position.x + movementVelocity.x * deltaTime))
-					player.position.z = Math.max(bounds.zMin, Math.min(bounds.zMax, player.position.z + movementVelocity.z * deltaTime))
-					if (player.position.x === bounds.xMin || player.position.x === bounds.xMax) movementVelocity.x = 0
-					if (player.position.z === bounds.zMin || player.position.z === bounds.zMax) movementVelocity.z = 0
-
-					const movedX = player.position.x - previousX
-					const movedZ = player.position.z - previousZ
-					const movedDistance = Math.sqrt(movedX * movedX + movedZ * movedZ)
-					const speed = Math.sqrt(movementVelocity.x * movementVelocity.x + movementVelocity.z * movementVelocity.z)
-					const moving = movedDistance > 0.0004 && speed > 0.045
+					const inputLength = inputBlocked || portraitCamera ? 0 : Math.min(1, Math.hypot(joystickInput.dx, joystickInput.dy))
+					const movementSpeed = inputLength > .08 ? (runningEnabled ? 4.15 : 2.2) : 0
+					const desiredX = (joystickInput.dx * Math.cos(cameraYaw) + joystickInput.dy * Math.sin(cameraYaw)) * movementSpeed
+					const desiredZ = (-joystickInput.dx * Math.sin(cameraYaw) + joystickInput.dy * Math.cos(cameraYaw)) * movementSpeed
+					const { movedDistance, speed, moving } = this.updatePlayerMotion(desiredX, desiredZ, deltaTime)
 					if (moving) {
-						const wantedRotation = Math.atan2(movementVelocity.x, movementVelocity.z)
-						let rotationDelta = (wantedRotation - player.rotation.y + Math.PI) % (Math.PI * 2) - Math.PI
-						if (rotationDelta < -Math.PI) rotationDelta += Math.PI * 2
-						player.rotation.y += rotationDelta * (1 - Math.exp(-12 * deltaTime))
-
 						walkCycle += speed * deltaTime * 4.6
 						const swing = Math.sin(walkCycle) * Math.min(0.62, speed * 0.14)
 						if (player.userData.leftLeg) {
@@ -4063,7 +5278,7 @@ export default {
 							player.userData.leftArm.rotation.x += (0 - player.userData.leftArm.rotation.x) * settle
 							player.userData.rightArm.rotation.x += (0 - player.userData.rightArm.rotation.x) * settle
 						}
-						player.position.y += (0 - player.position.y) * settle
+						if (!player.userData.isGltf) player.position.y += (0 - player.position.y) * settle
 						if (wasMoving && speed < 0.08) {
 							emit('player-move', { x: player.position.x, z: player.position.z, steps: moveStepAccum })
 							moveStepAccum = 0
@@ -4090,34 +5305,7 @@ export default {
 				this.updateAmbientLife(now, deltaTime)
 				this.updatePhaseTransition(now)
 
-				if (camera && player) {
-					if (!cameraTargetVec) cameraTargetVec = new THREE.Vector3()
-					if (!cameraPositionVec) cameraPositionVec = new THREE.Vector3()
-					const horizontalDistance = Math.cos(cameraPitch) * cameraDistance
-					const idleOrbit = now - lastPlayerMotionAt > 4000 ? Math.sin((now - lastPlayerMotionAt - 4000) * 0.00018) * 0.16 : 0
-					const viewYaw = cameraYaw + idleOrbit
-					cameraPositionVec.set(
-						player.position.x + Math.sin(viewYaw) * horizontalDistance,
-						1.2 + Math.sin(cameraPitch) * cameraDistance,
-						player.position.z + Math.cos(viewYaw) * horizontalDistance
-					)
-					const cameraBounds = currentWorldLayout?.cameraBounds
-					if (cameraBounds) {
-						cameraPositionVec.x = Math.max(cameraBounds.xMin, Math.min(cameraBounds.xMax, cameraPositionVec.x))
-						cameraPositionVec.z = Math.max(cameraBounds.zMin, Math.min(cameraBounds.zMax, cameraPositionVec.z))
-					}
-					camera.position.lerp(cameraPositionVec, 1 - Math.exp(-8.5 * deltaTime))
-					cameraTargetVec.set(player.position.x, player.position.y + 1.24, player.position.z)
-					const speedLength = Math.hypot(movementVelocity.x, movementVelocity.z)
-					if (speedLength > 0.08) { cameraTargetVec.x += movementVelocity.x / speedLength * 0.6; cameraTargetVec.z += movementVelocity.z / speedLength * 0.6 }
-					cameraTargetVec.x -= Math.sin(viewYaw) * 1.4
-					cameraTargetVec.z -= Math.cos(viewYaw) * 1.4
-					cameraTargetVec.y = 1.5
-					camera.lookAt(cameraTargetVec)
-					const baseFov = window.innerWidth / Math.max(1, window.innerHeight) > 1.85 ? 55 : 58
-					const wantedFov = baseFov + Math.min(3, speedLength * 0.72)
-					if (Math.abs(camera.fov - wantedFov) > 0.03) { camera.fov += (wantedFov - camera.fov) * (1 - Math.exp(-4 * deltaTime)); camera.updateProjectionMatrix() }
-				}
+				if (camera && player) this.updateFollowCamera(deltaTime)
 				if (player && now - lastLightUpdate > 300) {
 					const nearest = lanternLightSources.slice().sort((a, b) => a.distanceToSquared(player.position) - b.distanceToSquared(player.position))
 					lanternLights.forEach((light, index) => { if (nearest[index]) light.position.copy(nearest[index]) })
@@ -4133,6 +5321,7 @@ export default {
 					const distanceToPlayer = player
 						? Math.hypot(player.position.x - beacon.position.x, player.position.z - beacon.position.z)
 						: Number.POSITIVE_INFINITY
+					if (player) this.updatePoiProximity(beacon, distanceToPlayer)
 					if (crystal) {
 						crystal.position.y = 0.82 + Math.sin(now * 0.0024 + index) * (highlighted ? 0.12 : 0.06)
 						crystal.rotation.y += deltaTime * (highlighted ? 1.35 : 0.55)
@@ -4169,64 +5358,30 @@ export default {
 							arr[i + 1] -= deltaTime * 0.4
 							arr[i] += Math.sin(now * 0.0006 + i) * deltaTime * 0.2
 							if (arr[i + 1] < 0.2) {
-								arr[i + 1] = 8 + Math.random() * 2
-								arr[i] = (Math.random() - 0.5) * 40
-								arr[i + 2] = (Math.random() - 0.5) * 24 - 4
+								const emitter = i / 3
+								arr[i + 1] = 3.3 + Math.random() * .5
+								arr[i] = (emitter % 2 ? -4.8 : 4.8) + (Math.random() - .5) * 2.4
+								arr[i + 2] = (emitter % 4 < 2 ? 13.8 : -22.2) + (Math.random() - .5) * 2.4
 							}
 						}
 					}
 					pos.needsUpdate = true
 				}
 
-				if (player) {
-					poiBeacons.forEach((beacon) => {
-						const dx = player.position.x - beacon.position.x
-						const dz = player.position.z - beacon.position.z
-						const distance = Math.sqrt(dx * dx + dz * dz)
-						const trigger = beacon.userData.trigger
-						const previousState = beacon.userData.proximityState || 'far'
-						let nextState = previousState
-						if (previousState === 'active') {
-							if (distance >= trigger.exitRadius) nextState = distance < trigger.resetRadius ? 'near' : 'far'
-						} else if (previousState === 'near') {
-							if (distance <= trigger.interactionRadius) nextState = 'active'
-							else if (distance >= trigger.resetRadius) nextState = 'far'
-						} else if (distance <= trigger.interactionRadius) {
-							nextState = 'active'
-						} else if (distance <= trigger.discoveryRadius) {
-							nextState = 'near'
-						}
-
-						if (nextState !== previousState) {
-							if (nextState === 'active') { emit('poi-enter', beacon.userData.poiId); this.playPlayerWave() }
-							else if (previousState === 'active') emit('poi-leave', beacon.userData.poiId)
-							if (nextState === 'near' && previousState === 'far') emit('poi-near', beacon.userData.poiId)
-							beacon.userData.proximityState = nextState
-							beacon.userData.entered = nextState === 'active'
-							beacon.userData.nearHinted = nextState !== 'far'
-						}
-					})
-				}
-
 				if (now >= qualitySampleStartedAt) qualityFrameCount += 1
 				const qualityElapsed = now - qualitySampleStartedAt
 				if (renderer && qualityElapsed >= 3500) {
 					const fps = qualityFrameCount * 1000 / qualityElapsed
-					const compact = Math.min(window.innerWidth, window.innerHeight) <= 520
-					const maxRatio = Math.min(window.devicePixelRatio || 1, compact ? 1.25 : 1.6)
+					renderer.domElement.dataset.sceneStats = JSON.stringify({ fps: Math.round(fps), calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, pixelRatio: renderPixelRatio, model: player?.userData?.modelVersion || 0, colliders: worldColliders.length, x: Number(player?.position.x.toFixed(2)), z: Number(player?.position.z.toFixed(2)) })
+					const renderContainer = renderer.domElement?.parentElement
+					const width = renderContainer?.clientWidth || window.innerWidth
+					const height = renderContainer?.clientHeight || window.innerHeight
+					const maxRatio = this.getRenderResolutionLimit(width, height)
 					let nextRatio = renderPixelRatio
-					if (fps < 43) nextRatio = Math.max(0.85, renderPixelRatio - 0.16)
+					if (fps < 43) nextRatio = Math.max(Math.min(.85, maxRatio), renderPixelRatio - 0.16)
 					else if (fps > 57) nextRatio = Math.min(maxRatio, renderPixelRatio + 0.08)
 					if (Math.abs(nextRatio - renderPixelRatio) >= 0.05) {
-						renderPixelRatio = nextRatio
-						renderer.setPixelRatio(renderPixelRatio)
-						if (composer && typeof composer.setPixelRatio === 'function') composer.setPixelRatio(renderPixelRatio)
-						const renderContainer = renderer.domElement?.parentElement
-						const width = renderContainer?.clientWidth || window.innerWidth
-						const height = renderContainer?.clientHeight || window.innerHeight
-						renderer.setSize(width, height)
-						if (composer) composer.setSize(width, height)
-						this.syncBloomSize()
+						this.setRenderResolution(width, height, nextRatio)
 						qualityAdjusted = true
 					}
 					if (fps < 36 && renderer.shadowMap.enabled) {
@@ -4234,18 +5389,31 @@ export default {
 						renderer.shadowMap.needsUpdate = false
 						qualityAdjusted = true
 					}
-					if (fps < 30) bloomSuppressed = true
+					this.updateBloomBudget(fps, now)
 					qualitySampleStartedAt = now
 					qualityFrameCount = 0
 				}
 
-				if (composer && currentPhaseData?.lanternsLit && !bloomSuppressed) composer.render()
-				else if (renderer && scene && camera) renderer.render(scene, camera)
+				try {
+					this.renderSceneFrame()
+					if (pendingSceneReady && renderer && !renderer.getContext().isContextLost()) {
+						qualitySampleStartedAt = performance.now() + 1500; qualityFrameCount = 0
+						lastTime = performance.now()
+						const ready = pendingSceneReady
+						pendingSceneReady = null
+						emit('render-ready', ready)
+					}
+				} catch (error) {
+					this.pauseRendering()
+					emitRenderError(error)
+				}
 			}
 			animate()
 		},
 		dispose() {
 			bootGeneration += 1
+			pendingSceneReady = null
+			activeRenderRequest = null
 			if (animationId) cancelAnimationFrame(animationId)
 			animationId = null
 			assetLoadGeneration += 1
@@ -4260,20 +5428,7 @@ export default {
 			// 解绑摇杆触摸监听（挂在常驻容器 #street-canvas 上，不随 canvas 重建而清，必须显式移除）。
 			if (joystickCleanup) { joystickCleanup(); joystickCleanup = null }
 			this.clearScene()
-			if (bloomPassRef && typeof bloomPassRef.dispose === 'function') bloomPassRef.dispose()
-			if (fxaaPassRef && typeof fxaaPassRef.dispose === 'function') fxaaPassRef.dispose()
-			if (gradePassRef && typeof gradePassRef.dispose === 'function') gradePassRef.dispose()
-			if (composer) {
-				if (typeof composer.dispose === 'function') composer.dispose()
-				else {
-					if (composer.renderTarget1) composer.renderTarget1.dispose()
-					if (composer.renderTarget2) composer.renderTarget2.dispose()
-				}
-			}
-			composer = null
-			bloomPassRef = null
-			fxaaPassRef = null
-			gradePassRef = null
+			this.disposeEffects()
 			if (environmentTarget) environmentTarget.dispose()
 			environmentTarget = null
 			/* 释放程序化纹理缓存（共享纹理不在 clearScene 里清，统一在此释放） */
@@ -4283,6 +5438,7 @@ export default {
 			skyTextureCache = {}
 			brocadeTextureLoading = false
 			rooflineTextureLoading = false
+			stoneTextureLoading = false
 			if (resizeHandlerRef) {
 				window.removeEventListener('resize', resizeHandlerRef)
 				resizeHandlerRef = null
@@ -4308,11 +5464,13 @@ export default {
 			poiBeacons = []
 			decorations = []
 			decorationBatchRoot = null
+			windClothMeshes = []
 			lanternLights = []
 			ambientActors = []
 			animationMixers = []
 			phaseTransition = null
 			cameraTargetVec = null
+			cameraOriginVec = null; cameraPlacementCandidate = null; cameraPlacementBest = null; cameraProbeHit = null
 			cameraPositionVec = null
 			currentWorldLayout = null
 			movementVelocity = { x: 0, z: 0 }
@@ -4440,15 +5598,25 @@ export default {
 
 .street-stage__poi-paper {
 	position: relative;
-	width: 86%;
-	max-width: 720rpx;
-	padding: 36rpx 48rpx;
+	width: min(560px, calc(100vw - 32px));
+	max-height: calc(100vh - 32px);
+	max-height: calc(100dvh - 32px);
 	background:
 		linear-gradient(180deg, rgba(255, 252, 245, 0.97) 0%, rgba(245, 240, 232, 0.95) 100%);
 	border-radius: 6rpx;
 	box-shadow: 0 18rpx 48rpx rgba(0, 0, 0, 0.6);
 	animation: scrollUnfurlV 0.55s cubic-bezier(0.2, 0.7, 0.3, 1) both;
 	transform-origin: top center;
+}
+
+.street-stage__poi-content {
+	position: relative;
+	max-height: inherit;
+	padding: 36rpx 48rpx;
+	box-sizing: border-box;
+	overflow-y: auto;
+	border-radius: inherit;
+	scroll-padding-block: 16px;
 }
 
 .street-stage__poi-backdrop { position: absolute; inset: 0; }
@@ -4466,17 +5634,18 @@ export default {
 
 .street-stage__poi-roll {
 	position: absolute;
-	left: -10rpx;
-	right: -10rpx;
-	height: 32rpx;
+	left: -6px;
+	right: -6px;
+	height: 14px;
 	border-radius: 999rpx;
 	background: linear-gradient(135deg, #4a2a18 0%, #8b4513 30%, #d4a574 50%, #8b4513 70%, #3d2010 100%);
 	box-shadow: 0 4rpx 12rpx rgba(0, 0, 0, 0.55);
 	z-index: 2;
+	pointer-events: none;
 }
 
-.street-stage__poi-roll--top { top: -16rpx; }
-.street-stage__poi-roll--bot { bottom: -16rpx; }
+.street-stage__poi-roll--top { top: -7px; }
+.street-stage__poi-roll--bot { bottom: -7px; }
 
 .street-stage__poi-head {
 	position: relative;
@@ -4499,7 +5668,7 @@ export default {
 .street-stage__poi-name {
 	display: block;
 	margin-top: 8rpx;
-	font-size: 38rpx;
+	font-size: 26px;
 	font-weight: 700;
 	color: #4a2a18;
 	font-family: 'KaiTi', 'STKaiti', 'Noto Serif SC', serif;
@@ -4533,12 +5702,14 @@ export default {
 	border-radius: 4rpx;
 }
 
+.street-stage__poi-stamp > text { white-space: nowrap; }
+
 .street-stage__poi-desc {
 	position: relative;
 	z-index: 1;
 	display: block;
 	margin-top: 22rpx;
-	font-size: 24rpx;
+	font-size: 14px;
 	line-height: 1.85;
 	color: #2c1810;
 	letter-spacing: 1rpx;
@@ -4593,6 +5764,35 @@ export default {
 	margin-top: 26rpx;
 	gap: 18rpx;
 }
+
+.street-stage__poi-error {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-top: 12px;
+	padding: 8px 10px;
+	border: 1px solid #aa473e55;
+	border-radius: 4px;
+	background: #a8403010;
+	color: #8a3029;
+	font-size: 13px;
+	line-height: 1.5;
+}
+.street-stage__poi-error button {
+	flex-shrink: 0;
+	min-width: 84px;
+	min-height: 44px;
+	margin: 0;
+	padding: 10px;
+	border: 1px solid #aa473e88;
+	border-radius: 4px;
+	background: #fff8ec;
+	color: #8a3029;
+	font-size: 13px;
+	line-height: 1.5;
+}
+.street-stage__poi-error button::after { border: 0; }
 
 .street-stage__poi-distance {
 	font-size: 20rpx;
@@ -4686,6 +5886,23 @@ export default {
 	color: rgba(110, 85, 65, 0.6);
 	letter-spacing: 4rpx;
 }
+
+.street-stage__poi-tool, .street-stage__poi-action, .street-stage__poi-close {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 44px;
+	min-height: 44px;
+	box-sizing: border-box;
+	padding: 4px 12px;
+	font-size: 13px;
+	letter-spacing: 0;
+	white-space: nowrap;
+}
+
+.street-stage__poi-footer { flex-wrap: wrap; }
+.street-stage__poi-story-label, .street-stage__poi-eyebrow { font-size: 11px; letter-spacing: 1px; }
+.street-stage__poi-story-text, .street-stage__poi-story-deep { font-size: 14px; line-height: 1.6; }
 
 @keyframes scrollUnfurlV {
 	0%   { transform: scaleY(0); opacity: 0.4; }
@@ -4783,16 +6000,15 @@ export default {
 		max-height: calc(100vh - 24px);
 		max-height: calc(100dvh - max(24px, env(safe-area-inset-top)) - env(safe-area-inset-bottom));
 		box-sizing: border-box;
-		padding: 20px 24px;
-		overflow-y: auto;
 	}
+	.street-stage__poi-content { padding: 20px 24px; }
 	.street-stage__poi-name { font-size: 24px; letter-spacing: 3px; }
 	.street-stage__poi-desc { margin-top: 12px; font-size: 14px; line-height: 1.55; }
 	.street-stage__poi-story { margin-top: 12px; padding: 10px 14px; }
 	.street-stage__poi-footer { margin-top: 10px; gap: 8px; flex-wrap: wrap; }
 	.street-stage__poi-story-label, .street-stage__poi-eyebrow { font-size: 11px; letter-spacing: 0; }
 	.street-stage__poi-story-text, .street-stage__poi-story-deep { font-size: 13px; line-height: 1.5; }
-	.street-stage__poi-stamp { width: 54px; height: 54px; font-size: 12px; }
+	.street-stage__poi-stamp { width: auto; min-width: 76px; height: 40px; padding: 0 10px; border-width: 2px; box-sizing: border-box; font-size: 12px; letter-spacing: 2px; }
 	.street-stage__poi-tool, .street-stage__poi-action, .street-stage__poi-close { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: 4px 12px; box-sizing: border-box; font-size: 13px; letter-spacing: 0; }
 }
 
@@ -4817,12 +6033,12 @@ export default {
 		width: calc(100vw - 28px);
 		max-width: none;
 		max-height: calc(100dvh - 32px);
-		padding: 20px 18px;
-		overflow-y: auto;
 	}
+	.street-stage__poi-content { padding: 20px 18px; }
 	.street-stage__poi-name { font-size: 23px; letter-spacing: 3px; }
 	.street-stage__poi-desc { margin-top: 12px; font-size: 14px; line-height: 1.6; }
 	.street-stage__poi-story { margin-top: 12px; padding: 10px 12px; }
-	.street-stage__poi-footer { margin-top: 14px; }
+	.street-stage__poi-footer { margin-top: 14px; gap: 8px; flex-wrap: wrap; }
+	.street-stage__poi-tool, .street-stage__poi-action, .street-stage__poi-close { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: 4px 12px; box-sizing: border-box; font-size: 13px; letter-spacing: 0; }
 }
 </style>

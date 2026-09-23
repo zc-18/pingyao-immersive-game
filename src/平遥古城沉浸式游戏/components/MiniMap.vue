@@ -2,6 +2,7 @@
 	<view class="mini-map" :class="{ 'mini-map--collapsed': collapsed }">
 		<view class="mini-map__frame" @tap="toggleCollapse">
 			<view v-if="!collapsed" class="mini-map__canvas">
+				<view v-if="enclosure" class="mini-map__enclosure" :style="getEnclosureStyle()"></view>
 				<!-- 与 3D 世界一致的南北主街走廊 -->
 				<view class="mini-map__road mini-map__road--v"></view>
 
@@ -60,6 +61,7 @@ const props = defineProps({
 	buildings: { type: Array, default: () => [] }, // [{ id, x, z, width, depth }]
 	pois: { type: Array, default: () => [] },      // [{ id, x, z, isQuest, isHot }]
 	mapSize: { type: Number, default: 60 },        // 世界地图尺寸（米）
+	enclosure: { type: Object, default: null },
 	label: { type: String, default: '' }
 })
 
@@ -84,6 +86,11 @@ function getBuildingStyle(building) {
 	}
 }
 
+function getEnclosureStyle() {
+	const e=props.enclosure, topLeft=worldToMapPercent(e.xMin,e.zMin)
+	return { left: `${topLeft.x}%`, top: `${topLeft.z}%`, width: `${(e.xMax-e.xMin)/props.mapSize*100}%`, height: `${(e.zMax-e.zMin)/props.mapSize*100}%` }
+}
+
 function getPoiStyle(poi) {
 	const pos = worldToMapPercent(poi.x, poi.z)
 	return { left: `${pos.x}%`, top: `${pos.z}%` }
@@ -101,6 +108,7 @@ function toggleCollapse() {
 
 <style lang="scss" scoped>
 @import '@/uni.scss';
+.mini-map__enclosure { position: absolute; border: 2px solid #68543e; background: #e9d9bc55; box-sizing: border-box; }
 
 .mini-map {
 	position: relative;

@@ -299,14 +299,44 @@ export default {
 
 	methods: {
 		/* ---------- 工具 ---------- */
-		loadScript(src) {
-			return new Promise(function(resolve, reject) {
-				var s = document.createElement('script')
-				s.src = src
-				s.onload = function() { console.log('[3d] loaded: ' + src); resolve() }
-				s.onerror = function(e) { console.error('[3d] fail: ' + src, e); reject(e) }
-				document.head.appendChild(s)
-			})
+		resolveAssetCandidates(src) {
+			var clean = String(src || '').replace(/^\/+/, '')
+			var candidates = []
+			var add = function(value) {
+				if (value && candidates.indexOf(value) === -1) candidates.push(value)
+			}
+			try {
+				var bridge = typeof plus !== 'undefined' ? plus : window.plus
+				if (bridge && bridge.io && typeof bridge.io.convertLocalFileSystemURL === 'function') {
+					add(bridge.io.convertLocalFileSystemURL('_www/' + clean))
+				}
+			} catch (_) {}
+			try { add(new URL(clean, document.baseURI || window.location.href).href) } catch (_) {}
+			if (/^https?:$/.test(window.location.protocol || '')) add('/' + clean)
+			add(clean)
+			return candidates
+		},
+
+		async loadScript(src) {
+			var candidates = this.resolveAssetCandidates(src)
+			var lastError = null
+			for (var i = 0; i < candidates.length; i++) {
+				var url = candidates[i]
+				try {
+					await new Promise(function(resolve, reject) {
+						var s = document.createElement('script')
+						s.src = url
+						s.onload = function() { console.log('[3d] loaded: ' + url); resolve() }
+						s.onerror = function(e) { s.remove(); reject(e) }
+						document.head.appendChild(s)
+					})
+					return
+				} catch (error) {
+					lastError = error
+				}
+			}
+			console.error('[3d] fail: ' + src, lastError)
+			throw lastError || new Error(src + ' 加载失败')
 		},
 
 		sendMsg(type, data) {
@@ -336,13 +366,13 @@ export default {
 				this.sendMsg('status', '加载 Three.js…')
 				// EffectComposer.js 定义 THREE.Pass，必须先于 RenderPass/ShaderPass/UnrealBloomPass（它们在求值期 extends THREE.Pass）加载，否则同步抛 TypeError。
 				var libs = [
-					'/static/libs/three.min.js',
-					'/static/libs/CopyShader.js',
-					'/static/libs/LuminosityHighPassShader.js',
-					'/static/libs/EffectComposer.js',
-					'/static/libs/RenderPass.js',
-					'/static/libs/ShaderPass.js',
-					'/static/libs/UnrealBloomPass.js'
+					'static/libs/three.min.js',
+					'static/libs/CopyShader.js',
+					'static/libs/LuminosityHighPassShader.js',
+					'static/libs/EffectComposer.js',
+					'static/libs/RenderPass.js',
+					'static/libs/ShaderPass.js',
+					'static/libs/UnrealBloomPass.js'
 				]
 				for (var i = 0; i < libs.length; i++) {
 					await this.loadScript(libs[i])

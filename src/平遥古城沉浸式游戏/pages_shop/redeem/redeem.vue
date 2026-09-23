@@ -997,4 +997,41 @@ function goBack() {
 	.redeem-stage__voucher-cat { width: 48rpx; height: 48rpx; font-size: 26rpx; }
 	.redeem-stage__counter-plaque { font-size: 24rpx; letter-spacing: 6rpx; padding: 8rpx 32rpx; }
 }
+@media (orientation: landscape) and (max-height: 600px) {
+	.redeem-stage { min-height: 100vh; min-height: 100dvh; padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); width: 100%; box-sizing: border-box; font-size: 14px; }
+	.redeem-stage [class] { letter-spacing: 0; }
+	.redeem-stage__back { position: fixed; top: max(8px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); min-width: 44px; min-height: 44px; }
+	.redeem-stage__back-rim { width: 40px; height: 40px; }
+	.redeem-stage__back-face { width: 30px; height: 30px; top: 5px; font-size: 18px; }
+	.redeem-stage__back-hole { display: none; }
+	.redeem-stage__back-label { font-size: 10px; }
+	.redeem-stage__counter { padding: 0 60px; margin: 0 0 12px; }
+	.redeem-stage__counter-plaque { padding: 5px 20px; margin: 0; }
+	.redeem-stage__counter-plaque-text { font-size: 18px; }
+	.redeem-stage__counter-sub { font-size: 10px; }
+	.redeem-stage__voucher { margin: 0 48px; }
+	.redeem-stage__keeper { display: none; }
+	.redeem-stage__voucher-paper { display: grid; grid-template-columns: minmax(0, 1fr) 190px; gap: 10px 16px; padding: 14px 18px; }
+	.redeem-stage__voucher-head { grid-column: 1; padding: 0; margin: 0; align-items: flex-start; }
+	.redeem-stage__voucher-title { font-size: 20px; }
+	.redeem-stage__voucher-eyebrow, .redeem-stage__voucher-merchant { font-size: 11px; }
+	.redeem-stage__voucher-cat, .redeem-stage__voucher-bar, .redeem-stage__voucher-divider, .redeem-stage__voucher-seal { display: none; }
+	.redeem-stage__voucher-state-stamp { position: static; grid-column: 2; grid-row: 1; width: auto; height: auto; justify-self: center; }
+	.redeem-stage__voucher-state-stamp-inner { width: auto; height: auto; padding: 4px 10px; font-size: 14px; }
+	.redeem-stage__voucher-body { grid-column: 1; margin: 0; padding: 0; }
+	.redeem-stage__voucher-field { padding: 4px 0; gap: 8px; }
+	.redeem-stage__voucher-field-label, .redeem-stage__voucher-field-value { font-size: 12px; overflow-wrap: anywhere; }
+	.redeem-stage__voucher-code { grid-column: 2; grid-row: 2 / 4; margin: 0; padding: 0; }
+	.redeem-stage__voucher-code-frame { width: 112px; height: 112px; padding: 7px; }
+	.redeem-stage__voucher-code-text { font-size: 14px; }
+	.redeem-stage__voucher-code-hint { font-size: 10px; }
+	.redeem-stage__voucher-merchant-info { grid-column: 1; padding: 0; margin: 0; }
+	.redeem-stage__voucher-merchant-row { gap: 8px; margin-top: 4px; }
+	.redeem-stage__voucher-merchant-label, .redeem-stage__voucher-merchant-value { font-size: 12px; }
+	.redeem-stage__voucher-tips { grid-column: 1 / -1; padding: 6px 10px; margin: 0; }
+	.redeem-stage__voucher-tips-label { font-size: 10px; }
+	.redeem-stage__voucher-tips-text { font-size: 12px; }
+	.redeem-stage__voucher-actions { grid-column: 1 / -1; position: sticky; bottom: 0; margin: 0; gap: 8px; background: $py-paper; }
+	.redeem-stage__voucher-action { min-height: 44px; padding: 4px 10px; font-size: 13px; box-sizing: border-box; }
+}
 </style>

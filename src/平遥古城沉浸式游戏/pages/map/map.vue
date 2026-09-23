@@ -128,6 +128,7 @@
 		<!-- 底部弹出：POI 详情卷轴 -->
 		<view v-if="selectedPoi" class="map-stage__detail-mask" @tap="selectedPoiId = ''"></view>
 		<view v-if="selectedPoi" class="map-stage__detail" @tap.stop>
+			<view class="map-stage__detail-close" role="button" aria-label="关闭点位详情" @tap="selectedPoiId = ''"><PyIcon name="close" size="20px" variant="plain" /></view>
 			<view class="map-stage__detail-roll map-stage__detail-roll--top"></view>
 			<view class="map-stage__detail-paper">
 				<view class="map-stage__detail-fiber"></view>
@@ -211,6 +212,7 @@ import { computed, ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import FallingLeaves from '@/components/FallingLeaves.vue'
 import EmptyOwl from '@/components/EmptyOwl.vue'
+import PyIcon from '@/components/PyIcon.vue'
 import { getGameSnapshot, getScenePoiList, markPageVisit, rememberReturnContext } from '@/common/utils/game-state.js'
 import { getPoiStatusText, isUnlockedPoiStatus, getPoiShortLabel } from '@/common/utils/poi.js'
 import { poiList, poiMap } from '@/common/data/poi-list.js'
@@ -721,6 +723,7 @@ function toggleScope() {
 
 /* 玩家标记 */
 .map-stage__player {
+	pointer-events: none;
 	position: absolute;
 	transform: translate(-50%, -50%);
 	z-index: 8;
@@ -1174,5 +1177,85 @@ function toggleScope() {
 	0%   { transform: scaleY(0); opacity: 0.4; }
 	60%  { opacity: 1; }
 	100% { transform: scaleY(1); opacity: 1; }
+}
+.map-stage__detail-close { display: none; }
+
+@import '@/common/styles/tab-landscape.scss';
+@media (orientation: landscape) and (max-height: 600px) {
+	.map-stage {
+		@include tab-landscape-viewport;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 250px;
+		grid-template-rows: 44px 44px minmax(0, 1fr);
+		gap: 8px 16px;
+	}
+	.map-stage [class] { letter-spacing: 0; }
+	.map-stage__scroll { grid-column: 1; grid-row: 1 / -1; margin: 0; min-width: 0; min-height: 0; animation: none; }
+	.map-stage__paper { height: 100%; padding: 6px; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: space-between; }
+	.map-stage__title { padding: 0; margin: 0; flex-shrink: 0; }
+	.map-stage__title-text { font-size: 13px; }
+	.map-stage__subtitle { font-size: 10px; margin-top: 2px; }
+	.map-stage__map {
+		width: min(100%, calc((100vh - var(--tab-reserve) - 80px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) * 1.333333));
+		width: min(100%, calc((100dvh - var(--tab-reserve) - 80px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) * 1.333333));
+		height: auto; aspect-ratio: 4 / 3; margin: 0; flex: 0 0 auto;
+	}
+	.map-stage__scroll-roll { height: 8px; left: -3px; right: -3px; }
+	.map-stage__scroll-roll--top { top: -4px; }
+	.map-stage__scroll-roll--bot { bottom: -4px; }
+	.map-stage__legend { padding: 3px 0 0; margin: 0; gap: 12px; font-size: 10px; }
+	.map-stage__legend-item { gap: 4px; font-size: 10px; }
+	.map-stage__legend-dot { width: 6px; height: 6px; }
+	.map-stage__rule { grid-column: 2; grid-row: 1; padding: 4px 12px; gap: 12px; }
+	.map-stage__rule-num { font-size: 15px; }
+	.map-stage__rule-text { font-size: 10px; }
+	.map-stage__rule-track { height: 18px; }
+	.map-stage__rule-mark { height: 8px; width: 1px; }
+	.map-stage__rule-mark--major { height: 15px; }
+	.map-stage__fan-btn, .map-stage__scope-btn { position: relative; top: auto; right: auto; grid-column: 2; grid-row: 2; height: 44px; width: 110px; box-sizing: border-box; padding: 0; }
+	.map-stage__fan-btn { justify-self: start; border-radius: 6px; }
+	.map-stage__scope-btn { justify-self: end; border-radius: 6px; }
+	.map-stage__fan-btn-inner { width: 30px; height: 30px; }
+	.map-stage__fan-btn-char, .map-stage__scope-btn-text { font-size: 15px; }
+	.map-stage__poi { min-width: 44px; min-height: 44px; justify-content: center; align-items: center; }
+	.map-stage__poi-stamp { width: 24px; height: 24px; border-width: 1px; }
+	.map-stage__poi-stamp-text { font-size: 12px; }
+	.map-stage__poi-flag { padding: 1px 3px; margin: 0; }
+	.map-stage__poi:not(.map-stage__poi--active) .map-stage__poi-flag { display: none; }
+	.map-stage__poi-flag-text { font-size: 9px; }
+	.map-stage__poi-fog { width: 28px; height: 28px; }
+	.map-stage__player { pointer-events: none; }
+	.map-stage__player-stamp { width: 20px; height: 20px; }
+	.map-stage__player-stamp-text { font-size: 12px; }
+	.map-stage__player-flag-text { font-size: 9px; }
+	.map-stage__player-pulse { width: 30px; height: 30px; }
+	.map-stage__mountain { font-size: 28px; }
+	.map-stage__detail-mask { display: none; }
+	.map-stage__detail { position: relative; left: auto; right: auto; bottom: auto; grid-column: 2; grid-row: 3; min-height: 0; overflow-y: auto; overflow-x: hidden; animation: none; z-index: 5; }
+	.map-stage__detail-roll { left: 0; right: 0; }
+	.map-stage__detail-paper { padding: 10px 12px; min-height: 100%; box-sizing: border-box; }
+	.map-stage__detail-close { display: flex; align-items: center; justify-content: center; position: absolute; right: 0; top: 0; width: 44px; height: 44px; z-index: 4; }
+	.map-stage__detail-head { padding-right: 28px; margin: 0 0 6px; }
+	.map-stage__detail-eyebrow { font-size: 10px; }
+	.map-stage__detail-name { font-size: 18px; margin-top: 3px; }
+	.map-stage__detail-stamp { display: none; }
+	.map-stage__detail-desc { font-size: 12px; line-height: 1.5; margin: 0; }
+	.map-stage__detail-story { padding: 8px; margin-top: 8px; }
+	.map-stage__detail-story-label { font-size: 10px; }
+	.map-stage__detail-story-text { font-size: 12px; line-height: 1.5; }
+	.map-stage__detail-actions { position: sticky; bottom: 0; margin-top: 8px; background: $py-paper; }
+	.map-stage__detail-cta { min-height: 44px; padding: 4px 10px; box-sizing: border-box; font-size: 14px; }
+	.map-stage__side { top: max(8px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); bottom: calc(var(--tab-reserve) + max(8px, env(safe-area-inset-bottom))); width: min(340px, 60%); padding: 12px; box-sizing: border-box; display: flex; flex-direction: column; }
+	.map-stage__side-tabs { flex-shrink: 0; gap: 8px; }
+	.map-stage__side-tab { min-height: 44px; padding: 6px; box-sizing: border-box; font-size: 14px; }
+	.map-stage__side-content { min-height: 0; height: 0; flex: 1; margin-top: 8px; }
+	.map-stage__history-item { padding: 8px 0; gap: 8px; }
+	.map-stage__history-stamp { width: 32px; height: 32px; font-size: 15px; }
+	.map-stage__history-name, .map-stage__route-card-title { font-size: 15px; }
+	.map-stage__history-desc, .map-stage__route-card-desc, .map-stage__route-step-text { font-size: 12px; }
+	.map-stage__route-card { padding: 12px; }
+	.map-stage__route-card-label { font-size: 11px; }
+	.map-stage__route-step { gap: 8px; margin-top: 8px; }
+	.map-stage__route-step-num { width: 24px; height: 24px; font-size: 12px; }
 }
 </style>

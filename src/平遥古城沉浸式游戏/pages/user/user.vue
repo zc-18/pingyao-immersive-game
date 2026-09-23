@@ -217,7 +217,7 @@
 		</view>
 
 		<!-- 衣橱（换装系统）-->
-		<OutfitWardrobe :visible="wardrobeOpen" @close="wardrobeOpen = false" @changed="onWardrobeChanged" />
+		<OutfitWardrobe :visible="wardrobeOpen" compact-landscape @close="wardrobeOpen = false" @changed="onWardrobeChanged" />
 	</view>
 </template>
 
@@ -230,8 +230,9 @@ import AchievementWall from '@/components/AchievementWall.vue'
 import OutfitWardrobe from '@/components/OutfitWardrobe.vue'
 import { getGameSnapshot, markPageVisit, rememberReturnContext } from '@/common/utils/game-state.js'
 import { syncAchievementUnlocks } from '@/common/utils/achievements.js'
-import { STORAGE_KEYS, getStorage, patchStorageObject } from '@/common/utils/storage.js'
-import { syncAudioSettings, playSFX, SFX } from '@/common/utils/audio.js'
+import { stepBuffer } from '@/common/utils/step-buffer.js'
+import { playSFX, SFX } from '@/common/utils/audio.js'
+import { getGameplaySettings, updateGameplaySetting } from '@/common/utils/game-settings.js'
 import { getJournalEntries } from '@/common/utils/journal.js'
 
 const snapshot = ref(getGameSnapshot())
@@ -242,21 +243,21 @@ const journalEntries = ref(getJournalEntries())
 
 /* 设置抽屉与 gameSettings 持久化绑定（此前仅为内存 ref，开关既不读也不写 storage）。 */
 function loadSettings() {
-	const gs = getStorage(STORAGE_KEYS.gameSettings, {})
+	const gs = getGameplaySettings()
 	settings.value = {
 		music: gs.enableMusic !== false,
 		effect: gs.enableEffect !== false
 	}
 }
 function toggleMusic() {
-	settings.value.music = !settings.value.music
-	patchStorageObject(STORAGE_KEYS.gameSettings, { enableMusic: settings.value.music })
-	// 立即生效："音效"是全局音频总开关——关闭即停掉 BGM/SFX，开启则交由各页生命周期恢复。
-	syncAudioSettings()
+	const result = updateGameplaySetting('enableMusic', !settings.value.music)
+	loadSettings()
+	if (!result.ok) uni.showToast({ title: '设置未能保存，请重试', icon: 'none' })
 }
 function toggleEffect() {
-	settings.value.effect = !settings.value.effect
-	patchStorageObject(STORAGE_KEYS.gameSettings, { enableEffect: settings.value.effect })
+	const result = updateGameplaySetting('enableEffect', !settings.value.effect)
+	loadSettings()
+	if (!result.ok) uni.showToast({ title: '设置未能保存，请重试', icon: 'none' })
 }
 const checkInRef = ref(null)
 const achvRefreshKey = ref(0)
@@ -364,7 +365,11 @@ function confirmReset() {
 			if (res.confirm) {
 				try {
 					uni.clearStorageSync()
-				} catch (e) { }
+					stepBuffer.clear()
+				} catch (e) {
+					uni.showToast({ title: '行旅记录未能清空，请重试', icon: 'none' })
+					return
+				}
 				uni.reLaunch({ url: '/pages_game/splash/splash' })
 			}
 		}
@@ -1416,4 +1421,9 @@ function confirmReset() {
 @keyframes fadeInUp {
 	0%   { opacity: 0; transform: translateY(20rpx); }
 	100% { opacity: 1; transform: translateY(0); }
-}</style>
+}
+/* Fixed achievement details must escape the book's entrance animation. */
+.ledger__book { z-index: auto; animation-fill-mode: backwards; }
+.ledger__page--achv { z-index: 40; animation-fill-mode: backwards; }
+@import './user-landscape.scss';
+</style>

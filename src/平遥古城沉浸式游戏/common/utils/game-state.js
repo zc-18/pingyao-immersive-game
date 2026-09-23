@@ -90,17 +90,24 @@ export function markPageVisit(pageName = '', options = {}) {
 
 export function setCurrentStreetScene(sceneId, options = {}) {
 	const nextSceneId = sceneMap[sceneId] ? sceneId : DEFAULT_SCENE_ID
-	const progress = getUserProgress()
-	const visitedSceneIds = Array.isArray(progress.visitedSceneIds) ? progress.visitedSceneIds : []
-	patchStorageObject(STORAGE_KEYS.userProgress, {
-		visitedSceneIds: [...new Set([...visitedSceneIds, nextSceneId])]
-	})
 	return patchRuntimeState({
 		currentStreetScene: nextSceneId,
 		lastStreetScene: nextSceneId,
 		lastStreetSwitchAt: Date.now(),
 		lastSceneMode: options.sceneMode || getRuntimeState().lastSceneMode
 	})
+}
+
+// Selecting a destination is not a visit. Record arrival only after its first frame.
+export function markStreetSceneVisited(sceneId) {
+	if (!sceneMap[sceneId]) return null
+	const progress = getUserProgress()
+	if (!progress.visitedSceneIds.includes(sceneId)) {
+		const saved = patchStorageObject(STORAGE_KEYS.userProgress, { visitedSceneIds: [...progress.visitedSceneIds, sceneId] })
+		if (!saved) return null
+	}
+	if (!getRuntimeState().hasEnteredStreet) patchRuntimeState({ hasEnteredStreet: true })
+	return getUserProgress()
 }
 
 export function setCurrentPoi(poiId = '', npcTopic = '') {
@@ -138,7 +145,6 @@ export function markNpcTalk(topic = '') {
 
 export function markPrologueComplete(sceneId = DEFAULT_SCENE_ID) {
 	return patchRuntimeState({
-		hasEnteredStreet: true,
 		hasCompletedPrologue: true,
 		pendingArrivalScene: sceneId,
 		currentStreetScene: sceneId

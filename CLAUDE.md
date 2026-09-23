@@ -2,169 +2,63 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
+完整的目录说明、状态/任务/存档约束、Three.js 与 renderjs 规则、编码与视觉约定统一维护在 [AGENTS.md](AGENTS.md)，本文件不重复这些内容，只补充命令速查、必须多文件才能看懂的架构脉络和已验证的工作方式。
 
-**平遥古城沉浸式游戏 APP** — An immersive game app set in Pingyao Ancient City (平遥古城), combining real-world tourism with gamified exploration. Built with HBuilderX + uni-app, targeting Android/iOS APP.
+@AGENTS.md
 
-**Current Status**: Frontend prototype stage with mock data and local storage. Not production-ready. See `当前项目进度.md` for detailed status.
+## 命令速查
 
-### Core Concept
-Players take on a character role (研学/寻宝/偶遇/打卡爱好者/帮不忙行) and explore a virtual recreation of Pingyao Ancient City. An NPC guide named **晋小鸦** (a owl mascot) provides cultural narration, location-based dialogue, and task triggers.
+仓库根目录执行（当前 Node 24.9，H5 脚手架依赖已装在根目录 `node_modules/`）：
 
-### Key Features
-- **实时定位 + 坐标移动**: Real-time GPS positioning with map navigation
-- **第一视角3D古城还原**: First-person 3D restoration of the ancient city (based on real Pingyao landmarks like 日升昌、榆次分号、瑞蚨祥)
-- **线上线下商铺**: O2O commerce — online shopping with offline experience
-- **路线推荐 + 打卡积分**: Route planning, check-in point system, score accumulation
-- **虚拟服饰兑换**: Virtual costume/outfit rewards system
-- **文化层面**: Cultural storytelling layer with NPC-triggered tasks and 晋商 (Shanxi merchant) history narration
-- **步数计数 + 等级系统**: Step counter, leveling (e.g., 票号学徒 Lv.1), and virtual currency (银钥)
-
-### Game Flow
-1. 横屏启动 → "欢迎来到XX古城，请选择你的角色"
-2. 角色选择（研学/寻宝/偶遇/打卡爱好者/帮不忙行）
-3. 晋小鸦 NPC introduces current location + nearby points of interest
-4. 用户交互：explore streets, enter shops, complete tasks, collect rewards
-
-### UI Reference Style
-- Chinese ink-painting style world map (水墨风大地图) with discoverable "???" locations
-- Pixel-art / 国风 top-down town view for "find hidden objects" gameplay
-- 3D street-level view with NPC dialogue bubbles, bottom HUD (level, location, steps, currency)
-
-## Tech Stack
-
-- **Framework**: Uni-app (Vue 3, Composition API with `<script setup>`)
-- **3D Engine**: Three.js v0.157.0，运行于 renderjs 层（见 3D System 章节），非逻辑层
-- **IDE**: HBuilderX (App开发版)
-- **Target**: Android APP (云打包) / iOS APP / H5 (调试用)
-- **Map APIs**: Tencent QQ Maps for real-world positioning
-- **Storage**: localStorage (uni.setStorageSync), no backend
-- **Units**: rpx (750rpx = screen width)
-- **Color Scheme**: 古铜棕 #8B4513 / 沙金色 #D4A574 / 中国红 #C41E3A / 宣纸白 #F5F0E8
-
-## Development Commands
-
-**Run in HBuilderX**:
-- Open `src/平遥古城沉浸式游戏` in HBuilderX
-- Run → Run to Browser → Chrome (for H5 debugging)
-- Run → Run to Phone or Emulator → Custom Base (for APP debugging)
-- Build → Cloud Package → Android/iOS (for production APK/IPA)
-
-**No CLI commands** — this is a HBuilderX-managed uni-app project without npm scripts.
-
-## Project Structure
-
-```
-src/平遥古城沉浸式游戏/
-├── pages/              # TabBar main pages (首页/地图/商城/我的)
-├── pages_game/         # Game core subpackage (splash/role-select/street/dialog/3d-test)
-├── pages_shop/         # Shop subpackage (redeem)
-├── common/
-│   ├── data/          # Mock data (roles, POI, dialogs, quests, streets, shop items)
-│   ├── utils/         # Utilities (storage, level, poi, quest-manager, game-state, phase, check-in, audio)
-│   ├── 3d/            # Three.js factories (scene/camera/player/joystick/poi/building)
-│   └── constants/     # Theme constants
-├── components/        # Shared components (NPC bubbles, HUD, cards)
-├── static/           # Static assets (tabbar icons, logo, libs/ = Three.js)
-├── App.vue           # App lifecycle + global styles
-├── main.js           # App entry (provides theme + storage)
-├── pages.json        # Page routing + tabBar config
-├── manifest.json     # App manifest (permissions, orientation, version)
-└── uni.scss          # Global SCSS variables
+```sh
+npm run dev:h5                         # http://localhost:5219/#/pages_game/splash/splash，strictPort，被占用直接报错
+npm run build:h5                       # 产物在 .cache/pingyao-h5-harness/dist/build/h5
+node --test test/*.test.mjs            # 全量 Node 回归（30 个文件 121 用例，约 1 分钟）
+node --test test/street-controls.test.mjs   # 单个测试文件
+node --test --test-name-pattern="计步" test/street-controls.test.mjs   # 单个用例
+python test/mobile-visual-audit.py     # 需先跑 dev:h5；输出 test/artifacts/mobile-ui/
+python test/app-gameplay-audit.py      # 生产 UI 经济/行旅册/音频闭环检查，依赖 enclosed-courtyard-audit.py
+node scripts/build-pingyao-character.mjs    # 重新生成 static/models/pingyao-hanfu-courtyard.glb
 ```
 
-## Architecture Patterns
+- 没有 lint、类型检查或 `npm test`。`test/*.test.mjs` 绝大多数是**静态源码断言**（读 `street.vue` 文本做正则匹配）加少量纯逻辑单测（`game-economy`、`street-world-layout`、`phase-transition`），跑通不代表 3D 画面正确。
+- `test/*-audit.py` / `*-workflow.py` 是 Playwright 视觉审计脚本，固定访问 5219，截图和 JSON 落在 `test/artifacts/<name>/`（已 gitignore）。`test/*-report.md` 是历史验收记录，不是当前待办。
+- 用户明确要求**只用浏览器调试**，不启用 HBuilderX 模拟器或真机。H5 下街景 renderjs 与逻辑层共用一个 `window`，APP 下不共用，写桥接代码时仍按 APP 约束来。
+- `scripts/` 是素材生成器（角色 GLB、程序合成音频、imagegen 贴图裁切），运行后会直接写入 `static/`；`output/imagegen/` 是贴图脚本的输入源，不要删。`deploy/` 与 `scripts/package-pingyao-release.mjs` 是静态部署打包，注意后者仍从系统 Temp 读构建产物，与 `run-h5.mjs` 现在的项目内缓存路径不一致。
 
-### State Management
-- **No Vuex/Pinia** — uses uni.setStorageSync/getStorageSync for persistence
-- **Storage keys** defined in `common/utils/storage.js` → `STORAGE_KEYS`
-- **User profile**: `pygc_user_profile` (nickname, roleId, roleName, avatar)
-- **User progress**: `pygc_user_progress` (level, exp, silver, silverKey, score, steps)
-- **Game settings**: `pygc_game_settings` (music, effects, orientation, mock flags)
-- **Storage normalization**: `normalizeUserProfile()` and `normalizeUserProgress()` ensure data integrity
-- **Default state**: `ensureStorageDefaults()` called in App.vue onLaunch
-- **Game state aggregator**: `common/utils/game-state.js` 是组合 runtime+profile+progress+quest 的统一读取入口。优先用 `getGameSnapshot()` 一次性取快照；场景/运行时更新用 `getCurrentStreetScene()`/`setCurrentStreetScene()`、`markPoiVisited()`、`markNpcTalk()`、`resolveLaunchRoute()`，而非在页面里直接读 storage
+## 架构脉络（多文件才能看懂的部分）
 
-### Level System
-- **Level calculation**: `common/utils/level.js` exports `getLevelMeta()`, `getLevelProgress()`, `getLevelSnapshot()`
-- **5 levels**: 票号学徒 (0 exp) → 柜台伙计 (600) → 账房先生 (1600) → 大掌柜 (3000) → 晋商传人 (4800)
-- **Max cap**: 6800 exp (FINAL_LEVEL_CAP)
-- **Usage**: Pass `exp` value to get level metadata, progress percentage, and next level requirements
+### H5 脚手架为什么绕一圈
 
-### POI System
-- **POI status**: `nearby`, `hot`, `route`, `quest`, `discoverable` (defined in `common/utils/poi.js`)
-- **Unlocked statuses**: `nearby`, `hot`, `route`, `quest`, `completed` (见 `UNLOCKED_POI_STATUS_LIST`)
-- **Status helpers**: `isUnlockedPoi()`, `getPoiStatusText()`, `getPoiIcon()`
-- **POI data**: `common/data/poi-list.js` contains mock POI locations
+`run-h5.mjs` 把 `src/平遥古城沉浸式游戏/` 的代码**实体复制**到 `.cache/pingyao-h5-harness/app/`，`static/` 与 `node_modules/` 用 junction 指回仓库，再在镜像目录里写出 `vite.config.js`（必须调用 `uni()` 插件）和 `package.json`，最后以镜像目录为 `UNI_INPUT_DIR` 启动 `uni`。原因是 uni 的 vite 插件把 root 钉死在 cwd，而 HBuilderX 源码目录没有 `package.json`。开发模式用 `fs.watch` 把源码改动实时镜像过去。永远改仓库源码；清理镜像时不要递归删 junction。
 
-### Theme System
-- **SCSS variables**: `uni.scss` defines `$py-*` variables (colors, spacing, shadows, surfaces)
-- **JS constants**: `common/constants/theme.js` exports `THEME_COLORS`, `THEME_SPACING`, etc.
-- **Global injection**: `main.js` provides `theme` and `storage` via `app.provide()` and `app.config.globalProperties`
-- **Global styles**: `App.vue` defines `.page-shell`, `.ink-card`, `.copper-button`, `.paper-panel`, etc.
+### 存档 → 快照 → 页面
 
-### Component Patterns
-- **Easycom auto-import**: Components in `components/` are auto-registered (no manual import needed)
-- **Naming**: PascalCase for component files (e.g., `NpcMessageBubble.vue`)
-- **Props**: Use `defineProps()` with TypeScript-style type annotations
-- **Emits**: Use `defineEmits()` for event declarations
+- 存档只有 6 个 `uni.setStorageSync` key（`storage.js` 的 `STORAGE_KEYS`：runtime、profile、progress、gameSettings、mockFlags、redeemOrders）。所有写入走 `patchStorageObject()`，读取走各自的 getter 以保留规范化。
+- 页面不直接拼存档，统一读 `game-state.js` 的 `getGameSnapshot()`；街景切换、POI 到访、NPC 对话、启动路由（`resolveLaunchRoute()`）也在该模块。
+- 任务是事件驱动：页面产生游戏事件后调用 `quest-manager.js` 的 `advanceQuestByEvent(EVENT_TYPES.xxx, payload)`，由它推进 objective、发微奖励、判完成；步数用 `recordSteps()`。街景移动的步数先进 `step-buffer.js` 缓冲再批量落盘。
+- 存档不是响应式。页面写完存档后靠 `onShow` 或页面内 tick 重新取快照。
 
-## 3D System (renderjs)
+### 街景页 `pages_game/street/street.vue`（约 6000 行）
 
-第一视角街景（`pages_game/street/street.vue`、`pages_game/3d-test/3d-test.vue`）用 Three.js **v0.157.0** 渲染，运行在 `<script module="..." lang="renderjs">` 块内 —— **不是逻辑层**。
+三段结构：`<template>`、逻辑层 `<script setup>`（约 1000 行，负责 uni API、存档、任务、HUD 状态）、`<script module="render" lang="renderjs">`（约 4300 行，负责 Three.js、输入、动画）。
 
-- **绝不在逻辑层 import three，也不用 npm/CDN 引入**。renderjs 无法 import npm 包。Three.js 通过动态注入 `<script>` 标签从 `/static/libs/` 按固定顺序加载为 `window.THREE`。加载顺序与下载地址见 @static/libs/README.md（7 个文件，顺序不能错，路径必须以 `/` 开头）。
-- **3D 逻辑封装在 `common/3d/` 的依赖注入工厂里**：`SceneManagerFactory`、`CameraControllerFactory`、`PlayerControllerFactory`、`JoystickControllerFactory`、`PoiBeaconFactory`、`BuildingFactoryMethods`，以及 `scene-config.js`（`createDefaultSceneConfig()`、`migrateStreetData()`）。它们在运行时接收 `THREE` 参数，而非自行 import。
-- **操作**：左半屏虚拟摇杆移动，右半屏拖拽旋转相机。世界坐标 X=左右、Z=前后、Y=上下。
-- **强制横屏**：street 与 3d-test 在 pages.json 中设 `pageOrientation: "landscape"`，其余页面为竖屏。
+- **逻辑层 → renderjs**：改响应式 `sceneCmd`，模板上 `:change:sceneCmd="render.onSceneCmd"` 触发。命令有队列（`renderCommandQueue`），页面挂载前的命令会被缓存。`onSceneCmd` 支持的 action：`init` / `reinit` / `loadScene` / `highlightPoi` / `applyPhase` / `applySettings` / `reskinPlayer` / `blockInput` / `sceneControl` / `pause` / `resume`。观察器内 `this` 不可靠，必须用带 `bootScene` 的那个实例作为方法上下文（APP 挂在第 4 参、H5 挂在 `this`）。
+- **renderjs → 逻辑层**：`emit(name, detail)` 走 `$ownerInstance.callMethod('handleRenderMsg', {detail:{type,data}})`。事件类型：`view-ready`、`render-stage`、`render-progress`、`render-ready`、`render-error`、`player-move`、`poi-near` / `poi-enter` / `poi-leave`。ownerInstance 未就绪时消息入队，`flushEmits()` 在 `onSceneCmd` 拿到实例后冲刷。
+- **H5 特有修复**：uni-h5 的 `callMethod` 在页面公共代理上找方法，`defineExpose` 的方法不在代理上，所以逻辑层在 `getCurrentInstance().proxy` 上手动挂了 `handleRenderMsg`。删掉这段 H5 桥就断了。
+- 逻辑层有 watchdog：超时未收到 `render-ready` 会发 `reinit`，renderjs 先 `dispose()` 再 `bootScene()`。二次进入走快速路径，跳过 7 个 Three.js 脚本的重复注入。
+- Three.js 核心 7 个脚本串行注入后，按需追加 `RoomEnvironment` / `Sky` / `FXAAShader`；配置了角色模型时再加 `GLTFLoader` + `SkeletonUtils`。街景玩家和行人共用 `static/models/pingyao-hanfu-courtyard.glb`，由 `scripts/build-pingyao-character.mjs` 生成，骨架与部分动画来自 KayKit CC0（见 `static/models/LICENSES.md`）。
+- 画面链路：线性离屏 RT → 可选 UnrealBloom → FXAA/输出。灯光特效开关只插拔 bloom 通道；低帧率只暂缓 bloom 和阴影，并按 fps 调像素比。街巷布局、POI 触发半径由 `common/utils/street-world.js` 与 `common/data/streets.js` 共享给逻辑层和 renderjs。
+- `common/3d/` 是早期工厂模块，街景页**没有引用它**，改它不会影响画面。
 
-## Game Systems
+### 横竖屏
 
-- **等级系统**: Lv1 票号学徒 → Lv2 柜台伙计 → Lv3 账房先生 → Lv4 大掌柜 → Lv5 晋商传人
-- **虚拟货币**: 银钥 (silverKey) — earned via check-ins, tasks, daily login; spent in shop
-- **打卡系统**: GPS-based check-in at real POI locations, daily limits, score rewards
-- **NPC 晋小鸦**: Context-aware dialogue system, triggered by location/time/events
+游戏页（splash、role-select、street、dialog、3d-test）在 `pages.json` 里声明 `pageOrientation: landscape`，进入时再调 `orientation.js` 的 `lockGameLandscape()`，离开时 `releaseOrientationLock()`。四个 tab 页默认竖屏，但横屏时用 `common/styles/tab-landscape.scss` 的 mixin 做横屏布局（H5 需扣掉 tabBar 高度 `--window-bottom`）。用户当前目标是**手机横屏展示正常**，改 HUD 时至少在 844×390 / 667×375 两种横屏视口下用 `mobile-visual-audit.py` 核对。
 
-### 任务系统 (Quests)
-- **数据**: `common/data/quests.js` — `questList`、`QUEST_STATUS`(locked/available/active/completed/claimed)、`QUEST_TYPE`(main/side/daily)
-- **管理**: `common/utils/quest-manager.js` — 事件驱动。用 `advanceQuestByEvent(eventType, payload)` 推进，`EVENT_TYPES` 含 sceneLoaded/poiEntered/poiInteracted/buildingInteracted/npcDialogCompleted 等；常用 `getTrackedQuest()`、`startQuest()`、`claimQuestReward()`
+### 时辰与相位
 
-### 成就系统 (Achievements)
-- `common/utils/achievements.js` — `ACHIEVEMENTS` 列表、`evaluateAchievements(snapshot)`、`syncAchievementUnlocks()`、`getAchievementSummary()`。解锁记录持久化在 `userProgress.unlockedAchievements`
+`phase.js` 按真实时间返回当前时辰（昼/暮/夜等），街景通过 `applyPhase` 命令切换光照、天空和辉光强度；`phase-transition` 相关测试覆盖切换时不重编译整场材质的约束。
 
-### 时辰系统 (Time Phases)
-- `common/utils/phase.js` — 把现实时间映射为古城四时辰（晨/午/昏/夜），用 `getCurrentPhase()`。每个时辰驱动 3D 的天空/雾/光照/bloom + 飘落粒子 + 灯笼
+## 当前会话目标（2026-09-18 用户口述）
 
-### 签到系统 (Daily Check-in)
-- `common/utils/check-in.js` — `hasCheckedInToday()`、`claimDailyCheckIn()`、`getCheckInPreview()`；7 天阶梯奖励循环（`CHECK_IN_REWARD_TABLE`）
-
-## Design Constraints
-
-**Current Issues** (from `当前项目进度.md`):
-- **Direction drift**: Pages feel like info dashboards, not immersive game scenes
-- **Landscape layout**: Horizontal orientation set but not optimized for game experience
-- **Weak game loop**: Main flow (splash → role select → street → tasks) lacks strong guidance
-- **Card-heavy UI**: Too many card-based layouts, not enough scene-based immersion
-
-**Design Goals**:
-- Prioritize scene immersion over information density
-- Strengthen NPC guidance and task flow
-- Optimize horizontal layout for game-like experience
-- Reduce card-based layouts in favor of environmental storytelling
-
-## Coding Conventions
-
-- **Vue 3 Composition API**: Always use `<script setup>` syntax
-- **No Options API**: Do not use `export default { data, methods, ... }`
-- **Imports**: Use `@/` alias for absolute paths (e.g., `@/common/utils/storage`)
-- **Styling**: Use `<style lang="scss">` and reference `uni.scss` variables
-- **Units**: Use `rpx` for responsive sizing (750rpx = screen width)
-- **Storage access**: Use `storage.get()`, `storage.set()`, `storage.patchObject()` from `common/utils/storage.js`
-- **Level calculations**: Use `getLevelMeta()`, `getLevelSnapshot()` from `common/utils/level.js`
-- **POI helpers**: Use `isUnlockedPoi()`, `getPoiStatusText()` from `common/utils/poi.js`
-
-## Reference Documents
-
-- `当前项目进度.md` — Current project status and known issues
-- `沉浸式游戏古城UI设计[初稿].docx` — UI design draft document
-- `img/` folder — Reference images (handwritten notes, map style, street view mockup, 晋小鸦 NPC design)
+完善游戏、保证逻辑闭环可用、手机横屏展示正常，并继续把 3D 场景做得精美流畅、动画专业；素材可结合 imagegen 网关生成后经 `scripts/prepare-*.py` 裁切入库；只用浏览器调试。

@@ -204,8 +204,8 @@ export function evaluateAchievements(snapshot = {}) {
 			icon: achv.icon,
 			accent: achv.accent,
 			unlocked: result.unlocked || persistedUnlocked,
-			progress: result.unlocked ? 100 : Math.max(0, Math.min(100, Math.round(result.progress || 0))),
-			hint: result.hint || ''
+			progress: result.unlocked || persistedUnlocked ? 100 : Math.max(0, Math.min(100, Math.round(result.progress || 0))),
+			hint: persistedUnlocked && !result.unlocked ? '已达成并留章' : result.hint || ''
 		}
 	})
 }
@@ -227,11 +227,12 @@ export function syncAchievementUnlocks() {
 		acc.exp += reward.exp || 0
 		return acc
 	}, { silverKey: 0, exp: 0 })
-	patchStorageObject(STORAGE_KEYS.userProgress, {
+	const saved = patchStorageObject(STORAGE_KEYS.userProgress, {
 		unlockedAchievements: merged,
 		silverKey: (Number(progress.silverKey) || 0) + grantedReward.silverKey,
 		exp: (Number(progress.exp) || 0) + grantedReward.exp
 	})
+	if (!saved) return { newlyUnlocked: [], list, grantedReward: { silverKey: 0, exp: 0 }, error: 'storage' }
 	return {
 		newlyUnlocked: newlyUnlocked.map((item) => ({ ...item, reward: getAchievementReward(item.id) })),
 		list,

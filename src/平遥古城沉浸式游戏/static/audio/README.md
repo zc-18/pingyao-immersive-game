@@ -1,48 +1,12 @@
-# 音频素材目录（/static/audio/）
+# 庭院音频
 
-`common/utils/audio.js` 已接好"何时播什么"，但**音频文件需自行放入本目录**。文件缺失时引擎静默兜底（不报错、不崩溃），补齐文件后即自动生效——与 `static/libs/`（Three.js）同一思路。
+本目录包含 14 个随包 WAV 文件，由 `scripts/build-courtyard-audio.py` 确定性生成。素材为原创合成五声音阶拨弦与短音效，未使用外部录音样本；不是实录古琴或环境采样。
 
-## 命名规则
+- 4 个背景循环：`bgm_street_ambient`、`bgm_ancient_city`、`bgm_shop`、`bgm_menu`。街景当前使用 `street_ambient`，其余保留供页面选用。
+- 10 个短音效与 `audio.js` 的 SFX 常量对应，任务、讲解、领取、购物与换装沿用页面现有调用。
+- 格式：24 kHz、16-bit PCM、单声道。背景每段 12 秒，音符尾音跨循环边界延续；全部文件合计 2,682,856 bytes。
+- 默认音量：背景 0.32、音效 0.65；受 `gameSettings.enableMusic` 开关控制。
 
-引擎按 `<类型>_<名称>.mp3` 解析：
+H5 使用 HTMLAudioElement 并处理 `play()` Promise 的自动播放拒绝，首次用户触摸/按键后重试。APP 使用 `uni.createInnerAudioContext()`，资源通过 `_www/static/audio/` 解析。后台或页面隐藏时暂停并释放短音效，退出街景后清理上下文与解锁监听。音效并发上限为 6。
 
-- BGM（背景音乐）：`bgm_<名称>.mp3`
-- SFX（音效）：`sfx_<名称>.mp3`
-
-## 需要的文件清单
-
-### 背景音乐 BGM（循环，建议 30s~2min 无缝循环，音量已统一压到 0.55）
-
-| 文件名 | 用途 | 触发位置 |
-| --- | --- | --- |
-| `bgm_street_ambient.mp3` | 3D 街景环境乐（古城白日/夜市氛围） | `pages_game/street/street.vue` 进入街景 |
-| `bgm_ancient_city.mp3` | 古城主题（备用，启动/首页可选接入） | 预留 |
-| `bgm_shop.mp3` | 商城（备用） | 预留 |
-| `bgm_menu.mp3` | 菜单/角色选择（备用） | 预留 |
-
-### 音效 SFX（短促一次性，音量 0.8）
-
-| 文件名 | 用途 | 触发位置 |
-| --- | --- | --- |
-| `sfx_quest_complete.mp3` | 任务通关 | 街景 handleQuestComplete |
-| `sfx_level_up.mp3` | 升阶 | 街景升阶弹层 |
-| `sfx_coin.mp3` | 领取奖励 / 节奏奖励飘字 / 商城出票 | 街景领奖 + 商城兑换 |
-| `sfx_npc_talk.mp3` | 晋小鸦讲解 | 街景 playPoiTopic |
-| `sfx_quest_start.mp3` | 角色确认·启程印章落下 | 角色选择确认 |
-| `sfx_reward.mp3` | 每日签到领取 | "我的"页签到 |
-| `sfx_achievement.mp3` | 成就点亮（预留） | 预留 |
-| `sfx_button_click.mp3` | 通用点击（预留） | 预留 |
-| `sfx_footstep.mp3` | 脚步（预留） | 预留 |
-| `sfx_door_open.mp3` | 开门/进店（预留） | 预留 |
-
-## 格式与体积建议
-
-- 格式：`.mp3`（uni-app `createInnerAudioContext` APP/H5 通用兼容）
-- BGM：单声道或立体声，128kbps 足够；务必做**无缝循环**剪辑
-- SFX：<1s，44.1kHz，尽量小体积（云打包包体敏感）
-- 全部音频均受"我的 → 设置 → 音效"总开关（`gameSettings.enableMusic`）控制
-
-## 开关与音量
-
-- 总开关：`gameSettings.enableMusic`（关闭时引擎不创建任何音频上下文）
-- 音量：代码内 `setVolume('bgm'|'sfx', 0~1)` 调整，默认 BGM 0.55 / SFX 0.8
+验证：`node --test test/audio-lifecycle.test.mjs` 检查文件格式、波形幅度、循环接缝及上下文生命周期。浏览器实际解码与播放由 `test/app-gameplay-audit.py` 验证。APP 播放与系统静音策略仍需 HBuilderX 真机确认。

@@ -2,6 +2,7 @@
 import { onHide, onLaunch, onShow } from '@dcloudio/uni-app'
 import { STORAGE_KEYS, ensureStorageDefaults, patchStorageObject } from './common/utils/storage'
 import { syncAchievementUnlocks } from './common/utils/achievements'
+import { pauseBGM, resumeBGM } from './common/utils/audio.js'
 
 function getPlatformName() {
 	try {
@@ -27,12 +28,14 @@ onLaunch(() => {
 })
 
 onShow(() => {
+	resumeBGM()
 	patchStorageObject(STORAGE_KEYS.appRuntime, {
 		lastShowAt: Date.now()
 	})
 })
 
 onHide(() => {
+	pauseBGM()
 	patchStorageObject(STORAGE_KEYS.appRuntime, {
 		lastHideAt: Date.now()
 	})
@@ -50,6 +53,11 @@ page {
 	font-size: $py-font-size-base;
 	line-height: 1.65;
 	-webkit-font-smoothing: antialiased;
+	min-height: 100%;
+}
+
+uni-page-body {
+	min-height: 100%;
 }
 
 view, text, button, input, textarea, scroll-view, swiper, swiper-item, navigator {
@@ -75,12 +83,14 @@ button::after {
 .stage {
 	position: relative;
 	min-height: 100vh;
+	min-height: 100dvh;
 	overflow: hidden;
 	background: #0d0907;
 }
 
 .stage--scroll {
 	min-height: 100vh;
+	min-height: 100dvh;
 	overflow-y: auto;
 }
 
