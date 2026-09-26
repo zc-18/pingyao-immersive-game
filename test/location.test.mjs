@@ -9,7 +9,8 @@ import {
 	projectLocationToMap,
 	resolvePlayerMapPosition,
 	saveLocationSnapshot,
-	validateLocation
+	validateLocation,
+	wgs84ToGcj02
 } from '../src/平遥古城沉浸式游戏/common/utils/location.js'
 
 test('rejects invalid coordinates and normalizes valid location', () => {
@@ -56,14 +57,37 @@ test('prefers in-city GPS position and falls back for invalid or out-of-city sna
 	assert.equal(isLocationWithinMapBounds({ latitude: 37.2, longitude: 112.17 }, null), false)
 })
 
-test('wraps uni.getLocation with the GCJ02 option', async () => {
+function distanceMeters(a, b) {
+	const rad = Math.PI / 180
+	const dLat = (b.latitude - a.latitude) * rad
+	const dLng = (b.longitude - a.longitude) * rad
+	const h = Math.sin(dLat / 2) ** 2 +
+		Math.cos(a.latitude * rad) * Math.cos(b.latitude * rad) * Math.sin(dLng / 2) ** 2
+	return 2 * 6371000 * Math.asin(Math.sqrt(h))
+}
+
+test('converts WGS84 to GCJ02 inside China and leaves foreign coordinates unchanged', () => {
+	const wgs = { latitude: 37.2, longitude: 112.18 }
+	const gcj = wgs84ToGcj02(wgs)
+	// 国测局偏移在平遥一带为数百米量级，且纬度、经度均向东北偏移。
+	const offset = distanceMeters(wgs, gcj)
+	assert.ok(offset > 100 && offset < 800, `offset=${offset}`)
+	assert.ok(gcj.latitude > wgs.latitude && gcj.longitude > wgs.longitude)
+	// 回归锚点：锁定当前算法输出，防止常量或公式被误改。
+	assert.ok(Math.abs(gcj.latitude - 37.200606) < 0.000001, `lat=${gcj.latitude}`)
+	assert.ok(Math.abs(gcj.longitude - 112.186502) < 0.000001, `lng=${gcj.longitude}`)
+
+	assert.deepEqual(wgs84ToGcj02({ latitude: 51.5, longitude: -0.12 }), { latitude: 51.5, longitude: -0.12 })
+	assert.deepEqual(wgs84ToGcj02({ latitude: 35.68, longitude: 139.76 }), { latitude: 35.68, longitude: 139.76 })
+})
+
+test('requests WGS84 from the device and returns locally converted GCJ02', async () => {
 	const previousUni = globalThis.uni
 	globalThis.uni = {
 		getLocation(options) {
-			assert.equal(options.type, 'gcj02')
+			assert.equal(options.type, 'wgs84')
 			assert.equal(options.isHighAccuracy, true)
 			assert.equal(options.highAccuracyExpireTime, 5000)
-			assert.equal(options.timeout, 10000)
 			return Promise.resolve({ latitude: 37.2, longitude: 112.18, accuracy: 8 })
 		}
 	}
@@ -71,9 +95,10 @@ test('wraps uni.getLocation with the GCJ02 option', async () => {
 	try {
 		const before = Date.now()
 		const result = await getCurrentLocation()
+		const expected = wgs84ToGcj02({ latitude: 37.2, longitude: 112.18 })
 		assert.deepEqual(result, {
-			latitude: 37.2,
-			longitude: 112.18,
+			latitude: expected.latitude,
+			longitude: expected.longitude,
 			accuracy: 8,
 			speed: 0,
 			heading: 0,
@@ -81,6 +106,48 @@ test('wraps uni.getLocation with the GCJ02 option', async () => {
 			source: 'device'
 		})
 		assert.ok(result.timestamp >= before && result.timestamp <= Date.now())
+	} finally {
+		globalThis.uni = previousUni
+	}
+})
+
+test('supports the callback style of uni.getLocation', async () => {
+	const previousUni = globalThis.uni
+	globalThis.uni = {
+		getLocation({ success }) {
+			setTimeout(() => success({ latitude: 37.2, longitude: 112.18, accuracy: 8 }), 0)
+		}
+	}
+	try {
+		const result = await getCurrentLocation()
+		assert.deepEqual(
+			{ latitude: result.latitude, longitude: result.longitude },
+			wgs84ToGcj02({ latitude: 37.2, longitude: 112.18 })
+		)
+	} finally {
+		globalThis.uni = previousUni
+	}
+})
+
+test('rejects with the platform error message when location fails', async () => {
+	const previousUni = globalThis.uni
+	globalThis.uni = {
+		getLocation({ fail }) {
+			fail({ errMsg: 'getLocation:fail auth deny' })
+		}
+	}
+	try {
+		await assert.rejects(getCurrentLocation(), /auth deny/)
+	} finally {
+		globalThis.uni = previousUni
+	}
+})
+
+test('rejects instead of hanging when the platform never answers', async () => {
+	const previousUni = globalThis.uni
+	globalThis.uni = { getLocation() {} }
+	try {
+		await assert.rejects(getCurrentLocation({ timeoutMs: 20 }), /定位超时/)
 	} finally {
 		globalThis.uni = previousUni
 	}

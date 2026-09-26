@@ -385,6 +385,7 @@ onUnmounted(() => {
 function locationErrorText(error) {
 	const message = error instanceof Error ? error.message : String(error?.errMsg || '')
 	if (/permission|auth deny|denied|拒绝|权限/i.test(message)) return '定位权限未开启'
+	if (/超时|timeout/i.test(message)) return '定位超时，请到开阔处重试'
 	return '定位暂不可用'
 }
 

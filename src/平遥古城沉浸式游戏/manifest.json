@@ -21,6 +21,9 @@
             "background" : "#F5F0E8",
             "style" : "dark"
         },
+        "modules" : {
+            "Geolocation" : {}
+        },
         "distribute" : {
             "android" : {
                 "permissions" : [
@@ -36,9 +39,18 @@
                 ]
             },
             "ios" : {
-                "dSYMs" : false
+                "dSYMs" : false,
+                "privacyDescription" : {
+                    "NSLocationWhenInUseUsageDescription" : "用于在古城地图上显示你当前所在的位置"
+                }
             },
-            "sdkConfigs" : {}
+            "sdkConfigs" : {
+                "geolocation" : {
+                    "system" : {
+                        "__platform__" : [ "ios", "android" ]
+                    }
+                }
+            }
         }
     },
     "h5" : {
