@@ -1465,7 +1465,7 @@ function redeemItem(item) {
 }
 
 @import '@/common/styles/tab-landscape.scss';
-@media (orientation: landscape) and (max-height: 600px) {
+@media (orientation: landscape) and (max-height: 600px), (min-width: 1000px) and (min-height: 560px) {
 	.shop-stage {
 		@include tab-landscape-viewport;
 		display: grid;
@@ -1490,6 +1490,7 @@ function redeemItem(item) {
 	.shop-stage__keeper-bubble { position: fixed; width: 180px; right: max(12px, env(safe-area-inset-right)); top: calc(max(8px, env(safe-area-inset-top)) + 110px); padding: 10px; pointer-events: none; }
 	.shop-stage__keeper-bubble-name { font-size: 11px; }
 	.shop-stage__keeper-bubble-line { font-size: 13px; }
+	.shop-stage__keeper-bubble { position: fixed; top: auto; right: 48px; bottom: 90px; width: 240px; }
 	.shop-stage__categories { grid-row: 2; grid-column: 1 / -1; padding: 0; margin: 0; gap: 8px; }
 	.shop-stage__category { min-width: 0; min-height: 44px; padding: 4px 18px; flex: 1; box-sizing: border-box; }
 	.shop-stage__category-name { font-size: 15px; }
@@ -1537,5 +1538,26 @@ function redeemItem(item) {
 	.shop-stage__detail-buy { grid-column: 1 / -1; position: sticky; bottom: 0; min-height: 44px; padding: 4px 12px; margin: 8px 0 0; box-sizing: border-box; z-index: 3; }
 	.shop-stage__detail-buy-text { font-size: 16px; }
 	.shop-stage__detail-buy-stamp { width: 24px; height: 24px; font-size: 15px; }
+}
+@media (min-width: 1000px) and (min-height: 560px) {
+	.shop-stage { padding: 32px max(48px, calc((100vw - 1200px) / 2)); grid-template-rows: 94px 64px minmax(0, 1fr); gap: 20px; }
+	.shop-stage__plaque-text { font-size: 27px; }
+	.shop-stage__banner-text { font-size: 13px; }
+	.shop-stage__pouch-value { font-size: 22px; }
+	.shop-stage__pouch-label, .shop-stage__category-name { font-size: 15px; }
+	.shop-stage__keeper-img { width: 72px; height: 86px; }
+	.shop-stage__keeper-bubble-line { font-size: 13px; }
+	.shop-stage__categories { gap: 16px; }
+	.shop-stage__category { min-height: 52px; padding: 10px 20px; cursor: pointer; }
+	.shop-stage__shelves { padding: 26px 40px 8px; }
+	.shop-stage__shelf { padding-bottom: 25px; margin-bottom: 26px; }
+	.shop-stage__product { min-height: 185px; cursor: pointer; }
+	.shop-stage__product-orb { width: 88px; height: 88px; }
+	.shop-stage__product-name { font-size: 17px; }
+	.shop-stage__product-tag-paper text { font-size: 14px; }
+	.shop-stage__detail { width: 680px; left: calc(50% - 340px); right: auto; top: 12%; bottom: 15%; }
+	.shop-stage__detail-paper { padding: 30px; grid-template-columns: 140px 1fr; gap: 18px; }
+	.shop-stage__detail-name { font-size: 27px; }
+	.shop-stage__detail-desc { font-size: 16px; line-height: 1.9; }
 }
 </style>

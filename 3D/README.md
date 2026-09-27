@@ -1,6 +1,16 @@
 # 平遥古城 3D 精修资产包
 
-本目录是独立的 Blender / glTF 交付区，没有修改游戏源码。资产针对项目当前的 Three.js r146、`GLTFLoader` 和角色动画命名约定制作。
+本目录保存 Blender / glTF 源资产。当前街景已接入 `pingyao-hanfu-human.glb`，兼容随包 Three.js r146；下面的 merchant 资产保留为上一版本。
+
+## 当前 Web 角色
+
+- 源工程：`pingyao-hanfu-human.blend`（Blender 5.2.2 LTS，已打包纹理，默认只显示一套服饰）。
+- 运行时：`../src/平遥古城沉浸式游戏/static/models/pingyao-hanfu-human.glb`，内嵌贴图，无 CDN。
+- 成人比例人体、3 档袖型、长短下摆、7 种头饰、7 种配饰；所有身份沿用这套男性基础网格，服装按存档切换。
+- 9 段动画：Idle、Walking_A、Walking_B、Running_A、Interact、Talk、Cheer、Sit_Idle、PickUp。游戏当前使用前进步态、待机和致意；其余动作保留在资产中。
+- 生成脚本 `scripts/build_pingyao_human_hero.py`，可用 `blender -b --factory-startup -P 3D/scripts/build_pingyao_human_hero.py` 重建。需将 CC0 上游包解压到项目 `.cache/quaternius/ubc/`、`ual/`，目录结构见脚本开头；服装贴图与提示词保留在 `textures/hanfu/`。
+- `-- --preview` 可额外输出 Blender 预览到项目 `.cache/hanfu-build/`；正常修改可直接打开已打包纹理的 blend，不依赖下载缓存。
+- 验证：`node --test test/human-character.test.mjs`；浏览器流程与截图：`python test/web-game-audit.py`。当前网页效果以 `test/artifacts/web-game/` 的实际渲染为准。
 
 ## 交付物
 
@@ -36,7 +46,7 @@
 - `Prop_Piaohao_Sign_Root`
 - `Prop_Incense_Burner_Root`
 
-本资产包保持独立，未替换当前游戏里的模型，也未改动其他智能体正在编辑的页面。
+这里的 merchant 接入说明仅适用于保留的上一版资产；当前入口已指向 human 模型。
 
 ## 重建
 

@@ -60,6 +60,7 @@
 		<FloatingText :visible="floatingText.visible" :text="floatingText.text" :type="floatingText.type" @complete="handleFloatingComplete" />
 		<LevelUpEffect :visible="showLevelUp" :old-level="levelUpData.oldLevel" :new-level="levelUpData.newLevel" :old-level-name="levelUpData.oldLevelName" :new-level-name="levelUpData.newLevelName" />
 		<InteractionButton v-if="interactionCard" :label="interactionCard.label" @action="openNearbyPoi" />
+		<DesktopGuide :nearby="!!interactionCard" :portrait="portraitMode" @action="handleDesktopAction" />
 
 		<!-- 画面成功显示前保持遮罩；失败可重试或返回。 -->
 		<BrushLoader
@@ -215,6 +216,7 @@ import { lockGameLandscape, releaseOrientationLock } from '@/common/utils/orient
 import MiniMap from '@/components/MiniMap.vue'
 import OutfitWardrobe from '@/components/OutfitWardrobe.vue'
 import SceneControls from '@/components/SceneControls.vue'
+import DesktopGuide from '@/components/DesktopGuide.vue'
 
 const statusLabelMap = { nearby: '已靠近', discoverable: '待点亮', quest: '主线热点', hot: '必看地标', route: '顺路可达' }
 
@@ -442,6 +444,7 @@ async function sendToRenderjs(type, data) {
 function handleRenderMsg(msg) {
 	if (!msg || !msg.detail) return
 	const { type, data } = msg.detail
+	if (type === 'desktop-action') { handleDesktopAction(data?.action); return }
 	if (type === 'view-ready') {
 		// renderjs 视图层已挂载、:change 观察器就绪：若仍在加载且有缓存命令，补发一次，
 		// 杜绝首帧 init 在观察器注册前被当「初始值」丢弃而永不 bootScene。
@@ -630,6 +633,22 @@ function handleSceneControl(action) {
 	if (action === 'portrait') portraitMode.value = !portraitMode.value
 	if (action === 'reset') portraitMode.value = false
 	sendToRenderjs('sceneControl', { action, running: runningMode.value, portrait: portraitMode.value })
+}
+
+function handleDesktopAction(action) {
+	if (isLoading.value || showEntranceAnim.value || showRewardPopup.value) return
+	if (action === 'escape') {
+		if (wardrobeOpen.value) wardrobeOpen.value = false
+		else if (settingsOpen.value) settingsOpen.value = false
+		else if (activePoiId.value) closePoi()
+		else if (sceneControlOpen.value) sceneControlOpen.value = false
+		else settingsOpen.value = true
+		return
+	}
+	if (wardrobeOpen.value || settingsOpen.value || activePoiId.value) return
+	if (action === 'interact') openNearbyPoi()
+	else if (action === 'inventory' || action === 'quest') handleHudAction(action)
+	else if (['portrait', 'reset', 'greet'].includes(action)) handleSceneControl(action)
 }
 
 watch(() => Boolean(isLoading.value || activePoiId.value || wardrobeOpen.value || settingsOpen.value || showRewardPopup.value || showEntranceAnim.value), (blocked) => {
@@ -1249,6 +1268,7 @@ let collisionSphere = null, collisionNearest = null, collisionNearby = []
 let cameraProbe = null
 let cameraProbeDirection = null
 let inputBlocked = false
+let sprintHeld = false
 let runningEnabled = false
 let portraitCamera = false
 let phaseSkyBlend = null
@@ -1296,11 +1316,22 @@ let skyTextureCache = {}
 let brocadeTextureLoading = false
 let rooflineTextureLoading = false
 
-const PLAYER_MODEL_PATH = 'static/models/pingyao-merchant-hero.glb'
+const PLAYER_MODEL_PATH = 'static/models/pingyao-hanfu-human.glb'
 // Mesh samples across the actual clips, with clearance for interpolation and cloth motion.
 const CHARACTER_COLLISION_RADIUS = { player: .79, pedestrian: .56 }
+// UAL 跑步抬腿的靴尖包络约 .91 m，旧模型的 .79 m 会让鞋尖穿过墙角。
+const HUMAN_COLLISION_RADIUS = { player: .96, pedestrian: .66 }
 // Calibrated against actual sole travel during contact, in model metres/clip second.
 const CHARACTER_GAIT_SPEED = { walk: 1.15, run: 5.1 }
+// 写实人体（Quaternius UAL 动作，3D/scripts/build_pingyao_human_hero.py 导出）：
+// Walk_Formal 触地期脚踝后移约 1.04 m/s，Jog 约 5.7 m/s。移动速度按真人步频配套，
+// 否则 2.2 m/s 会把 1.33 s 的步态压成快进，看起来像小碎步赶路。
+const HUMAN_GAIT_SPEED = { walk: 1.04, run: 5.7 }
+const PLAYER_MOVE_SPEED = { walk: 2.2, run: 4.15 }
+const HUMAN_MOVE_SPEED = { walk: 1.6, run: 4.4 }
+// 服饰 JSON → 写实人体的换装部件（sl_* 袖型、ol_* 下摆）。
+const HUMAN_SLEEVE = { narrow: 'narrow', braced: 'narrow', formal: 'formal', wide: 'wide', ceremonial: 'wide' }
+const HUMAN_HEM = { traveler: 'short', escort: 'short' }
 const CALLIGRAPHY_FAMILY = 'PingyaoBrush'
 
 /* renderjs → 逻辑层：通过 $ownerInstance.callMethod 回调逻辑层的 handleRenderMsg。
@@ -1691,6 +1722,8 @@ export default {
 			const blinkMeshes = [], clothMeshes = []
 			root.traverse((mesh) => {
 				if (!mesh.isSkinnedMesh) return
+				// 旧角色的眼睑/衣摆顶点坐标不适用于 UAL 骨架；新汉服由蒙皮随动作变形。
+				if (root.userData.rigType === 'human') return
 				const blinking = /^(Eyes|Irises|Pupils|Eye_glints|Eyelids|Lashes)/.test(mesh.name)
 				const cloth = /^(Skirt_Robe|Hem_Trim|Sash_tails)/.test(mesh.name)
 				if (!blinking && !cloth) return
@@ -1725,7 +1758,7 @@ export default {
 			root.userData.blinkMeshes = blinkMeshes; root.userData.clothMeshes = clothMeshes
 			const groundSamples = []
 			root.traverse(mesh => {
-				if (!mesh.isSkinnedMesh || mesh.material?.name !== 'Soles') return
+				if (!mesh.isSkinnedMesh || !['Soles', 'ShoeSole'].includes(mesh.material?.name)) return
 				const positions = mesh.geometry.attributes.position
 				// Only the two soles (550 vertices), not the complete character mesh.
 				// Sparse sampling misses the heel during foot roll and sinks it into the paving.
@@ -1747,11 +1780,12 @@ export default {
 			root.userData.contactShadow = shadow
 		},
 		prepareCharacterFootPlant(root) {
-			if (!root.getObjectByName('Detail_Soles')) return
+			const human = root.userData.rigType === 'human'
+			if (!human && !root.getObjectByName('Detail_Soles')) return
 			root.updateMatrixWorld(true)
 			const feet = []
 			for (const side of ['l', 'r']) {
-				const upper = root.getObjectByName('upperleg' + side), lower = root.getObjectByName('lowerleg' + side), foot = root.getObjectByName('foot' + side)
+				const upper = root.getObjectByName((human ? 'thigh_' : 'upperleg') + side), lower = root.getObjectByName((human ? 'calf_' : 'lowerleg') + side), foot = root.getObjectByName((human ? 'foot_' : 'foot') + side)
 				if (!upper || !lower || !foot) continue
 				const sole = [], inverse = foot.matrixWorld.clone().invert()
 				for (const sample of root.userData.groundSamples) {
@@ -1769,7 +1803,7 @@ export default {
 					bendPole: new THREE.Vector3(),
 					pose: [upper.quaternion.clone(), lower.quaternion.clone(), foot.quaternion.clone()], saved: false, wasContact: false })
 			}
-			const pelvis = root.getObjectByName('hips')
+			const pelvis = root.getObjectByName(human ? 'pelvis' : 'hips')
 			root.userData.footPlant = { feet, pelvis, pelvisPose: pelvis?.position.clone(), pelvisSaved: false, pelvisDrop: 0,
 				previous: root.position.clone(), yaw: root.rotation.y,
 				v: Array.from({ length: 12 }, () => new THREE.Vector3()), q: Array.from({ length: 6 }, () => new THREE.Quaternion()) }
@@ -1820,7 +1854,10 @@ export default {
 				let floor = Infinity
 				for (const vertex of leg.sole) floor = Math.min(floor, point.copy(vertex).multiply(scale).applyQuaternion(rawRotation).y + ankle.y)
 				const localPhase = (phase + (leg.side === 'r' ? .5 : 0)) % 1
-				const start = THREE.MathUtils.lerp(.045, .155, run), end = THREE.MathUtils.lerp(.535, .275, run)
+				const human = data.rigType === 'human'
+				// UAL 的跑步落脚位于周期起点；旧 KayKit 的接触窗晚约 0.15 周期。
+				const start = human ? .01 : THREE.MathUtils.lerp(.045, .155, run)
+				const end = human ? THREE.MathUtils.lerp(.43, .15, run) : THREE.MathUtils.lerp(.535, .275, run)
 				const contact = valid && floor < .098 && localPhase >= start && localPhase < end && (data.airborneLift || 0) < .012
 				if (contact && !leg.wasContact) { leg.anchor.copy(ankle); leg.rotation.copy(rawRotation) }
 				leg.wasContact = contact
@@ -2250,12 +2287,14 @@ export default {
 					ctx.reskinPlayer(data.playerSkin)
 				} else if (action === 'blockInput') {
 					inputBlocked = Boolean(data.blocked)
+					sprintHeld = false
 					joystickInput = { dx: 0, dy: 0 }
 					movementVelocity = { x: 0, z: 0 }
 				} else if (action === 'sceneControl') {
 					ctx.applySceneControl(data)
 				} else if (action === 'pause') {
 					pagePaused = true
+					sprintHeld = false
 					ctx.pauseRendering()
 				} else if (action === 'resume') {
 					pagePaused = false
@@ -3684,6 +3723,10 @@ export default {
 				root.scale.setScalar(1.15)
 				root.traverse((item) => { if (item.isMesh) { item.castShadow = true; item.frustumCulled = false } })
 				root.userData.detailed = Boolean(root.getObjectByName('Face_Skin'))
+				if (root.getObjectByName('Robe_Upper')) {
+					root.scale.setScalar(1)
+					Object.assign(root.userData, { detailed: true, rigType: 'human', gait: HUMAN_GAIT_SPEED, moveSpeed: HUMAN_MOVE_SPEED })
+				}
 				this.shareCharacterSkeletons(root)
 				this.applyGlbSkin(root, playerSkinData || {})
 				this.applyEnvironmentIntensity(root, phaseVisualState.environment)
@@ -3706,7 +3749,7 @@ export default {
 				scene.remove(oldPlayer)
 				this.disposeObjectResources(oldPlayer)
 				for (const key of ['idle', 'walk', 'run']) actions[key]?.play().setEffectiveWeight(key === 'idle' ? 1 : 0)
-				root.userData = { ...root.userData, isGltf: true, mixer, actions, activeAction: actions.idle, modelVersion: 5, gestureTime: 0, collisionRadius: CHARACTER_COLLISION_RADIUS.player }
+				root.userData = { ...root.userData, isGltf: true, mixer, actions, activeAction: actions.idle, modelVersion: 5, gestureTime: 0, collisionRadius: (root.userData.rigType === 'human' ? HUMAN_COLLISION_RADIUS : CHARACTER_COLLISION_RADIUS).player }
 				this.prepareCharacterDeformation(root)
 				animationMixers.push(mixer)
 				player = root
@@ -3753,9 +3796,10 @@ export default {
 				actor.rotation.copy(old.rotation)
 				const mixer = new THREE.AnimationMixer(actor), action = mixer.clipAction(clip).play()
 				const idle = mixer.clipAction(clips.find(item=>item.name==='Idle')).play().setEffectiveWeight(0)
-				action.timeScale = old.userData.speed / (CHARACTER_GAIT_SPEED.walk * actor.scale.x)
+				const gait = source.userData.gait || CHARACTER_GAIT_SPEED
+				action.timeScale = old.userData.speed / (gait.walk * actor.scale.x)
 				action.time = (index * .37 % 1) * clip.duration
-				actor.userData = { ...old.userData, kind: 'rigged-pedestrian', mixer, action, idle, expressionOffset: .73 + index * 1.37, collisionRadius: CHARACTER_COLLISION_RADIUS.pedestrian * actor.scale.x }
+				actor.userData = { ...old.userData, rigType: source.userData.rigType, kind: 'rigged-pedestrian', gait, mixer, action, idle, expressionOffset: .73 + index * 1.37, collisionRadius: (source.userData.rigType === 'human' ? HUMAN_COLLISION_RADIUS : CHARACTER_COLLISION_RADIUS).pedestrian * actor.scale.x }
 				this.prepareCharacterDeformation(actor)
 				actor.updateMatrixWorld(true)
 				animationMixers.push(mixer); old.removeFromParent(); this.disposeObjectResources(old); scene.add(actor)
@@ -3763,6 +3807,7 @@ export default {
 			})
 		},
 		applyGlbSkin(root, skin) {
+			if (root.userData.rigType === 'human') return this.applyHumanSkin(root, skin)
 			if (root.userData.detailed) {
 				const slots = { Cloth: skin.body || '#8B4513', Robe: skin.robe || skin.body || '#754019', Trim: skin.trim || '#D2B48C', Skin: skin.head || '#e1b996', Hat: skin.hat || '#302d29' }
 				root.scale.setScalar(1)
@@ -3813,6 +3858,32 @@ export default {
 				if (/Spellbook|Wand|Staff|Mage_Cape|Mage_Hat/.test(item.name)) item.visible = false
 			})
 			this.attachHanfuToRig(root, skin)
+		},
+		applyHumanSkin(root, skin) {
+			// 写实人体的皮肤、发色、眼睛自带贴图，不按 skin.head 着色；织物是中性色可平铺贴图，只乘服饰色。
+			const tints = { Cloth: skin.body || '#8B4513', Robe: skin.robe || skin.body || '#754019', Trim: skin.trim || '#D2B48C', Hat: skin.hat || '#26211d', Belt: skin.accent || skin.hat || '#3a2418' }
+			const sleeve = 'sl_' + (HUMAN_SLEEVE[skin.sleeve] || 'formal')
+			const hem = 'ol_' + (HUMAN_HEM[skin.silhouette] || 'long')
+			const beard = skin.beard ?? ['merchant', 'legend', 'escort'].includes(skin.silhouette)
+			const tinted = new Set()
+			root.traverse((item) => {
+				const part = item.name.replace(/_\d+$/, '')
+				if (part.startsWith('hw_')) item.visible = part === 'hw_' + (skin.headwear || 'hair-bun')
+				else if (part.startsWith('acc_')) item.visible = part === 'acc_' + (skin.accessory || 'satchel')
+				else if (part.startsWith('sl_')) item.visible = part === sleeve
+				else if (part.startsWith('ol_')) item.visible = part === hem
+				else if (part === 'Trousers') item.visible = hem === 'ol_short'
+				else if (part === 'fh_goatee') item.visible = beard
+				if (!item.isMesh || tinted.has(item.material)) return
+				const mat = item.material
+				tinted.add(mat)
+				if (tints[mat.name]) {
+					mat.color.set(tints[mat.name])
+					if (THREE.ColorManagement?.legacyMode !== false) mat.color.convertSRGBToLinear()
+				}
+				// 锦袍略提亮泽，与素布拉开质感差距。
+				if (mat.name === 'Cloth' || mat.name === 'Robe') mat.roughness = skin.pattern === 'brocade' ? .58 : .8
+			})
 		},
 		attachHanfuToRig(root, skin) {
 			const stale = []
@@ -4709,7 +4780,8 @@ export default {
 			const runDuration = runAction?.getClip().duration || walkDuration
 			const walkWeight = walkAction?.getEffectiveWeight() || 0, runWeight = runAction?.getEffectiveWeight() || 0
 			const runBlend = runWeight / Math.max(.001, walkWeight + runWeight)
-			const stride = THREE.MathUtils.lerp(walkDuration * CHARACTER_GAIT_SPEED.walk, runDuration * CHARACTER_GAIT_SPEED.run, runBlend) * player.scale.x
+			const gait = data.gait || CHARACTER_GAIT_SPEED
+			const stride = THREE.MathUtils.lerp(walkDuration * gait.walk, runDuration * gait.run, runBlend) * player.scale.x
 			// Small alternating steps support a pivot without adding virtual travel or quest steps.
 			const phaseSpeed = Math.max(Math.max(0, speed) / stride, turn > .01 ? .8 : 0)
 			data.locomotionPhase = ((data.locomotionPhase || 0) + phaseSpeed * deltaTime) % 1
@@ -4809,7 +4881,7 @@ export default {
 				if (data.kind === 'rigged-pedestrian') {
 					const speed = this.updatePedestrianMotion(actor, deltaTime)
 					const turnWeight = Math.min(.45, data.turnRate * .15)
-					data.action.timeScale = turnWeight > .01 ? .7 : speed / (CHARACTER_GAIT_SPEED.walk * actor.scale.x)
+					data.action.timeScale = turnWeight > .01 ? .7 : speed / ((data.gait || CHARACTER_GAIT_SPEED).walk * actor.scale.x)
 					const weight = THREE.MathUtils.lerp(data.action.getEffectiveWeight(), speed > .015 ? 1 : turnWeight, 1-Math.exp(-10*deltaTime))
 					data.action.setEffectiveWeight(weight); data.idle.setEffectiveWeight(1-weight)
 					this.restoreCharacterFootPose(actor)
@@ -5033,7 +5105,7 @@ export default {
 			}
 
 			const onMouseDown = (event) => {
-				if (event.button !== 0) return
+				if (inputBlocked || event.button !== 0) return
 				mouseLooking = true
 				mouseLastX = event.clientX
 				mouseLastY = event.clientY
@@ -5050,28 +5122,42 @@ export default {
 				canvas.style.cursor = 'grab'
 			}
 			const onWheel = (event) => {
+				if (inputBlocked) return
 				cameraDistance = Math.max(2.6, Math.min(10, cameraDistance + event.deltaY * 0.008))
 				event.preventDefault()
 			}
 
 			const onKeyDown = (event) => {
-				if (inputBlocked || event.target?.isContentEditable) return
+				if (event.target?.isContentEditable || event.ctrlKey || event.metaKey || event.altKey) return
 				const key = event.key.toLowerCase()
-				if (!keyDirections[key]) return
 				const tag = event.target && event.target.tagName
-				if (tag === 'INPUT' || tag === 'TEXTAREA') return
+				if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+				if (key === 'escape') {
+					if (!event.repeat) emit('desktop-action', { action: 'escape' })
+					event.preventDefault(); return
+				}
+				if (inputBlocked) return
+				if (key === 'shift') { sprintHeld = true; return }
+				const shortcut = { e: 'interact', i: 'inventory', j: 'quest', c: 'portrait', r: 'reset', g: 'greet' }[key]
+				if (shortcut) {
+					if (!event.repeat) emit('desktop-action', { action: shortcut })
+					event.preventDefault(); return
+				}
+				if (!keyDirections[key]) return
 				pressedKeys.add(key)
 				syncMoveInput()
 				event.preventDefault()
 			}
 			const onKeyUp = (event) => {
 				const key = event.key.toLowerCase()
+				if (key === 'shift') { sprintHeld = false; return }
 				if (!keyDirections[key]) return
 				pressedKeys.delete(key)
 				syncMoveInput()
 				event.preventDefault()
 			}
 			const onWindowBlur = () => {
+				sprintHeld = false
 				pressedKeys.clear()
 				moveTouchId = null
 				lookTouchId = null
@@ -5097,6 +5183,7 @@ export default {
 			window.addEventListener('blur', onWindowBlur)
 
 			joystickCleanup = () => {
+				sprintHeld = false
 				canvas.removeEventListener('touchstart', onTouchStart)
 				canvas.removeEventListener('touchmove', onTouchMove)
 				canvas.removeEventListener('touchend', onTouchEnd)
@@ -5243,7 +5330,8 @@ export default {
 
 				if (player) {
 					const inputLength = inputBlocked || portraitCamera ? 0 : Math.min(1, Math.hypot(joystickInput.dx, joystickInput.dy))
-					const movementSpeed = inputLength > .08 ? (runningEnabled ? 4.15 : 2.2) : 0
+					const pace = player.userData.moveSpeed || PLAYER_MOVE_SPEED
+					const movementSpeed = inputLength > .08 ? ((runningEnabled || sprintHeld) ? pace.run : pace.walk) : 0
 					const desiredX = (joystickInput.dx * Math.cos(cameraYaw) + joystickInput.dy * Math.sin(cameraYaw)) * movementSpeed
 					const desiredZ = (-joystickInput.dx * Math.sin(cameraYaw) + joystickInput.dy * Math.cos(cameraYaw)) * movementSpeed
 					const { movedDistance, speed, moving } = this.updatePlayerMotion(desiredX, desiredZ, deltaTime)
@@ -6040,5 +6128,22 @@ export default {
 	.street-stage__poi-story { margin-top: 12px; padding: 10px 12px; }
 	.street-stage__poi-footer { margin-top: 14px; gap: 8px; flex-wrap: wrap; }
 	.street-stage__poi-tool, .street-stage__poi-action, .street-stage__poi-close { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: 4px 12px; box-sizing: border-box; font-size: 13px; letter-spacing: 0; }
+}
+@media screen and (min-width: 1000px) and (min-height: 560px) {
+	.street-stage__rightcorner { top: 127px; right: 32px; gap: 14px; }
+	.street-stage__phase { min-width: 88px; padding: 10px 16px; }
+	.street-stage__phase-label { font-size: 23px; }
+	.street-stage__phase-caption { font-size: 11px; }
+	.street-stage__switch { top: 35px; left: calc(50% - 188px); right: auto; width: 376px; }
+	.street-stage__switch-arrow { width: 40px; height: 40px; font-size: 28px; cursor: pointer; }
+	.street-stage__poi-paper { width: min(620px, 70vw); max-height: 80vh; }
+	.street-stage__poi-content { padding: 32px 40px; max-height: 76vh; }
+	.street-stage__poi-name { font-size: 28px; }
+	.street-stage__poi-desc { font-size: 16px; line-height: 1.9; }
+	.street-stage__poi-story-text, .street-stage__poi-story-deep { font-size: 15px; }
+	:deep(.mini-map:not(.mini-map--collapsed) .mini-map__frame) { width: 156px; height: 156px; }
+	:deep(.mini-map__label) { font-size: 12px; }
+	:deep(.owl-float) { max-width: 300px; bottom: 110px; }
+	:deep(.interact-stage) { bottom: 128px; }
 }
 </style>

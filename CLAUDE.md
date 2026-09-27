@@ -24,7 +24,7 @@ node scripts/build-pingyao-character.mjs    # 重新生成 static/models/pingyao
 - 没有 lint、类型检查或 `npm test`。`test/*.test.mjs` 绝大多数是**静态源码断言**（读 `street.vue` 文本做正则匹配）加少量纯逻辑单测（`game-economy`、`street-world-layout`、`phase-transition`），跑通不代表 3D 画面正确。
 - `test/*-audit.py` / `*-workflow.py` 是 Playwright 视觉审计脚本，固定访问 5219，截图和 JSON 落在 `test/artifacts/<name>/`（已 gitignore）。`test/*-report.md` 是历史验收记录，不是当前待办。
 - 用户明确要求**只用浏览器调试**，不启用 HBuilderX 模拟器或真机。H5 下街景 renderjs 与逻辑层共用一个 `window`，APP 下不共用，写桥接代码时仍按 APP 约束来。
-- `scripts/` 是素材生成器（角色 GLB、程序合成音频、imagegen 贴图裁切），运行后会直接写入 `static/`；`output/imagegen/` 是贴图脚本的输入源，不要删。`deploy/` 与 `scripts/package-pingyao-release.mjs` 是静态部署打包，注意后者仍从系统 Temp 读构建产物，与 `run-h5.mjs` 现在的项目内缓存路径不一致。
+- `scripts/` 是素材生成器（角色 GLB、程序合成音频、imagegen 贴图裁切），运行后会直接写入 `static/`；`output/imagegen/` 是贴图脚本的输入源，不要删。`deploy/` 与 `scripts/package-pingyao-release.mjs` 是静态部署打包，读取项目内 `.cache/pingyao-h5-harness/dist/build/h5`；发布与回滚流程见 `deploy/README.md`。
 
 ## 架构脉络（多文件才能看懂的部分）
 

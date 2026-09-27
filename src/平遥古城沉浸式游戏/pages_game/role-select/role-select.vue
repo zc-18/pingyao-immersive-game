@@ -38,6 +38,8 @@
 				v-for="(role, index) in roleList"
 				:key="role.id"
 				class="role-figure"
+				role="button" tabindex="0" :aria-label="role.name" :aria-pressed="index === currentIndex"
+				@keydown.enter.prevent="currentIndex = index" @keydown.space.prevent="currentIndex = index"
 				:class="{ 'role-figure--active': index === currentIndex, 'role-figure--dim': index !== currentIndex }"
 				@tap="currentIndex = index"
 			>
@@ -93,6 +95,8 @@
 		<view class="role-bottom">
 			<view
 				class="role-confirm-token"
+				role="button" tabindex="0" :aria-label="'以' + currentRole.name + '入城'"
+				@keydown.enter.prevent="confirmRole" @keydown.space.prevent="confirmRole"
 				:class="{ 'role-confirm-token--locked': isSubmitting }"
 				@tap="confirmRole"
 			>
@@ -924,5 +928,34 @@ function confirmRole() {
 	.role-confirm-token__body { min-width: 190px; margin: 0 0 0 -7px; padding: 9px 18px 8px 22px; }
 	.role-confirm-token__body-char { font-size: 16px; letter-spacing: 5px; }
 	.role-confirm-token__body-sub { font-size: 9px; letter-spacing: 2px; }
+}
+@media screen and (min-width: 1000px) and (min-height: 560px) {
+	.role-figure:focus-visible, .role-confirm-token:focus-visible { outline: 2px solid #d4a574; outline-offset: 8px; border-radius: 6px; }
+	.role-stage { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
+	.role-title-bar { position: absolute; top: 7%; left: 0; right: 0; margin: 0; gap: 12px; }
+	.role-title-bar__plaque { padding: 12px 40px; font-size: 26px; letter-spacing: 9px; }
+	.role-title-bar__subtitle { font-size: 13px; letter-spacing: 5px; }
+	.role-owl { top: 6%; left: 28px; max-width: 265px; }
+	.role-owl__line { font-size: 12px; }
+	.role-row { position: absolute; left: 6%; right: 6%; top: 23%; bottom: 24%; height: auto; margin: 0; padding: 0; gap: 20px; align-items: flex-start; }
+	.role-figure { width: 18%; height: calc(100% - 82px); transform: none; cursor: pointer; }
+	.role-figure__img { height: calc(100% - 44px); width: 100%; max-width: 230px; min-height: 0; }
+	.role-figure__nameplate { font-size: 16px; padding: 10px 18px; margin-top: 0; }
+	.role-figure__banner { bottom: -88px; width: 100%; max-width: 225px; box-sizing: border-box; padding: 10px 14px; }
+	.role-figure__banner-tag { font-size: 13px; }
+	.role-figure__banner-bonus { font-size: 12px; line-height: 1.5; }
+	.role-figure--active { transform: none; }
+	.role-figure--dim { opacity: .65; }
+	.role-figure:hover { opacity: 1; }
+	.role-pager { display: none; }
+	.role-motto { position: absolute; bottom: 8%; left: 8%; width: 46%; margin: 0; }
+	.role-motto__paper { width: 100%; max-width: 560px; padding: 16px 24px; }
+	.role-motto__text { font-size: 16px; line-height: 1.7; }
+	.role-bottom { position: absolute; left: auto; right: 12%; bottom: 7%; width: auto; margin: 0; padding: 0; }
+	.role-confirm-token { animation: none; display: flex; align-items: center; cursor: pointer; }
+	.role-confirm-token__body { margin: 0 0 0 -8px; padding: 18px 40px; }
+	.role-confirm-token__body-char { font-size: 22px; }
+	.role-confirm-token__body-sub { font-size: 12px; }
+	.role-confirm-token__cord { display: none; }
 }
 </style>

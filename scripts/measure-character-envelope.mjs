@@ -13,8 +13,8 @@ engine.THREE.TextureLoader.prototype.load = function (_, onLoad) {
   return texture
 }
 export const T = engine.THREE
-export async function loadCharacter() {
-  const bytes=fs.readFileSync(new URL('models/pingyao-merchant-hero.glb',base))
+export async function loadCharacter(filename = 'pingyao-merchant-hero.glb') {
+  const bytes=fs.readFileSync(new URL('models/' + filename,base))
   return new Promise((resolve,reject)=>new T.GLTFLoader().parse(bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength),'',resolve,reject))
 }
 export function measureEnvelopes(gltf, samples = 60) {

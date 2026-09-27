@@ -43,5 +43,25 @@
     "meshObjects": 23
   },
   "source": "Existing project-compatible animation rig and original geometry, refined in Blender MCP",
-  "texture": "textures/pingyao-brocade-512.png"
+  "texture": "textures/pingyao-brocade-512.png",
+  "humanHero": {
+    "file": "../src/平遥古城沉浸式游戏/static/models/pingyao-hanfu-human.glb",
+    "source": "pingyao-hanfu-human.blend",
+    "bytes": 3305692,
+    "trianglesIncludingHiddenVariants": 33686,
+    "skins": 1,
+    "animations": [
+      "Cheer",
+      "Idle",
+      "Interact",
+      "PickUp",
+      "Running_A",
+      "Sit_Idle",
+      "Talk",
+      "Walking_A",
+      "Walking_B"
+    ],
+    "license": "Quaternius CC0 + project hanfu geometry and generated fabrics",
+    "build": "scripts/build_pingyao_human_hero.py"
+  }
 }

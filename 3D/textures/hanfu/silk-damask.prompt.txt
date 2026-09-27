@@ -1,0 +1,2 @@
+Seamless tileable fabric texture, flat top-down scan of ivory-white Chinese silk damask used for Ming dynasty hanfu robes. Tone-on-tone jacquard pattern of small auspicious clouds (xiangyun) and scattered roundels, subtle sheen, fine visible warp and weft weave. Very even, flat, shadowless studio lighting, no folds, no wrinkles, no perspective. Neutral near-white and light grey values only so the texture can be color-tinted in a game engine. Pattern repeats cleanly on all four edges.
+Avoid: color casts, strong contrast, text, watermark, borders, vignette, folds, 3D shading.

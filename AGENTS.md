@@ -5,7 +5,7 @@
 ## 项目现状
 
 - 平遥古城沉浸式文旅游戏前端原型，使用 uni-app、Vue 3、JavaScript、SCSS；当前随包 Three.js 实测为 r146（0.146.0），不要仅按历史标注推断可用 API。
-- 目标平台为 Android/iOS APP，使用 HBuilderX 调试和云打包；根目录另有基于 Vite 的 H5 调试脚手架。
+- 当前主线为桌面 Web，保留 Android/iOS APP 的 HBuilderX 调试和云打包流程；根目录提供基于 Vite 的 H5 调试脚手架。桌面布局在宽度 1000px、可用高度 560px 起启用，手机继续使用横竖屏适配。
 - 主流程为启动页、角色选择、3D 街景探索，配合晋小鸦 NPC、任务、签到、成就、服饰、商城兑换和行旅册。当前街景使用可见玩家化身及跟随相机。
 - 数据来自 `common/data/` 和 `uni.setStorageSync` 本地存档，无后端或鉴权。真实 GPS、腾讯地图、支付和线下核销服务尚未接入；步数来自虚拟场景移动。
 
@@ -44,6 +44,7 @@ npm ci
 npm run dev:h5
 npm run build:h5
 node --test test/*.test.mjs
+python test/web-game-audit.py
 ```
 
 - 开发地址为 `http://localhost:5219`，入口为 `/#/pages_game/splash/splash`。启动器使用 `strictPort: true`，端口占用会报错，不会自动换端口。
@@ -54,6 +55,7 @@ node --test test/*.test.mjs
 - 没有 `npm test`、lint 或类型检查脚本。Node 测试使用内置 `node:test`；模块类型提示是现有配置产生的警告，不应只为消除警告改动包配置。
 - 修改业务或渲染代码时运行相关测试，并按影响范围执行 H5 构建。静态源码断言不能证明 3D 已正确渲染；街景或布局改动还需检查实际画面、交互和移动端横竖屏。
 - 移动端视觉检查：先运行 H5 服务，再执行 `python test/mobile-visual-audit.py`。需预装 Python 的 `playwright`、`Pillow` 和 Playwright Chromium；脚本固定访问 5219 端口，输出到 `test/artifacts/mobile-ui/`。APP 资源路径及旋转行为还需 HBuilderX 真机验证。
+- Web 验收：H5 服务启动后运行 `python test/web-game-audit.py`，使用独立浏览器存档验证键鼠、换装、主线任务、五街切换、宽屏/手机尺寸与刷新存档，证据输出到 `test/artifacts/web-game/`。截图与性能采样仅代表当前浏览器/设备。
 
 ## 状态与业务边界
 
@@ -66,6 +68,9 @@ node --test test/*.test.mjs
 - 新增或修改 POI、街道、任务时同步核对 ID、所属场景、建筑绑定与可达性。共享街巷布局位于 `common/utils/street-world.js`。
 
 ## Three.js 与 renderjs
+
+- 当前角色为 `static/models/pingyao-hanfu-human.glb`，基于 Quaternius CC0 成人男性人体和同骨架动画，汉服源工程、构建脚本、纹理及许可在根目录 `3D/`。新旧骨架名称、鞋底材质、步频与碰撞半径不同；不要套用旧角色的坐标形变参数。`test/human-character.test.mjs` 验证当前模型，其他角色测试仍覆盖保留资产。
+- 桌面操作：WASD/方向键移动、按住 Shift 快行、鼠标拖动环顾、滚轮缩放、E 互动、I 换装、J 行旅册、C 观衣、R 镜头归位、G 致意、Esc 关闭面板/设置。renderjs 键盘动作经现有 `handleRenderMsg` 桥接逻辑层，编辑输入框时不截获快捷键。
 
 - 实际渲染代码在 `pages_game/street/street.vue` 和 `pages_game/3d-test/3d-test.vue` 的 `<script module="..." lang="renderjs">` 中。仅修改 `common/3d/` 不会自动改变这两个页面。
 - 逻辑层负责 `uni.*`、存档和任务，renderjs 负责 DOM、WebGL、输入和动画。沿用页面内联实现，不在逻辑层导入 Three.js，也不把普通 npm 导入或 CDN 依赖直接搬入现有 renderjs 加载流程。

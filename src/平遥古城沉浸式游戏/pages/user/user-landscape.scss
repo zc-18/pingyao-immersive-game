@@ -1,5 +1,5 @@
 @import '@/common/styles/tab-landscape.scss';
-@media (orientation: landscape) and (max-height: 600px) {
+@media (orientation: landscape) and (max-height: 600px), (min-width: 1000px) and (min-height: 560px) {
 	.ledger { @include tab-landscape-viewport; overflow-y: auto; }
 	.ledger [class] { letter-spacing: 0; }
 	.ledger__book { display: grid; grid-template-columns: minmax(230px, 0.9fr) minmax(0, 1.5fr); gap: 12px 18px; margin: 0; padding: 12px 18px; animation: none; }

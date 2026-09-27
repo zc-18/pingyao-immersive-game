@@ -2,6 +2,7 @@
 	<view class="splash-stage" :class="['splash-stage--' + phase.key]">
 		<!-- 背景层（远 → 近 三层视差）-->
 		<ParallaxScene :tone="phase.key" :lanterns="phase.lanternsLit" :clouds="true" />
+		<view class="splash-desktop-art"><image src="/static/img/pingyao-web-panorama.webp" mode="aspectFill" /></view>
 
 		<!-- 远城墙剪影（手绘）-->
 		<view class="splash-wall">
@@ -53,7 +54,7 @@
 		<!-- 底部毛笔字 -->
 		<view class="splash-bottom">
 			<text class="splash-status">{{ statusText }}</text>
-			<view class="splash-enter-frame" @tap="handleEnter" :class="{ 'splash-enter-frame--lit': !isRouting }">
+			<view class="splash-enter-frame" role="button" tabindex="0" :aria-label="buttonText" @keydown.enter.prevent="handleEnter" @keydown.space.prevent="handleEnter" @tap="handleEnter" :class="{ 'splash-enter-frame--lit': !isRouting }">
 				<view class="splash-enter-frame__seal"></view>
 				<text class="splash-enter-frame__text">{{ buttonText }}</text>
 				<view class="splash-enter-frame__arrow">›</view>
@@ -620,5 +621,30 @@ function handleEnter() {
 	.splash-enter-frame__seal { top: -11px; width: 20px; height: 14px; }
 	.splash-enter-frame__arrow { font-size: 18px; }
 	.splash-tap-hint { font-size: 9px; letter-spacing: 2px; }
+}
+/* 桌面首屏：以视口高度排版，避免沿用手机纵向内容流。 */
+.splash-desktop-art { display: none; }
+.splash-enter-frame:focus-visible { outline: 2px solid #f3d297; outline-offset: 6px; }
+@media screen and (min-width: 1000px) and (min-height: 560px) {
+	.splash-desktop-art { display: block; position: absolute; inset: 0; }
+	.splash-desktop-art image { width: 100%; height: 100%; }
+	.splash-desktop-art::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, #101613dd 0%, #17201caf 52%, #17201c35 100%), linear-gradient(0deg, #111812dc, transparent 65%); }
+	.splash-stage { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
+	.splash-center { position: absolute; left: 10%; top: 12%; bottom: 29%; width: 55%; padding: 0; justify-content: center; gap: 18px; }
+	.splash-kicker { font-size: 13px; letter-spacing: 6px; }
+	.splash-stamp { width: clamp(130px, 21vh, 205px); height: clamp(130px, 21vh, 205px); border-width: 5px; flex-shrink: 0; }
+	.splash-stamp__inner { gap: 14px; }
+	.splash-stamp__text { font-size: clamp(46px, 7vh, 72px); }
+	.splash-headline { font-size: clamp(24px, 2.4vw, 38px); margin-top: 8px; letter-spacing: 4px; }
+	.splash-desc { max-width: 500px; font-size: 15px; line-height: 1.9; letter-spacing: 1px; margin-top: 0; color: #e0d5c4; }
+	.splash-bottom { position: absolute; left: 10%; bottom: 8%; width: 55%; margin: 0; gap: 16px; }
+	.splash-status, .splash-tap-hint { font-size: 12px; letter-spacing: 3px; }
+	.splash-enter-frame { min-width: 260px; padding: 16px 40px; font-size: 22px; cursor: pointer; }
+	.splash-enter-frame__text { font-size: 24px; }
+	.splash-owl { right: 10%; top: 32%; width: 210px; align-items: center; }
+	.splash-owl__img { width: 200px; height: 240px; }
+	.splash-owl__bubble { max-width: 220px; padding: 16px 20px; }
+	.splash-owl__text { font-size: 14px; line-height: 1.8; }
+	.splash-wall, .splash-roofs { display: none; }
 }
 </style>

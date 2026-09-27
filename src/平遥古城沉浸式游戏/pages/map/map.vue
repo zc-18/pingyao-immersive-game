@@ -1181,7 +1181,7 @@ function toggleScope() {
 .map-stage__detail-close { display: none; }
 
 @import '@/common/styles/tab-landscape.scss';
-@media (orientation: landscape) and (max-height: 600px) {
+@media (orientation: landscape) and (max-height: 600px), (min-width: 1000px) and (min-height: 560px) {
 	.map-stage {
 		@include tab-landscape-viewport;
 		display: grid;
@@ -1257,5 +1257,20 @@ function toggleScope() {
 	.map-stage__route-card-label { font-size: 11px; }
 	.map-stage__route-step { gap: 8px; margin-top: 8px; }
 	.map-stage__route-step-num { width: 24px; height: 24px; font-size: 12px; }
+}
+@media (min-width: 1000px) and (min-height: 560px) {
+	.map-stage { padding: 32px max(40px, calc((100vw - 1300px) / 2)); grid-template-columns: minmax(0, 1.8fr) minmax(320px, 1fr); gap: 20px 36px; }
+	.map-stage__paper { padding: 22px; }
+	.map-stage__title-text { font-size: 23px; }
+	.map-stage__subtitle { font-size: 13px; }
+	.map-stage__detail-paper { padding: 28px; }
+	.map-stage__detail-name { font-size: 26px; }
+	.map-stage__detail-desc, .map-stage__detail-story-text { font-size: 15px; line-height: 1.9; }
+	.map-stage__detail-cta { min-height: 52px; font-size: 17px; cursor: pointer; }
+	.map-stage__poi { cursor: pointer; }
+	.map-stage__poi-stamp { width: 34px; height: 34px; }
+	.map-stage__poi-stamp-text { font-size: 16px; }
+	.map-stage__poi-flag-text { font-size: 12px; }
+	.map-stage__side { width: 400px; padding: 24px; }
 }
 </style>

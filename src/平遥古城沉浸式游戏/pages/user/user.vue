@@ -1426,4 +1426,19 @@ function confirmReset() {
 .ledger__book { z-index: auto; animation-fill-mode: backwards; }
 .ledger__page--achv { z-index: 40; animation-fill-mode: backwards; }
 @import './user-landscape.scss';
+@media (min-width: 1000px) and (min-height: 560px) {
+	.ledger { padding: 32px max(48px, calc((100vw - 1160px) / 2)); }
+	.ledger__book { padding: 34px 40px; gap: 26px 50px; grid-template-columns: 1fr 1.5fr; }
+	.ledger__badge-portrait { width: 84px; height: 100px; }
+	.ledger__badge-name { font-size: 26px; }
+	.ledger__badge-role { font-size: 14px; line-height: 1.7; }
+	.ledger__page-eyebrow { font-size: 16px; margin-bottom: 16px; letter-spacing: 4px; }
+	.ledger__rank-side-line { font-size: 16px; }
+	.ledger__journal { gap: 24px; }
+	.ledger__journal-name { font-size: 17px; }
+	.ledger__journal-note, .ledger__journal-blank, .ledger__journal-hint { font-size: 14px; }
+	.ledger :deep(.check-in-card__cell) { padding: 12px 4px; }
+	.ledger :deep(.check-in-card__cell-num) { font-size: 14px; }
+	.ledger :deep(.check-in-card__claim) { min-height: 48px; }
+}
 </style>

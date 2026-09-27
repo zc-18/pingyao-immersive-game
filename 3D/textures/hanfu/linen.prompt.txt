@@ -1,0 +1,2 @@
+Seamless tileable texture of hand-woven coarse hemp and cotton cloth (Chinese commoner garment fabric), flat top-down scan. Irregular slubby threads, visible plain weave, very subtle natural variation. Neutral light warm-grey and off-white values only so the texture can be tinted in a game engine. Even, shadowless lighting, no folds, no perspective, repeats cleanly on all edges.
+Avoid: color casts, strong contrast, stains, text, watermark, vignette, wrinkles.

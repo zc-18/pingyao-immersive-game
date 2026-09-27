@@ -565,4 +565,16 @@ function handleClose() {
 		.wardrobe__close { min-height: 44px; padding: 0; flex-shrink: 0; font-size: 14px; letter-spacing: 0; }
 	}
 }
+@media (min-width: 1000px) and (min-height: 560px) {
+	.wardrobe__panel { width: 860px; max-width: 88vw; max-height: 84vh; padding: 26px 32px; }
+	.wardrobe__head { padding-bottom: 14px; }
+	.wardrobe__title { font-size: 28px; }
+	.wardrobe__scroll { height: 52vh; }
+	.wardrobe__grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+	.wardrobe__card { padding: 18px; cursor: pointer; }
+	.wardrobe__name { font-size: 17px; }
+	.wardrobe__desc { font-size: 13px; line-height: 1.7; }
+	.wardrobe__btn, .wardrobe__tag { font-size: 13px; min-height: 38px; display: flex; align-items: center; }
+	.wardrobe__close { font-size: 16px; padding-top: 18px; cursor: pointer; }
+}
 </style>

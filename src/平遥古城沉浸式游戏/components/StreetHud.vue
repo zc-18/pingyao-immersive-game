@@ -943,4 +943,38 @@ onBeforeUnmount(() => keyboardRoot?.removeEventListener('keydown', handleActionK
 	.street-hud__scene-hint { bottom: calc(env(safe-area-inset-bottom) + 68px); max-width: calc(100vw - 100px); padding: 6px 12px; border-width: 1px; }
 	.street-hud__scene-hint-text { font-size: 11px; letter-spacing: 1px; }
 }
+@media screen and (min-width: 1000px) and (min-height: 560px) {
+	.street-hud__profile { top: 28px; left: 32px; gap: 14px; }
+	.street-hud__avatar { width: 64px; height: 64px; }
+	.street-hud__avatar-char { font-size: 28px; }
+	.street-hud__profile-info { min-width: 150px; max-width: 190px; gap: 4px; }
+	.street-hud__role { font-size: 12px; letter-spacing: 2px; }
+	.street-hud__title { font-size: 20px; letter-spacing: 3px; }
+	.street-hud__exp-bar { width: 156px; height: 5px; }
+	.street-hud__plaque-wrap { top: 27px; gap: 12px; }
+	.street-hud__plaque { min-width: 210px; padding: 10px 28px; font-size: 23px; letter-spacing: 6px; }
+	.street-hud__quest-tag { font-size: 12px; letter-spacing: 2px; }
+	.street-hud__coins { top: 28px; right: 32px; gap: 18px; }
+	.street-hud__coin { width: 50px; height: 68px; }
+	.street-hud__coin-char { font-size: 23px; }
+	.street-hud__coin-label { font-size: 12px; }
+	.street-hud__tracker { left: 32px; right: auto; top: 164px; width: 250px; }
+	.street-hud__tracker-paper { padding: 19px 21px; background: linear-gradient(135deg, #f5f0e8f2, #e9dbc4eb); border-left: 3px solid #8b4513; }
+	.street-hud__tracker-roll { display: none; }
+	.street-hud__tracker-eyebrow { font-size: 11px; letter-spacing: 4px; }
+	.street-hud__tracker-title { font-size: 18px; margin-top: 9px; letter-spacing: 2px; }
+	.street-hud__tracker-line { font-size: 13px; margin-top: 12px; line-height: 1.8; }
+	.street-hud__tracker-progress { margin-top: 16px; }
+	.street-hud__tracker-pct { font-size: 12px; }
+	.street-hud__bonus { top: 113px; left: 32px; max-width: 270px; animation: none; }
+	.street-hud__bonus-text { font-size: 11px; }
+	.street-hud__bottom-scroll { left: 32px; bottom: 30px; transform: none; width: 285px; animation: none; }
+	.street-hud__bs-cell { gap: 5px; white-space: nowrap; }
+	.street-hud__bs-icon { width: 18px; height: 18px; flex-shrink: 0; }
+	.street-hud__bs-paper { padding: 12px 18px; }
+	.street-hud__bs-value { font-size: 16px; }
+	.street-hud__bs-label { font-size: 11px; }
+	.street-hud__scene-hint { bottom: 100px; max-width: 460px; padding: 10px 20px; background: #201a14c9; border-color: #d4a57455; }
+	.street-hud__scene-hint-text { font-size: 13px; line-height: 1.6; letter-spacing: 1px; }
+}
 </style>

@@ -93,7 +93,7 @@ import uni from '@dcloudio/vite-plugin-uni'
 export default defineConfig({
   // 专用端口（避开常见的 5173/5174，免得和机器上其他 vite 工程抢端口）；
   // strictPort:true → 端口被占就直接报错，不静默漂移，省得分不清在跑哪个工程。
-  server: { host: 'localhost', port: 5219, strictPort: true },
+  server: { host: 'localhost', port: 5219, strictPort: true, watch: { awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 } } },
   plugins: [uni()]
 })
 `,
@@ -117,6 +117,7 @@ fs.writeFileSync(
 // 3) 源码改动 → 实时镜像到 app/（保 HMR）。static/node_modules 不镜像（junction 已实时）。
 if (mode === 'serve') {
   try {
+    const pendingCopies = new Map()
     fs.watch(srcDir, { recursive: true }, (_event, filename) => {
       if (!filename) return
       const rel = String(filename)
@@ -124,14 +125,22 @@ if (mode === 'serve') {
       if (SKIP_TOP.has(top)) return
       const from = path.join(srcDir, rel)
       const to = path.join(appDir, rel)
-      try {
-        if (fs.existsSync(from)) {
-          fs.mkdirSync(path.dirname(to), { recursive: true })
-          fs.copyFileSync(from, to)
-        } else {
-          fs.rmSync(to, { force: true })
-        }
-      } catch (_) { /* 镜像失败不致命 */ }
+      clearTimeout(pendingCopies.get(rel))
+      pendingCopies.set(rel, setTimeout(() => {
+        pendingCopies.delete(rel)
+        try {
+          if (fs.existsSync(from)) {
+            if (!fs.statSync(from).isFile()) return
+            fs.mkdirSync(path.dirname(to), { recursive: true })
+            // CopyFile locks its destination on Windows while Vite is already reading
+            // the change event. A normal write allows shared reads; skip duplicate events.
+            const content = fs.readFileSync(from)
+            if (!fs.existsSync(to) || !fs.readFileSync(to).equals(content)) fs.writeFileSync(to, content)
+          } else {
+            fs.rmSync(to, { force: true })
+          }
+        } catch (error) { console.warn(`[run-h5] mirror ${rel}: ${error.code || error.message}`) }
+      }, 100))
     })
   } catch (_) { /* 某些平台不支持 recursive watch，忽略 */ }
 }

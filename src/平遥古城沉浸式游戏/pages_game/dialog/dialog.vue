@@ -937,4 +937,14 @@ function goBack() {
 		max-width: 100%;
 	}
 }
+@media (min-width: 1000px) and (min-height: 560px) {
+	.dialog-stage { min-height: 100vh; box-sizing: border-box; padding: 6vh 7vw; }
+	.dialog-stage__owl { width: 25%; }
+	.dialog-stage__owl-img { width: 220px; height: 280px; }
+	.dialog-stage__owl-desc { font-size: 14px; line-height: 1.9; }
+	.dialog-stage__fan { width: 64%; max-width: 900px; margin-left: 30%; }
+	.dialog-stage__fan-paper { padding: 36px; }
+	.dialog-stage__fan-title { font-size: 28px; }
+	.dialog-stage__fan-subtitle { font-size: 15px; }
+}
 </style>

@@ -4,8 +4,14 @@
 
 ## 角色模型
 
+- **Pingyao Hanfu Human / pingyao-hanfu-human.glb**
+  - 当前街景默认玩家和行人模型，Blender 源文件及构建脚本位于仓库 `3D/`。
+  - Quaternius Universal Base Characters 的成人比例人体、皮肤与头发，配 Universal Animation Library 同骨架动作，均为 CC0 1.0 Universal。许可原文与来源链接见 `3D/LICENSES.md`。
+  - 汉服与换装部件为程序化建模，纹理内嵌；含 9 段动作，运行时使用待机、漫步、跑步和致意。鞋底采样、双腿 IK 和步频随实际速度调整。
+  - 风格化成人男性角色，非扫描写实人物；衣物使用蒙皮，不是物理布料。
+
 - **Pingyao Merchant Hero / pingyao-merchant-hero.glb**
-  - 当前街景默认玩家和行人模型，由 `3D/pingyao-hero-atelier.blend` 导出；完整资产清单、预览与可重复构建脚本位于仓库根目录 `3D/`。
+  - 保留的上一版玩家和行人模型，由 `3D/pingyao-hero-atelier.blend` 导出；完整资产清单、预览与可重复构建脚本位于仓库根目录 `3D/`。
   - 基于下述 Pingyao Courtyard 原创可见网格和兼容骨架精修，新增晋商织锦衣缘、材质层次及商旅造型。织锦贴图已内嵌到 GLB。
   - 含 `Idle`、`Walking_A`、`Running_A`、`Interact`、`Cheer` 五段动作，31,392 三角面、2,093,208 bytes。KayKit 骨架和基础动作继续遵循 CC0 1.0 Universal。
 
