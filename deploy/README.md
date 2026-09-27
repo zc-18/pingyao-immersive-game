@@ -15,10 +15,9 @@ Nginx 静态根目录为 `/www/wwwroot/pingyao-game/current`，该符号链接�
 
 构建和测试证据不提交到仓库；源代码同步与静态站点发布是独立操作。
 
-## 最近发布：20260925-r1
+## 最近发布：20260927-r1
 
-- 2026-09-25 发布桌面 Web 布局、汉服人体和步行/快行动作更新。
-- 构建成功；上传包及 2327 个发布文件 SHA-256 校验通过。
-- 当前版本：`/www/wwwroot/pingyao-game/releases/20260925-r1`；上一版本：`/www/wwwroot/pingyao-game/releases/20260921-r1`，保留可回滚。
-- 公网首页与新人物 GLB 内容校验通过。浏览器首次进入、人物加载、W/Shift+W、换装面板、观衣/镜头归位、1440×900、844×390、390×844 检查通过，页面及 HTTP 错误均为 0。
-- [验收数据](../test/artifacts/deploy/20260925-r1/report.json)与[线上截图](../test/artifacts/deploy/20260925-r1/street-1440x900.png)。
+- 2026-09-27 合并远端水墨地图定位（WGS84→GCJ02、腾讯逆地址解析，默认未配置 key）与本地桌面 Web / 汉服人体版本。
+- `node --test test/*.test.mjs` 162 项通过，H5 构建成功；上传包及 2372 个发布文件 SHA-256 校验通过。
+- 当前版本：`/www/wwwroot/pingyao-game/releases/20260927-r1`；上一版本：`/www/wwwroot/pingyao-game/releases/20260925-r1`，保留可回滚。
+- 公网首页 HTTP 200，人物 GLB 与地图样式内容校验值与本地构建一致。本次按要���未运行浏览器验收脚本。
