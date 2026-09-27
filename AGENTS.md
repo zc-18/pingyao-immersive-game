@@ -7,7 +7,7 @@
 - 平遥古城沉浸式文旅游戏前端原型，使用 uni-app、Vue 3、JavaScript、SCSS；当前随包 Three.js 实测为 r146（0.146.0），不要仅按历史标注推断可用 API。
 - 当前主线为桌面 Web，保留 Android/iOS APP 的 HBuilderX 调试和云打包流程；根目录提供基于 Vite 的 H5 调试脚手架。桌面布局在宽度 1000px、可用高度 560px 起启用，手机继续使用横竖屏适配。
 - 主流程为启动页、角色选择、3D 街景探索，配合晋小鸦 NPC、任务、签到、成就、服饰、商城兑换和行旅册。当前街景使用可见玩家化身及跟随相机。
-- 数据来自 `common/data/` 和 `uni.setStorageSync` 本地存档，无后端或鉴权。真实 GPS、腾讯地图、支付和线下核销服务尚未接入；步数来自虚拟场景移动。
+- 数据来自 `common/data/` 和 `uni.setStorageSync` 本地存档，无后端或鉴权。地图页已接入设备定位（`common/utils/location.js`：WGS84 取点后本地换算 GCJ02，古城范围内投影到水墨城图，城外或失败时回落到当前街景代表点位）和可选的腾讯位置服务逆地址解析（`common/utils/tencent-lbs.js`，需运行时注入 `globalThis.__PYGC_CONFIG__.tencentLbs` 的 key 与代理地址，未配置时显示“腾讯服务未配置”）；浏览器定位需 HTTPS 或 localhost。支付和线下核销服务尚未接入；步数来自虚拟场景移动。
 
 ## 目录与入口
 
