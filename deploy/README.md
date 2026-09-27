@@ -20,4 +20,4 @@ Nginx 静态根目录为 `/www/wwwroot/pingyao-game/current`，该符号链接�
 - 2026-09-27 合并远端水墨地图定位（WGS84→GCJ02、腾讯逆地址解析，默认未配置 key）与本地桌面 Web / 汉服人体版本。
 - `node --test test/*.test.mjs` 162 项通过，H5 构建成功；上传包及 2372 个发布文件 SHA-256 校验通过。
 - 当前版本：`/www/wwwroot/pingyao-game/releases/20260927-r1`；上一版本：`/www/wwwroot/pingyao-game/releases/20260925-r1`，保留可回滚。
-- 公网首页 HTTP 200，人物 GLB 与地图样式内容校验值与本地构建一致。本次按要���未运行浏览器验收脚本。
+- 公网首页 HTTP 200，人物 GLB 与地图样式内容校验值与本地构建一致。本次按要求未运行浏览器验收脚本。
