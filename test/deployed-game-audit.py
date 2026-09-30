@@ -16,18 +16,22 @@ spec.loader.exec_module(depth)
 parser = argparse.ArgumentParser()
 parser.add_argument('url')
 parser.add_argument('--release', required=True)
+parser.add_argument('--direct', action='store_true', help='Bypass this computer\'s system proxy for public-site verification')
 args = parser.parse_args()
 if not all(c.isalnum() or c in '-_' for c in args.release):
     parser.error('release must contain only letters, digits, hyphens or underscores')
 OUT = ROOT / 'artifacts' / 'deploy' / args.release
 OUT.mkdir(parents=True, exist_ok=True)
 os.environ.update(TEMP=str(OUT), TMP=str(OUT))
-report = {'url': args.url, 'release': args.release, 'passed': False}
+report = {'url': args.url, 'release': args.release, 'networkMode': 'direct' if args.direct else 'system', 'passed': False}
 errors, failed = [], []
 player = "() => {const p=__audit.scene.children.find(o=>o.userData.isGltf);return {x:p.position.x,z:p.position.z,rig:p.userData.rigType,run:p.userData.actions.run.getEffectiveWeight()}}"
 
 with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True, args=['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist'], env=dict(os.environ))
+    launch_args = ['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist']
+    if args.direct:
+        launch_args.append('--no-proxy-server')
+    browser = p.chromium.launch(headless=True, args=launch_args, env=dict(os.environ))
     page = browser.new_page(viewport={'width':1440, 'height':900}, device_scale_factor=1)
     page.set_default_timeout(60000)
     page.add_init_script(depth.PROBE)
