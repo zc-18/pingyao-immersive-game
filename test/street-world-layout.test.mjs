@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildStreetWorldLayout, getPoiTriggerModel } from '../src/平遥古城沉浸式游戏/common/utils/street-world.js'
+import { buildStreetWorldLayout, getPoiTriggerModel } from '../src/common/utils/street-world.js'
 
 const street = {
 	id: 'test-street',

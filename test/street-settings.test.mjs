@@ -2,17 +2,13 @@ import test, { beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
-import { STORAGE_KEYS as K, ensureStorageDefaults, getStorage, patchStorageObject } from '../src/平遥古城沉浸式游戏/common/utils/storage.js'
-import { getGameplaySettings, updateGameplaySetting } from '../src/平遥古城沉浸式游戏/common/utils/game-settings.js'
+import { STORAGE_KEYS as K, ensureStorageDefaults, getStorage, patchStorageObject } from '../src/common/utils/storage.js'
+import { getGameplaySettings, updateGameplaySetting } from '../src/common/utils/game-settings.js'
 
-const memory = new Map()
-let failed = false
-globalThis.uni = {
-  getStorageSync: key => structuredClone(memory.get(key) ?? ''),
-  setStorageSync(key,value) { if (failed) throw Error('settings write failure'); memory.set(key,structuredClone(value)) }
-}
-beforeEach(() => { failed=false;memory.clear();ensureStorageDefaults() })
-after(() => { delete globalThis.uni })
+import { installLocalStorage } from './helpers/browser-env.mjs'
+const env = installLocalStorage()
+beforeEach(() => { env.reset();ensureStorageDefaults() })
+after(() => env.uninstall())
 
 test('settings persist through the shared API without changing unrelated preferences', () => {
   patchStorageObject(K.gameSettings,{preferredOrientation:'portrait'})
@@ -25,12 +21,12 @@ test('settings persist through the shared API without changing unrelated prefere
 })
 
 test('failed or invalid settings return the persisted state instead of optimistic success', () => {
-  failed=true
+  env.state.failWrites=true
   const result=updateGameplaySetting('enableMusic',false)
   assert.equal(result.ok,false)
   assert.equal(result.settings.enableMusic,true)
   assert.equal(getGameplaySettings().enableMusic,true)
-  failed=false
+  env.state.failWrites=false
   assert.equal(updateGameplaySetting('preferredOrientation',false).ok,false)
   assert.equal(updateGameplaySetting('enableEffect','false').ok,false)
   assert.equal(getGameplaySettings().enableEffect,true)
@@ -52,8 +48,8 @@ function renderFixture() {
     UnrealBloomPass:class {constructor(){return Object.assign(resource('bloom'),{setSize(){}})}},
     ShaderPass:class {constructor(shader){return Object.assign(resource('grade'),{material:{},uniforms:shader.uniforms})}}
   }
-  const source=fs.readFileSync(new URL('../src/平遥古城沉浸式游戏/pages_game/street/street.vue',import.meta.url),'utf8')
-  const render=source.match(/<script module="render" lang="renderjs">([\s\S]*?)<\/script>/)[1]
+  const source=fs.readFileSync(new URL('../src/pages_game/street/street.vue',import.meta.url),'utf8')
+  const render=fs.readFileSync(new URL('../src/pages_game/street/street-renderer.js', import.meta.url), 'utf8')
   const context=vm.createContext({engine:T,console:{warn(){}},rendererFixture:{getSize:v=>v.set(844,390),capabilities:{isWebGL2:true},extensions:{has:()=>false}}})
   vm.runInContext(render.replace('export default','const component=')+';THREE=engine;this.api=component.methods;',context)
   const mount=()=>vm.runInContext('renderer=rendererFixture;scene={};camera={};player={id:17};activeRenderRequest={requestId:8};',context)

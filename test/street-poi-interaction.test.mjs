@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
 
-const source=fs.readFileSync(new URL('../src/平遥古城沉浸式游戏/pages_game/street/street.vue',import.meta.url),'utf8')
+const source=fs.readFileSync(new URL('../src/pages_game/street/street.vue',import.meta.url),'utf8')
 function fixture() {
   const ref=value=>({value}), computed=read=>({get value(){return read()}})
   const flags=Object.fromEntries(['isLoading','wardrobeOpen','settingsOpen','showRewardPopup','showEntranceAnim','sceneControlOpen','npcVisible','npcAutoHide'].map(key=>[key,ref(false)]))
@@ -17,13 +17,13 @@ function fixture() {
     floatingText:ref({visible:false,text:''}),scenePulseText:ref(''),npcMessage:ref(''),
     getStorage:()=>({}),STORAGE_KEYS:{userProgress:'progress'},setCurrentPoi:id=>events.push(['runtime',id]),
     markPoiVisited:id=>{events.push(['visit',id]);return f.visitSaved},advanceQuestByEvent:(type,payload)=>{events.push(['quest',type,payload]);return f.result},
-    syncAchievementUnlocks:()=>({newlyUnlocked:[]}),refreshRuntimeState:()=>events.push(['refresh']),
-    getContextualNpcCue:()=>'',getQuestNpcHint:()=>'',markNpcTalk:topic=>events.push(['talk',topic]),
+    syncAchievementUnlocks:()=>({newlyUnlocked:[]}),refreshProgressFeedback:()=>events.push(['progress']),refreshRuntimeState:()=>events.push(['refresh']),
+    getContextualNpcCue:()=>'',getQuestNpcHint:()=>'',markNpcTalk:topic=>{events.push(['talk',topic]);return f.talkResult},
     playSFX:type=>events.push(['sound',type]),SFX:{NPC_TALK:'talk'},announceMicroReward:reward=>events.push(['reward',reward]),
-    showFloatingText:text=>events.push(['floating',text]),handleQuestComplete:id=>events.push(['complete',id]),uni:{showToast:message=>events.push(['toast',message])},
+    showFloatingText:text=>events.push(['floating',text]),handleQuestComplete:id=>events.push(['complete',id]),showToast:message=>events.push(['toast',message]),
     EVENT_TYPES:{poiEntered:'poi_entered',npcDialogCompleted:'npc_dialog_completed',buildingInteracted:'building_interacted'}
   })
-  vm.runInContext(`${source.slice(source.indexOf('const interactionCard ='),source.indexOf('/* 逻辑层与 renderjs 共用'))}
+  vm.runInContext(`${source.slice(source.indexOf('const interactionCard ='),source.indexOf('/* 逻辑层与 渲染器 共用'))}
     ${source.slice(source.indexOf('function handlePoiEnter'),source.indexOf('function handleQuestComplete'))}
     ${source.slice(source.indexOf('function closePoi'),source.indexOf('/* 收藏当前 POI'))}
     this.api={openNearbyPoi,closePoi,handlePoiEnter,handlePoiLeave,playPoiTopic,handleSceneInteraction,retryPoiProgress};this.card=interactionCard;`,context)
@@ -72,5 +72,45 @@ test('talk and clue write failures keep their retry action and emit no success f
     assert.equal(f.poiProgressFailure.value,null)
     assert.equal(f.events.filter(e=>e[0]==='quest').at(-1)[1],event)
     assert.equal(f.events.filter(e=>e[0]==='reward').length,1)
+  }
+})
+
+
+test('failed NPC topic persistence offers retry without announcing completion',()=>{
+  const f=fixture();f.activePoiId.value='rishengchang'
+  f.talkResult={ok:false}
+  // 控制替身直接注入回调，确保话题写入失败与任务写入失败分别覆盖。
+  f.context.markNpcTalk=()=>({ok:false})
+  f.setResult({updated:true,completed:true})
+  f.api.playPoiTopic()
+  assert.equal(f.poiProgressFailure.value.action,'talk')
+  assert.ok(!f.events.some(e=>['sound','reward','complete'].includes(e[0])))
+  f.context.markNpcTalk=()=>({ok:true})
+  f.api.retryPoiProgress()
+  assert.equal(f.poiProgressFailure.value,null)
+  assert.ok(f.events.some(e=>e[0]==='complete'))
+})
+
+test('arrival repair waits for displayed scene and reward dismissal',()=>{
+  const start=source.indexOf('watch(() => [trackedQuest.value?.id')
+  const end=source.indexOf('function applyPhaseToScene',start)
+  let callback,arrivals=0
+  const context=vm.createContext({watch:(_,fn)=>{callback=fn},trackedQuest:{value:{progress:{objectives:[{type:'explore',target:'academy-lane',current:0,required:1}]}}},
+    currentStreet:{value:{id:'academy-lane'}},isLoading:{value:false},showRewardPopup:{value:false},stepSavingSuspended:false,renderCommandDisposed:false,settleLoadedScene:()=>arrivals++})
+  vm.runInContext(source.slice(start,end),context)
+  callback();assert.equal(arrivals,1)
+  for(const key of ['isLoading','showRewardPopup']) {context[key].value=true;callback();assert.equal(arrivals,1);context[key].value=false}
+  context.stepSavingSuspended=true;callback();assert.equal(arrivals,1)
+  context.stepSavingSuspended=false;context.currentStreet.value.id='bank-house';callback();assert.equal(arrivals,1)
+})
+
+test('refresh replaces the snapshot and daily successors never force a street switch',()=>{
+  assert.match(source,/const snapshot = ref\(getGameSnapshot\(\)\)/)
+  const refresh=source.slice(source.indexOf('function refreshRuntimeState'),source.indexOf('function clearLoadWatchdog'))
+  assert.ok(refresh.indexOf('snapshot.value = getGameSnapshot()') < refresh.indexOf('lastQuestStageLine:'))
+  const assignment=source.match(/pendingSceneAfterClaim.value = (.*)/)[1]
+  for(const [type,sceneId,expected] of [['daily','bank-house',''],['main','south-avenue','south-avenue'],['side','academy-lane','']]) {
+    const context=vm.createContext({result:{nextQuest:{type,sceneId}},currentStreet:{value:{id:'academy-lane'}}})
+    assert.equal(vm.runInContext(assignment,context),expected)
   }
 })

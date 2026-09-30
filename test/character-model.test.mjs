@@ -2,22 +2,22 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 
-import { COSTUMES } from '../src/平遥古城沉浸式游戏/common/data/costumes.js'
+import { COSTUMES } from '../src/common/data/costumes.js'
 
 const streetSource = fs.readFileSync(
-	new URL('../src/平遥古城沉浸式游戏/pages_game/street/street.vue', import.meta.url),
+	new URL('../src/pages_game/street/street-renderer.js', import.meta.url),
 	'utf8'
 )
 const wardrobeSource = fs.readFileSync(
-	new URL('../src/平遥古城沉浸式游戏/components/OutfitWardrobe.vue', import.meta.url),
+	new URL('../src/components/OutfitWardrobe.vue', import.meta.url),
 	'utf8'
 )
 const brocadePath = new URL(
-	'../src/平遥古城沉浸式游戏/static/img/3d/pingyao-brocade-pattern.jpg',
+	'../public/static/img/3d/pingyao-brocade-pattern.jpg',
 	import.meta.url
 )
 const playerModelPath = new URL(
-	'../src/平遥古城沉浸式游戏/static/models/pingyao-character.glb',
+	'../public/static/models/pingyao-character.glb',
 	import.meta.url
 )
 

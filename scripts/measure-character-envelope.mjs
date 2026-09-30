@@ -3,7 +3,7 @@ import vm from 'node:vm'
 import { TextDecoder } from 'node:util'
 import { pathToFileURL } from 'node:url'
 
-const base = new URL('../src/平遥古城沉浸式游戏/static/', import.meta.url)
+const base = new URL('../public/static/', import.meta.url)
 const engine = vm.createContext({console:{warn(){}}, TextDecoder, setTimeout, clearTimeout, URL, Blob, ArrayBuffer, self:{URL}, navigator:{userAgent:'Node'}})
 vm.runInContext(fs.readFileSync(new URL('libs/three.min.js',base),'utf8'),engine)
 vm.runInContext(fs.readFileSync(new URL('libs/GLTFLoader.js',base),'utf8'),engine)

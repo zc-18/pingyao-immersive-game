@@ -1,0 +1,13 @@
+// 桌面避让顶部导航，手机避让底部标签栏；尺寸变化通过 CSS 变量即时更新。
+@mixin tab-landscape-viewport {
+	--tab-reserve: var(--window-bottom, 50px);
+	width: 100%;
+	height: calc(100vh - var(--app-header-height, 0px) - var(--tab-reserve));
+	height: calc(100dvh - var(--app-header-height, 0px) - var(--tab-reserve));
+	min-height: 0;
+	box-sizing: border-box;
+	padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+	font-size: 14px;
+	letter-spacing: 0;
+	overflow: hidden;
+}

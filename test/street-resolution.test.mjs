@@ -3,14 +3,14 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
 
-const root = new URL('../src/平遥古城沉浸式游戏/', import.meta.url)
+const root = new URL('../src/', import.meta.url)
 const source = fs.readFileSync(new URL('pages_game/street/street.vue', root), 'utf8')
-const render = source.match(/<script module="render" lang="renderjs">([\s\S]*?)<\/script>/)[1]
+const render = fs.readFileSync(new URL('../src/pages_game/street/street-renderer.js', import.meta.url), 'utf8')
 
 function fixture({ width = 844, height = 390, webgl2 = true, dpr = 3 } = {}) {
   const engineContext = vm.createContext({ console })
   for (const file of ['three.min.js', 'CopyShader.js', 'LuminosityHighPassShader.js', 'EffectComposer.js', 'RenderPass.js', 'ShaderPass.js', 'UnrealBloomPass.js', 'FXAAShader.js']) {
-    vm.runInContext(fs.readFileSync(new URL('static/libs/' + file, root), 'utf8'), engineContext)
+    vm.runInContext(fs.readFileSync(new URL('../public/static/libs/' + file, root), 'utf8'), engineContext)
   }
   const T = engineContext.THREE
   const renderer = {

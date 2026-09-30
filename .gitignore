@@ -1,11 +1,11 @@
-# HBuilderX 构建产物与缓存（17MB+，可随时重新构建）
+# Legacy build/editor output (ignore only; preserve until user approves removal)
 unpackage/
 .hbuilderx/
 
 # 依赖
 node_modules/
 
-# 本地 H5 预览脚手架（run-h5.mjs）的构建产物与调试快照（不入库；package.json/run-h5.mjs 保留以便复跑）
+# Vite build output, project caches and browser audit evidence
 dist/
 .cache/
 .playwright-mcp/
@@ -29,3 +29,6 @@ Thumbs.db
 
 # Blender 自动备份
 *.blend1
+
+# Blender 动画预览的中间帧（保留最终 GIF）
+/3D/previews/.walk-frames/

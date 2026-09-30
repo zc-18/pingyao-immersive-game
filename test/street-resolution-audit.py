@@ -107,7 +107,7 @@ def main():
         page.add_init_script(audit.depth.PROBE+PROBE)
         page.on('pageerror',lambda e:errors.append(e.message))
         try:
-            page.goto('http://localhost:5219/#/pages_game/splash/splash')
+            page.goto('http://localhost:5219/#/splash')
             page.locator('.splash-enter-frame').wait_for();page.locator('.splash-enter-frame').tap(force=True)
             page.locator('.role-confirm-token').wait_for();page.wait_for_timeout(800);page.locator('.role-confirm-token').tap(force=True)
             audit.wait_player(page);page.locator('.brush-loader').wait_for(state='hidden');page.wait_for_timeout(2000)

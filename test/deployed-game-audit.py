@@ -1,4 +1,4 @@
-"""Smoke-test a deployed H5 release with an isolated browser save."""
+"""Smoke-test a deployed Web release with an isolated browser save."""
 import argparse
 import importlib.util
 import json
@@ -34,7 +34,7 @@ with sync_playwright() as p:
     page.on('pageerror', lambda error: errors.append(str(error)))
     page.on('response', lambda response: failed.append({'status':response.status, 'url':response.url}) if response.status >= 400 else None)
     try:
-        page.goto(args.url.rstrip('/') + '/#/pages_game/splash/splash', wait_until='domcontentloaded')
+        page.goto(args.url.rstrip('/') + '/#/splash', wait_until='domcontentloaded')
         page.locator('.splash-enter-frame').wait_for()
         page.screenshot(path=OUT/'splash.png')
         page.locator('.splash-enter-frame').click()

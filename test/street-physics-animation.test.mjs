@@ -2,16 +2,16 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
-import { buildStreetWorldLayout } from '../src/平遥古城沉浸式游戏/common/utils/street-world.js'
-import streets from '../src/平遥古城沉浸式游戏/common/data/streets.js'
+import { buildStreetWorldLayout } from '../src/common/utils/street-world.js'
+import streets from '../src/common/data/streets.js'
 
-const app = new URL('../src/平遥古城沉浸式游戏/', import.meta.url)
+const app = new URL('../src/', import.meta.url)
 const source = fs.readFileSync(new URL('pages_game/street/street.vue', app), 'utf8')
 function harness() {
   const engine = vm.createContext({ console: { warn() {} } })
-  vm.runInContext(fs.readFileSync(new URL('static/libs/three.min.js', app), 'utf8'), engine)
+  vm.runInContext(fs.readFileSync(new URL('../public/static/libs/three.min.js', app), 'utf8'), engine)
   const context = vm.createContext({ engine: engine.THREE, console })
-  const render = source.match(/<script module="render" lang="renderjs">([\s\S]*?)<\/script>/)[1]
+  const render = fs.readFileSync(new URL('../src/pages_game/street/street-renderer.js', import.meta.url), 'utf8')
   vm.runInContext(render.replace('export default', 'const component =') + '\nTHREE = engine; scene = new THREE.Scene(); this.api = component.methods;', context)
   return { context, api: context.api, T: engine.THREE }
 }

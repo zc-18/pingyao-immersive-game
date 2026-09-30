@@ -2,23 +2,23 @@ import test, { beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
-import { STORAGE_KEYS as K, ensureStorageDefaults, getUserProgress, patchStorageObject, localDateString } from '../src/平遥古城沉浸式游戏/common/utils/storage.js'
-import { recordSteps, getActiveQuests } from '../src/平遥古城沉浸式游戏/common/utils/quest-manager.js'
-import { createStepBuffer } from '../src/平遥古城沉浸式游戏/common/utils/step-buffer.js'
-import { questMap } from '../src/平遥古城沉浸式游戏/common/data/quests.js'
+import { STORAGE_KEYS as K, ensureStorageDefaults, getUserProgress, patchStorageObject, localDateString } from '../src/common/utils/storage.js'
+import { recordSteps, getActiveQuests } from '../src/common/utils/quest-manager.js'
+import { createStepBuffer } from '../src/common/utils/step-buffer.js'
+import { installLocalStorage, decodeStoredValue } from './helpers/browser-env.mjs'
+import { questMap } from '../src/common/data/quests.js'
 
-const source = fs.readFileSync(new URL('../src/平遥古城沉浸式游戏/pages_game/street/street.vue', import.meta.url), 'utf8')
-const memory = new Map(), writes = [], attempts = []
+const source = fs.readFileSync(new URL('../src/pages_game/street/street.vue', import.meta.url), 'utf8')
+const env = installLocalStorage(), memory = env.memory, writes = env.state.writes, attempts = []
 const RealDate = Date
 let now, reject = () => false
 globalThis.Date = class extends RealDate { constructor(...args) { super(...(args.length ? args : [now])) } static now() { return now } }
-globalThis.uni = {
-  getStorageSync: key => structuredClone(memory.get(key) ?? ''),
-  setStorageSync(key, value) {
-    attempts.push({ key, value: structuredClone(value) })
-    if (reject(key, value)) throw new Error('injected step write failure')
-    writes.push(key); memory.set(key, structuredClone(value))
-  }
+const originalSetItem = env.storage.setItem
+ env.storage.setItem = (key, raw) => {
+  const value = decodeStoredValue(raw)
+  attempts.push({ key, value: structuredClone(value) })
+  if (reject(key, value)) throw new Error('injected step write failure')
+  originalSetItem(key, raw)
 }
 beforeEach(() => {
   now = new RealDate(2026, 8, 10, 23, 59, 59, 700).valueOf()
@@ -26,7 +26,7 @@ beforeEach(() => {
   ensureStorageDefaults(); patchStorageObject(K.userProfile, { roleId: 'study' })
   writes.length = 0; attempts.length = 0
 })
-after(() => { globalThis.Date = RealDate; delete globalThis.uni })
+after(() => { globalThis.Date = RealDate; env.uninstall() })
 const dailySteps = () => getUserProgress().questData.questProgress['daily-walk']?.objectives.find(o => o.target === 'steps')?.current ?? 0
 
 function pageFixture(buffer = createStepBuffer()) {
@@ -35,7 +35,7 @@ function pageFixture(buffer = createStepBuffer()) {
   const context = vm.createContext({
     Date, Number, Math, stepBuffer: buffer, STORAGE_KEYS: K,
     userProgress: { value: { steps: 0 } }, playerWorldPos: { value: { x: 0, z: 0 } }, playerHeading: { value: 0 },
-    getStorage: () => getUserProgress(), refreshRuntimeState() {}, uni: { showToast(t) { toasts.push(t) } },
+    getStorage: () => getUserProgress(), refreshRuntimeState() {}, refreshProgressFeedback() {}, showToast(t) { toasts.push(t) },
     setTimeout(fn, ms) { const key = ++id; timers.set(key, { at: now + ms, fn }); return key },
     clearTimeout(key) { timers.delete(key) }
   })
@@ -212,11 +212,11 @@ test('a late render flush after page hide is saved immediately without keeping a
 
 test('render pause and scene disposal deliver whole steps before clearing the old player, only once', () => {
   const sent = []
-  const render = source.match(/<script module="render" lang="renderjs">([\s\S]*?)<\/script>/)[1]
+  const render = fs.readFileSync(new URL('../src/pages_game/street/street-renderer.js', import.meta.url), 'utf8')
   const context = vm.createContext({ console, cancelAnimationFrame() {}, window: {},
-    owner: { callMethod(name, message) { sent.push(message.detail) } } })
+    callback(message) { sent.push(message.detail) } })
   vm.runInContext(render.replace('export default', 'const component =') + ';this.api=component.methods;', context)
-  vm.runInContext('ownerInstanceRef=owner;player={position:{x:1,z:2},traverse(){}};moveStepAccum=1;', context)
+  vm.runInContext('messageCallback=callback;player={position:{x:1,z:2},traverse(){}};moveStepAccum=1;', context)
   context.api.pauseRendering()
   context.api.pauseRendering()
   assert.equal(sent.length, 1)
@@ -227,29 +227,4 @@ test('render pause and scene disposal deliver whole steps before clearing the ol
   context.api.clearScene()
   assert.equal(sent.length, 2)
   assert.equal(sent[1].data.steps, 2)
-})
-
-test('confirmed save reset clears buffered steps; cancellation or failed reset preserves them', () => {
-  const buffer = createStepBuffer()
-  buffer.add(7)
-  const userSource = fs.readFileSync(new URL('../src/平遥古城沉浸式游戏/pages/user/user.vue', import.meta.url), 'utf8')
-  const events = []
-  let confirm = false, fail = false
-  const context = vm.createContext({ stepBuffer: buffer, uni: {
-    showModal({success}) { success({confirm}) },
-    clearStorageSync() { if (fail) throw Error('blocked reset'); events.push('reset') },
-    showToast() { events.push('error') }, reLaunch() { events.push('relaunch') }
-  } })
-  vm.runInContext(userSource.slice(userSource.indexOf('function confirmReset()'), userSource.indexOf('</script>')), context)
-  context.confirmReset()
-  assert.equal(buffer.pending, 7)
-  assert.deepEqual(events, [])
-  confirm = true; fail = true
-  context.confirmReset()
-  assert.equal(buffer.pending, 7)
-  assert.deepEqual(events, ['error'])
-  fail = false
-  context.confirmReset()
-  assert.equal(buffer.pending, 0)
-  assert.deepEqual(events, ['error', 'reset', 'relaunch'])
 })

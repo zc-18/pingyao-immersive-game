@@ -3,14 +3,14 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
 
-const source = fs.readFileSync(new URL('../src/平遥古城沉浸式游戏/pages_game/street/street.vue', import.meta.url), 'utf8')
-const engine = fs.readFileSync(new URL('../src/平遥古城沉浸式游戏/static/libs/three.min.js', import.meta.url), 'utf8')
+const source = fs.readFileSync(new URL('../src/pages_game/street/street.vue', import.meta.url), 'utf8')
+const engine = fs.readFileSync(new URL('../public/static/libs/three.min.js', import.meta.url), 'utf8')
 
 function harness() {
   const engineContext = vm.createContext({ console: { warn() {} } })
   vm.runInContext(engine, engineContext)
   const context = vm.createContext({ engine: engineContext.THREE, console })
-  const render = source.match(/<script module="render" lang="renderjs">([\s\S]*?)<\/script>/)[1]
+  const render = fs.readFileSync(new URL('../src/pages_game/street/street-renderer.js', import.meta.url), 'utf8')
   vm.runInContext(render.replace('export default', 'const component =') + '\nTHREE = engine; scene = new THREE.Scene(); this.api = component.methods; this.world = scene;', context)
   return { context, api: context.api, THREE: engineContext.THREE, scene: context.world }
 }

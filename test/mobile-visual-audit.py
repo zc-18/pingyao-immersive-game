@@ -1,6 +1,8 @@
 from pathlib import Path
 import importlib.util
 import json
+import os
+import tempfile
 import sys
 
 from playwright.sync_api import sync_playwright
@@ -21,21 +23,22 @@ VIEWPORTS = {
 
 
 def seed_street_state(page):
-    page.goto(f"{BASE_URL}/#/pages_game/splash/splash")
+    page.goto(f"{BASE_URL}/#/splash")
     page.wait_for_load_state("domcontentloaded")
     page.locator(".splash-stage").wait_for(state="visible", timeout=15000)
     page.evaluate(
         """
         () => {
-          uni.setStorageSync('pygc_user_profile', {
+          const seed = (key, data) => localStorage.setItem(key, JSON.stringify({type:'object', data: {...window.__pygc.readStorage(key), ...data}}));
+          seed('pygc_user_profile', {
             nickname: '浏览器测试', roleId: 'study', roleName: '研学者',
             roleSubtitle: '', roleMotto: '', avatarType: 'role', roleSelectedAt: Date.now()
           })
-          uni.setStorageSync('pygc_runtime', {
+          seed('pygc_runtime', {
             hasCompletedPrologue: true, hasEnteredStreet: true,
             currentStreetScene: 'bank-house', lastStreetScene: 'bank-house',
             currentPoiId: '', lastPoiId: '', lastPage: 'street',
-            returnPage: '/pages_game/street/street', preferredOrientation: 'landscape'
+            returnPage: '/street', preferredOrientation: 'landscape'
           })
         }
         """
@@ -80,6 +83,11 @@ def assert_nonblank_and_changed(before_path, after_path):
 
 def main():
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    # Keep Chromium profiles and transport files inside the project.
+    temp_dir = Path(__file__).resolve().parents[1] / ".cache/browser-audits/mobile-ui"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    os.environ.update(TEMP=str(temp_dir), TMP=str(temp_dir), TMPDIR=str(temp_dir))
+    tempfile.tempdir = str(temp_dir)
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True, args=["--use-angle=d3d11", "--enable-gpu", "--ignore-gpu-blocklist"] if sys.platform == "win32" else [])
         for name, viewport in VIEWPORTS.items():
@@ -88,7 +96,7 @@ def main():
             page.on("console", lambda message, bag=messages: bag.append(f"{message.type}: {message.text}"))
             page.on("pageerror", lambda error, bag=messages: bag.append(f"pageerror: {error}"))
 
-            page.goto(f"{BASE_URL}/#/pages_game/splash/splash")
+            page.goto(f"{BASE_URL}/#/splash")
             page.wait_for_load_state("domcontentloaded")
             page.locator(".splash-stage").wait_for(state="visible", timeout=15000)
             page.wait_for_timeout(900)
@@ -96,7 +104,7 @@ def main():
             splash_metrics = page_metrics(page)
             assert_fits_viewport(f"{name}-splash", splash_metrics)
 
-            page.goto(f"{BASE_URL}/#/pages_game/role-select/role-select")
+            page.goto(f"{BASE_URL}/#/role-select")
             page.wait_for_load_state("domcontentloaded")
             page.locator(".role-stage").wait_for(state="visible", timeout=15000)
             page.wait_for_timeout(500)
@@ -104,34 +112,36 @@ def main():
             role_metrics = page_metrics(page)
             assert_fits_viewport(f"{name}-role", role_metrics)
 
-            seed_street_state(page)
-            page.goto(f"{BASE_URL}/#/pages_game/street/street")
-            page.wait_for_load_state("domcontentloaded")
-            page.locator(".street-stage").wait_for(state="visible", timeout=15000)
-            page.wait_for_timeout(4500)
-            page.screenshot(path=ARTIFACT_DIR / f"{name}-street.png", full_page=True)
+            if "--skip-street" not in sys.argv:
+                seed_street_state(page)
+                page.goto(f"{BASE_URL}/#/street")
+                page.wait_for_load_state("domcontentloaded")
+                page.locator(".street-stage").wait_for(state="visible", timeout=15000)
+                page.wait_for_timeout(4500)
+                page.screenshot(path=ARTIFACT_DIR / f"{name}-street.png", full_page=True)
 
-            canvas = page.locator("#street-canvas canvas")
-            canvas.wait_for(state="visible", timeout=15000)
-            before_path = ARTIFACT_DIR / f"{name}-canvas-before.png"
-            after_path = ARTIFACT_DIR / f"{name}-canvas-after.png"
-            canvas.screenshot(path=before_path)
-            page.keyboard.down("w")
-            page.wait_for_timeout(450)
-            page.keyboard.up("w")
-            page.wait_for_timeout(250)
-            canvas.screenshot(path=after_path)
-            assert_nonblank_and_changed(before_path, after_path)
+                canvas = page.locator("#street-canvas canvas")
+                canvas.wait_for(state="visible", timeout=15000)
+                before_path = ARTIFACT_DIR / f"{name}-canvas-before.png"
+                after_path = ARTIFACT_DIR / f"{name}-canvas-after.png"
+                canvas.screenshot(path=before_path)
+                page.keyboard.down("w")
+                page.wait_for_timeout(450)
+                page.keyboard.up("w")
+                page.wait_for_timeout(250)
+                canvas.screenshot(path=after_path)
+                assert_nonblank_and_changed(before_path, after_path)
 
-            metrics = page_metrics(page)
-            assert_fits_viewport(f"{name}-street", metrics)
-            assert metrics["canvases"], f"{name}: missing WebGL canvas"
-            assert not metrics["loadingText"], f"{name}: street loader did not finish"
-            assert not metrics["loadFailure"], f"{name}: street loader reported failure"
-            print(name, {"splash": splash_metrics, "role": role_metrics, "street": metrics})
+                metrics = page_metrics(page)
+                assert_fits_viewport(f"{name}-street", metrics)
+                assert metrics["canvases"], f"{name}: missing WebGL canvas"
+                assert not metrics["loadingText"], f"{name}: street loader did not finish"
+                assert not metrics["loadFailure"], f"{name}: street loader reported failure"
+                print(name, {"splash": splash_metrics, "role": role_metrics, "street": metrics})
             for message in messages:
                 if "error" in message.lower() or "fail" in message.lower():
                     print(name, message)
+            assert not [m for m in messages if m.startswith("pageerror:")], messages
             page.close()
         # Tab evidence uses the same viewport matrix and rotates one live session.
         spec = importlib.util.spec_from_file_location("tab_audit", Path(__file__).with_name("landscape-depth-audit.py"))
@@ -139,6 +149,8 @@ def main():
         spec.loader.exec_module(tab_audit)
         page = browser.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=1)
         tab_report = {}
+        tab_errors = []
+        page.on("pageerror", lambda error: tab_errors.append(str(error)))
         tab_audit.tabs(page, ARTIFACT_DIR, tab_report)
         (ARTIFACT_DIR / "tab-metrics.json").write_text(json.dumps(tab_report, ensure_ascii=False, indent=2), encoding="utf-8")
         for key, metrics in tab_report.items():
@@ -148,6 +160,8 @@ def main():
                 if key.endswith('-shop'):
                     assert metrics['productReachable'], key
                     assert metrics['boxes']['.shop-stage__shelves-scroll']['height'] >= 150, key
+        assert not tab_errors, tab_errors
+        print(f"PASS: {len(VIEWPORTS)} splash/role viewports, {len(tab_report)} tab/detail cases; street skipped={'--skip-street' in sys.argv}")
         browser.close()
 
 

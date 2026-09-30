@@ -7,7 +7,7 @@ from mathutils import Vector
 
 ROOT = r"C:\Users\32768\Desktop\project\平遥游戏"
 WORK = os.path.join(ROOT, "3D")
-SOURCE = os.path.join(ROOT, "src", "平遥古城沉浸式游戏", "static", "models", "pingyao-hanfu-courtyard.glb")
+SOURCE = os.path.join(ROOT, "public", "static", "models", "pingyao-hanfu-courtyard.glb")
 BROCADE = os.path.join(WORK, "textures", "pingyao-brocade-512.png")
 OUTPUT = os.path.join(WORK, "exports")
 PREVIEWS = os.path.join(WORK, "previews")

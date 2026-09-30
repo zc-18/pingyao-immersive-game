@@ -26,7 +26,7 @@ HAIR = os.path.join(Q, 'ubc', 'Universal Base Characters[Standard]', 'Hairstyles
 UAL = os.path.join(Q, 'ual', 'Universal Animation Library[Standard]', 'Unreal-Godot', 'UAL1_Standard.glb')
 TEX = os.path.join(ROOT, '3D', 'textures', 'hanfu')
 BUILD = os.path.join(ROOT, '.cache', 'hanfu-build')
-OUT = os.path.join(ROOT, 'src', '平遥古城沉浸式游戏', 'static', 'models', 'pingyao-hanfu-human.glb')
+OUT = os.path.join(ROOT, 'public', 'static', 'models', 'pingyao-hanfu-human.glb')
 ARGS = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
 PREVIEW = '--preview' in ARGS
 
@@ -234,6 +234,16 @@ def strip_on_surface(tree, pts, width, lift, samples=48, width_fn=None, twist=No
     for p in path:
         hit, n, i, d = tree.find_nearest(p)
         proj.append((hit + n * lift, n))
+    # Face normals of the source triangulation jump at every triangle. Filter
+    # the ribbon frame and centreline before constructing its two edges, so a
+    # smooth neckline does not become a folded, zigzag strip after projection.
+    for _ in range(5):
+        prev = proj
+        proj = [prev[0]] + [
+            ((prev[k - 1][0] + prev[k][0] * 2 + prev[k + 1][0]) * .25,
+             (prev[k - 1][1] + prev[k][1] * 2 + prev[k + 1][1]).normalized())
+            for k in range(1, len(prev) - 1)
+        ] + [prev[-1]]
     bm = bmesh.new(); left = []; right = []; meta = []
     length = [0.0]
     for k in range(1, len(proj)): length.append(length[-1] + (proj[k][0] - proj[k - 1][0]).length)
@@ -294,6 +304,33 @@ def rigid(obj, bone):
     set_weights(obj, lambda co: {bone: 1.0})
 
 
+def refine_scholar_face(body, brows):
+    """Sculpt the rest mesh; retain UV landmarks, eye rims and animation rig.
+
+    Coordinates are Blender Z-up, facing -Y. Broad, local falloffs avoid hard
+    boundaries and keep the original eyeballs fitted to their sockets.
+    """
+    for v in body.data.vertices:
+        x, y, z = v.co
+        if z < 1.48 or abs(x) > .12: continue
+        front = smoothstep(.02, -.055, y)
+        jaw = math.exp(-((z - 1.617) / .040) ** 2)
+        v.co.x *= 1 - .105 * jaw
+        neck = math.exp(-((z - 1.55) / .044) ** 2)
+        v.co.x *= 1 - .075 * neck
+        brow = math.exp(-((z - 1.727) / .012) ** 2) * front
+        v.co.y += .004 * brow
+        nose = math.exp(-(x / .020) ** 2 - ((z - 1.666) / .027) ** 2) * front
+        v.co.y += .006 * nose
+        v.co.x *= 1 - .07 * nose
+        v.co.z += .003 * math.exp(-((z - 1.589) / .022) ** 2) * front
+    for v in brows.data.vertices:
+        x, y, z = v.co
+        v.co.z = 1.716 + (z - 1.716) * .52 - .006 * smoothstep(.024, .062, abs(x))
+        v.co.y += .002
+    body.data.update(); brows.data.update()
+
+
 # ================================================================ build
 def build():
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -312,6 +349,7 @@ def build():
     body = bpy.data.objects['SuperHero_Male']; body.name = 'Body'
     eyes = bpy.data.objects['Eyes']; eyes.name = 'EyeBalls'
     brows = bpy.data.objects['Eyebrows']; brows.name = 'Brows'
+    refine_scholar_face(body, brows)
     B = {b.name: (arm.matrix_world @ b.head_local, arm.matrix_world @ b.tail_local) for b in arm.data.bones}
     head_top = max(v.co.z for v in body.data.vertices)
 
@@ -319,6 +357,7 @@ def build():
     skin_tex = image(os.path.join(BASE, 'T_Superhero_Male_Dark.png').replace('Dark', 'Dark'), 2048)
     skin_light = os.path.join(BASE, '..', 'Textures', 'T_Superhero_Male_Ligh.png')
     if os.path.exists(skin_light): skin_tex = image(skin_light, 2048)
+    skin_tex = image(os.path.join(TEX, 'pingyao-skin-v01.png'), 2048)
     skin_n = image(os.path.join(BASE, 'T_Superhero_Male_Normal.png'), 1024)
     skin_r = image(os.path.join(BASE, 'T_Superhero_Male_Roughness.png'), 256)
     silk = image(os.path.join(TEX, 'silk-damask-v01.png'), 1024)
@@ -335,13 +374,13 @@ def build():
     M['Skin'].node_tree.links.new(t.outputs['Color'], mix.inputs[6]); mix.inputs[7].default_value = (*srgb('#fff1dc'), 1)
     M['Skin'].node_tree.links.new(mix.outputs[2], p.inputs['Base Color'])
     M['Hair'] = material('Hair', color=srgb('#15110e'), rough=0.78, normal=hair_n)
-    M['Cloth'] = material('Cloth', color=srgb('#8B4513'), tex=silk, rough=0.72, double=True, sheen=0.35)
-    M['Robe'] = material('Robe', color=srgb('#754019'), tex=silk, rough=0.74, double=True, sheen=0.35)
-    M['Trim'] = material('Trim', color=srgb('#D2B48C'), tex=trim, rough=0.55, double=True, sheen=0.2)
+    M['Cloth'] = material('Cloth', color=srgb('#7b9394'), tex=silk, rough=0.8, double=True, sheen=0.35)
+    M['Robe'] = material('Robe', color=srgb('#657f83'), tex=silk, rough=0.8, double=True, sheen=0.35)
+    M['Trim'] = material('Trim', color=srgb('#c6d0c7'), tex=linen, rough=0.68, double=True, sheen=0.2)
     M['Lining'] = material('Lining', color=srgb('#efe7d6'), tex=linen, rough=0.85, double=True)
     M['Inner'] = material('Inner', color=srgb('#f3eee2'), tex=linen, rough=0.86, double=True)
     M['Pants'] = material('Pants', color=srgb('#2f2a26'), tex=linen, rough=0.9)
-    M['Belt'] = material('Belt', color=srgb('#3a2418'), tex=trim, rough=0.6, double=True)
+    M['Belt'] = material('Belt', color=srgb('#293739'), tex=trim, rough=0.6, double=True)
     M['Shoe'] = material('Shoe', color=srgb('#1e1b19'), tex=linen, rough=0.85)
     M['ShoeSole'] = material('ShoeSole', color=srgb('#63574a'), rough=0.9)
     M['Hat'] = material('Hat', color=srgb('#221f1c'), tex=linen, rough=0.8, double=True)
@@ -384,7 +423,7 @@ def build():
     neck_z = 1.505
     def torso_keep(co):
         if co.z < 1.028: return False   # 下缘藏在腰带下（腰带 1.016–1.074）
-        if abs(co.x) > 0.25: return False
+        if abs(co.x) > 0.29: return False
         if abs(co.x) < 0.105: return co.z < neck_z + max(0.0, co.y) * 0.25
         return co.z < 1.62
     upper = duplicate_region(body, 'Robe_Upper', torso_keep, [M['Cloth']])
@@ -397,10 +436,37 @@ def build():
     boundary = [v for v in bm.verts if v.is_boundary and v.co.z > 1.4]
     for _ in range(4):
         bmesh.ops.smooth_vert(bm, verts=boundary, factor=0.4, use_axis_x=True, use_axis_y=True, use_axis_z=True)
+    # The outer torso edge sits beneath the sleeve. Taper its offset away so
+    # the clipped boundary cannot project through the sleeve as a shoulder flap.
+    for v in bm.verts:
+        tuck = smoothstep(.20, .26, abs(v.co.x))
+        if tuck:
+            hit, normal, _, _ = body_tree.find_nearest(v.co)
+            v.co = v.co.lerp(hit + normal * .002, tuck)
     bm.to_mesh(upper.data); bm.free()
-    inner_torso = duplicate_region(body, 'Inner_Torso', lambda co: 1.49 < co.z < 1.54 and abs(co.x) < 0.1, [M['Inner']])
-    inflate(inner_torso, lambda co: 0.005, smooth_iters=2)
+    # A cutout of the body inherits its irregular polygon boundary. Build a
+    # continuous fitted inner collar with an even rim instead.
+    inner_rings = []
+    for row in range(5):
+        ring = []
+        for i in range(64):
+            a = 2 * math.pi * i / 64
+            z = 1.532 - .012 * math.cos(a) - row * .012
+            center = Vector((0, .02, z))
+            direction = Vector((math.sin(a), -math.cos(a), 0))
+            hit, normal, _, _ = body_tree.ray_cast(center + direction * .18, -direction, .18)
+            point = hit + normal * .007 if hit is not None else center + direction * .075
+            point.z = z
+            ring.append(point)
+        for _ in range(3):
+            ring = [(ring[(i-1)%64] + ring[i]*2 + ring[(i+1)%64])*.25 for i in range(64)]
+        inner_rings.append(ring)
+    inner_bm, _ = ring_loft(inner_rings)
+    bmesh.ops.recalc_face_normals(inner_bm, faces=list(inner_bm.faces))
+    inner_torso = new_obj('Inner_Torso', inner_bm, [M['Inner']], arm)
+    transfer_weights(body, inner_torso)
     cylinder_uv(inner_torso, su=0.5, sv=0.5)
+    solidify(inner_torso, .0015)
     upper_tree = bvh_of(upper)
 
     # ---------------- sleeves（三档）
@@ -446,7 +512,15 @@ def build():
                     a = 2 * math.pi * i / segs
                     dy, dz = math.cos(a), math.sin(a)
                     zr = rz_up if dz > 0 else rz_dn
-                    ring.append(Vector((c.x, c.y + dy * ry, c.z + dz * zr)))
+                    point = Vector((c.x, c.y + dy * ry, c.z + dz * zr))
+                    # Bury the sleeve root under the torso with the same body
+                    # surface and skin weights; the old cylindrical root stood
+                    # proud of the shoulder, exposing an open seam at idle.
+                    tuck = 1 - smoothstep(.17, .31, abs(c.x))
+                    if tuck > 0:
+                        hit, normal, _, _ = body_tree.find_nearest(point)
+                        point = point.lerp(hit + normal * .005, tuck)
+                    ring.append(point)
                 rings.append(ring)
             bm, rows = ring_loft(rings)
             # 袖口翻边（衬里）
@@ -567,15 +641,19 @@ def build():
     inner_path = [(-0.07, 0.03, 1.52), (-0.08, -0.05, 1.47), (-0.04, -0.115, 1.39), (0.0, -0.13, 1.35)]
     back_path = [(0.07, 0.03, 1.52), (0.05, 0.085, 1.535), (0.0, 0.1, 1.54), (-0.05, 0.085, 1.535), (-0.07, 0.03, 1.52)]
     parts = []
-    for path, w in ((outer_path, 0.07), (inner_path, 0.07), (back_path, 0.07)):
-        parts.append((strip_on_surface(upper_tree, path, w, 0.006, samples=60), 0))
+    collar_path = list(reversed(outer_path)) + back_path[1:] + inner_path[1:]
+    parts.append((strip_on_surface(upper_tree, collar_path, .042, .006, samples=192), 0))
     white = [(0.058, 0.02, 1.535), (0.07, -0.035, 1.51), (0.042, -0.095, 1.43), (0.012, -0.12, 1.38)]
     white2 = [(-0.058, 0.02, 1.535), (-0.068, -0.04, 1.50), (-0.035, -0.1, 1.42)]
     white3 = [(0.058, 0.02, 1.535), (0.0, 0.085, 1.555), (-0.058, 0.02, 1.535)]
-    for path in (white, white2, white3):
-        parts.append((strip_on_surface(upper_tree, path, 0.03, 0.004, samples=36), 1))
+    lining_path = list(reversed(white)) + white3[1:] + white2[1:]
+    parts.append((strip_on_surface(upper_tree, lining_path, .03, .004, samples=120), 1))
     collar = new_obj('Collar', merge_bms(parts), [M['Trim'], M['Inner']], arm)
-    solidify(collar, 0.004)
+    bpy.context.view_layer.objects.active = collar
+    sub = collar.modifiers.new('Soft collar edge', 'SUBSURF'); sub.levels = 1
+    bpy.ops.object.modifier_move_to_index(modifier=sub.name, index=0)
+    bpy.ops.object.modifier_apply(modifier=sub.name)
+    solidify(collar, 0.002)
     transfer_weights(upper, collar)
 
     # ---------------- belt + sash
@@ -685,6 +763,14 @@ def build():
     bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context='VERTS')
     bm.to_mesh(body.data); bm.free()
 
+    # One subdivision only on the visible face/neck/hands; the rig and clothing
+    # stay at their existing budget. This removes the angular silhouette close up.
+    bpy.context.view_layer.objects.active = body
+    sub = body.modifiers.new('Portrait surface', 'SUBSURF'); sub.levels = 1
+    bpy.ops.object.modifier_move_to_index(modifier=sub.name, index=0)
+    bpy.ops.object.modifier_apply(modifier=sub.name)
+    for face in body.data.polygons: face.use_smooth = True
+
     for o in [c for c in arm.children if c.type == 'MESH']:
         if not o.data.uv_layers: cylinder_uv(o)
         cleanup_weights(o)
@@ -764,9 +850,9 @@ def variants_for_preview(arm):
     for o in arm.children:
         if o.name.startswith('hw_'): o.hide_render = o.name != 'hw_hair-bun'
         if o.name.startswith('acc_'): o.hide_render = o.name != 'acc_jade'
-        if o.name.startswith('sl_'): o.hide_render = o.name != 'sl_wide'
+        if o.name.startswith('sl_'): o.hide_render = o.name != 'sl_formal'
         if o.name.startswith('ol_'): o.hide_render = o.name != 'ol_long'
-        if o.name == 'fh_goatee': o.hide_render = False
+        if o.name in ('fh_goatee', 'Trousers'): o.hide_render = True
 
 def export(arm):
     for o in bpy.context.selected_objects: o.select_set(False)

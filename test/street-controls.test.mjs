@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 
 const streetSource = fs.readFileSync(
-	new URL('../src/平遥古城沉浸式游戏/pages_game/street/street.vue', import.meta.url),
+	new URL('../src/pages_game/street/street-renderer.js', import.meta.url),
 	'utf8'
 )
 

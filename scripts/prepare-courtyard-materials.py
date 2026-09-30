@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 source = Image.open(ROOT / 'output/imagegen/courtyard-materials-v01.png').convert('RGB')
 assert source.width == source.height and source.width >= 1024
 half = source.width // 2
-out = ROOT / 'src/平遥古城沉浸式游戏/static/textures/courtyard'
+out = ROOT / 'public/static/textures/courtyard'
 out.mkdir(parents=True, exist_ok=True)
 for name, (x, y) in {'brick': (0, 0), 'wood': (half, 0), 'roof': (0, half), 'cloth': (half, half)}.items():
     tile = source.crop((x, y, x+half, y+half)).resize((1024, 1024), Image.Resampling.LANCZOS)

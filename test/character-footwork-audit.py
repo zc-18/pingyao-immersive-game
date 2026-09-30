@@ -67,14 +67,14 @@ def main():
         page.add_init_script(audit.depth.PROBE)
         page.on('pageerror',lambda e:errors.append(e.message))
         try:
-            page.goto('http://localhost:5219/#/pages_game/splash/splash')
+            page.goto('http://localhost:5219/#/splash')
             page.locator('.splash-enter-frame').wait_for()
             page.evaluate("""() => {
               for(const [key,patch] of Object.entries({pygc_user_profile:{roleId:'study',roleName:'研学者'},pygc_runtime:{hasCompletedPrologue:true,hasEnteredStreet:true,currentStreetScene:'bank-house'}})) {
                 const raw=JSON.parse(localStorage.getItem(key));Object.assign(raw.data??raw,patch);localStorage.setItem(key,JSON.stringify(raw));
               }
             }""")
-            page.goto('http://localhost:5219/#/pages_game/street/street')
+            page.goto('http://localhost:5219/#/street')
             audit.wait_player(page);page.locator('.brush-loader').wait_for(state='hidden',timeout=30000)
             page.locator('.scene-controls__trigger').click()
             page.locator('.scene-controls__phases > *').nth(1).click()

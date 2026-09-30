@@ -1,0 +1,371 @@
+export const STORAGE_KEYS = {
+	appRuntime: 'pygc_runtime',
+	userProfile: 'pygc_user_profile',
+	userProgress: 'pygc_user_progress',
+	gameSettings: 'pygc_game_settings',
+	mockFlags: 'pygc_mock_flags',
+	redeemOrders: 'pygc_shop_redeem_orders'
+}
+
+/* 旧版遗留的零散键：重置行旅时一并清掉。 */
+const LEGACY_STORAGE_KEYS = ['pingyao.dialog.active', '__DC_STAT_UUID']
+
+/**
+ * 全项目统一的「本地日历日」字符串（YYYY-MM-DD，本地时区）。
+ * 签到(check-in)、每日任务重置(quest-manager)、时辰(phase) 等"今天"口径必须一致：
+ * 一律以本地午夜为日界，禁止再用 new Date().toISOString()（那是 UTC，UTC+8 下要到本地 08:00 才翻日）。
+ */
+export function localDateString(date = new Date()) {
+	const y = date.getFullYear()
+	const m = String(date.getMonth() + 1).padStart(2, '0')
+	const d = String(date.getDate()).padStart(2, '0')
+	return `${y}-${m}-${d}`
+}
+
+const defaultState = {
+	[STORAGE_KEYS.redeemOrders]: [],
+	[STORAGE_KEYS.userProfile]: {
+		nickname: '\u5e73\u9065\u884c\u5ba2',
+		roleId: '',
+		roleName: '',
+		roleSubtitle: '',
+		roleMotto: '',
+		avatarType: 'placeholder',
+		roleSelectedAt: 0
+	},
+	[STORAGE_KEYS.userProgress]: {
+		level: 1,
+		levelName: '\u7968\u53f7\u5b66\u5f92',
+		exp: 0,
+		silver: 268,
+		silverKey: 120,
+		score: 0,
+		steps: 0,
+		lastCheckInDate: '',
+		discoveredPoiIds: [],
+		visitedPoiIds: [],
+		visitedSceneIds: [],
+		npcTalkCount: 0,
+		// 已听过的晋小鸦话题：同一话题只计一次 npcTalkCount（旧存档缺省为空，已有计数保留）
+		npcTalkTopics: [],
+		totalQuestCompleted: 0,
+		ownedCostumes: ['commoner'],
+		equippedCostume: 'commoner',
+		favoritePoiIds: [],
+		journalNotes: {},
+		checkIn: {
+			lastDate: '',
+			streak: 0,
+			totalDays: 0,
+			stamps: []
+		},
+		unlockedAchievements: [],
+		questData: {
+			activeQuests: [],
+			completedQuests: [],
+			questProgress: {},
+			dailyReset: ''
+		}
+	},
+	[STORAGE_KEYS.appRuntime]: {
+		lastLaunchAt: 0,
+		lastShowAt: 0,
+		lastHideAt: 0,
+		platform: 'unknown',
+		hasEnteredStreet: false,
+		hasCompletedPrologue: false,
+		hasSeenJourneyHubHint: false,
+		currentStreetScene: 'bank-house',
+		lastStreetScene: 'bank-house',
+		lastStreetSwitchAt: 0,
+		currentPoiId: '',
+		lastPoiId: '',
+		lastNpcTopic: '',
+		lastPage: 'splash',
+		lastSceneMode: 'story',
+		lastQuestId: '',
+		lastQuestStageLine: '',
+		returnPage: '/street',
+		returnTab: '',
+		pendingArrivalScene: 'bank-house',
+		pendingStoryBeat: '',
+		streetIntroSeen: false,
+		menuHintDismissed: false
+	},
+	[STORAGE_KEYS.gameSettings]: {
+		enableMusic: true,
+		enableEffect: true,
+		preferredOrientation: 'landscape',
+		useMockLocation: false
+	},
+	[STORAGE_KEYS.mockFlags]: {
+		enableMockMap: false,
+		enableMockShop: false,
+		enableMockTask: false,
+		enableMockRedeem: false
+	}
+}
+
+function isPlainObject(value) {
+	return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function cloneValue(value) {
+	if (Array.isArray(value)) {
+		return value.map((item) => cloneValue(item))
+	}
+
+	if (isPlainObject(value)) {
+		return Object.keys(value).reduce((result, key) => {
+			result[key] = cloneValue(value[key])
+			return result
+		}, {})
+	}
+
+	return value
+}
+
+function normalizeUserProfile(profile = {}) {
+	const fallback = cloneValue(defaultState[STORAGE_KEYS.userProfile])
+	if (!isPlainObject(profile)) {
+		return fallback
+	}
+
+	return {
+		...fallback,
+		...profile,
+		nickname:
+			typeof profile.nickname === 'string' && profile.nickname.trim()
+				? profile.nickname.trim()
+				: fallback.nickname,
+		roleId: typeof profile.roleId === 'string' ? profile.roleId.trim() : '',
+		roleName: typeof profile.roleName === 'string' ? profile.roleName.trim() : '',
+		roleSubtitle: typeof profile.roleSubtitle === 'string' ? profile.roleSubtitle.trim() : '',
+		roleMotto: typeof profile.roleMotto === 'string' ? profile.roleMotto.trim() : '',
+		avatarType:
+			typeof profile.avatarType === 'string' && profile.avatarType.trim()
+				? profile.avatarType.trim()
+				: fallback.avatarType,
+		roleSelectedAt: Number(profile.roleSelectedAt) || 0
+	}
+}
+
+export function nonNegativeInteger(value, fallback = 0) {
+	const number = Number(value)
+	return Number.isFinite(number) ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(number))) : fallback
+}
+
+function normalizeUserProgress(progress = {}) {
+	const fallback = cloneValue(defaultState[STORAGE_KEYS.userProgress])
+	if (!isPlainObject(progress)) {
+		return fallback
+	}
+
+	const questData = isPlainObject(progress.questData) ? progress.questData : fallback.questData
+	// 旧版领奖记录并入完成记录，保留防重复发奖保护；新存档不再单独维护领奖状态。
+	const { claimedQuests: _legacyClaimedQuests, ...questDataRest } = questData
+	const checkInRaw = isPlainObject(progress.checkIn) ? progress.checkIn : {}
+	const checkIn = {
+		lastDate: typeof checkInRaw.lastDate === 'string' ? checkInRaw.lastDate : fallback.checkIn.lastDate,
+		streak: nonNegativeInteger(checkInRaw.streak),
+		totalDays: nonNegativeInteger(checkInRaw.totalDays),
+		stamps: Array.isArray(checkInRaw.stamps) ? [...new Set(checkInRaw.stamps.filter(Boolean))] : []
+	}
+
+	return {
+		...fallback,
+		...progress,
+		level: Math.max(1, Number(progress.level) || fallback.level),
+		levelName:
+			typeof progress.levelName === 'string' && progress.levelName.trim()
+				? progress.levelName.trim()
+				: fallback.levelName,
+		exp: nonNegativeInteger(progress.exp),
+		silver: nonNegativeInteger(progress.silver ?? fallback.silver),
+		silverKey: nonNegativeInteger(progress.silverKey ?? fallback.silverKey),
+		score: nonNegativeInteger(progress.score),
+		steps: nonNegativeInteger(progress.steps),
+		discoveredPoiIds: Array.isArray(progress.discoveredPoiIds) ? [...new Set(progress.discoveredPoiIds.filter(Boolean))] : fallback.discoveredPoiIds,
+		visitedPoiIds: Array.isArray(progress.visitedPoiIds) ? [...new Set(progress.visitedPoiIds.filter(Boolean))] : fallback.visitedPoiIds,
+		visitedSceneIds: Array.isArray(progress.visitedSceneIds) ? [...new Set(progress.visitedSceneIds.filter(Boolean))] : fallback.visitedSceneIds,
+		npcTalkCount: nonNegativeInteger(progress.npcTalkCount),
+		npcTalkTopics: Array.isArray(progress.npcTalkTopics)
+			? [...new Set(progress.npcTalkTopics.filter((topic) => typeof topic === 'string' && topic.trim()).map((topic) => topic.trim()))]
+			: fallback.npcTalkTopics,
+		totalQuestCompleted: nonNegativeInteger(progress.totalQuestCompleted),
+		ownedCostumes: Array.isArray(progress.ownedCostumes)
+			? [...new Set(['commoner', ...progress.ownedCostumes.filter(Boolean)])]
+			: fallback.ownedCostumes,
+		equippedCostume:
+			typeof progress.equippedCostume === 'string' && progress.equippedCostume.trim()
+				? progress.equippedCostume.trim()
+				: fallback.equippedCostume,
+		favoritePoiIds: Array.isArray(progress.favoritePoiIds)
+			? [...new Set(progress.favoritePoiIds.filter(Boolean))]
+			: fallback.favoritePoiIds,
+		journalNotes: isPlainObject(progress.journalNotes) ? progress.journalNotes : fallback.journalNotes,
+		checkIn,
+		unlockedAchievements: Array.isArray(progress.unlockedAchievements)
+			? [...new Set(progress.unlockedAchievements.filter(Boolean))]
+			: fallback.unlockedAchievements,
+		questData: {
+			...fallback.questData,
+			...questDataRest,
+			activeQuests: Array.isArray(questData.activeQuests) ? [...new Set(questData.activeQuests.filter(Boolean))] : [],
+			completedQuests: [...new Set([...(Array.isArray(questData.completedQuests) ? questData.completedQuests : []), ...(Array.isArray(_legacyClaimedQuests) ? _legacyClaimedQuests : [])].filter(Boolean))],
+			questProgress: isPlainObject(questData.questProgress) ? questData.questProgress : {},
+			dailyReset: typeof questData.dailyReset === 'string' ? questData.dailyReset : ''
+		},
+		lastCheckInDate:
+			typeof progress.lastCheckInDate === 'string' ? progress.lastCheckInDate : fallback.lastCheckInDate
+	}
+}
+
+export function hasSelectedRole(profile = {}) {
+	return !!normalizeUserProfile(profile).roleId
+}
+
+/* 存档落在浏览器 localStorage。沿用旧版的 {"type":"object","data":...} 包装格式，
+   升级前的玩家存档可直接读取，回滚到旧版本也仍能识别新写入的数据。 */
+const ENVELOPE_TYPES = ['object', 'string', 'number', 'boolean', 'undefined']
+
+function getBackend() {
+	const backend = globalThis.localStorage
+	if (!backend) throw new Error('localStorage unavailable')
+	return backend
+}
+
+function decodeStoredValue(raw) {
+	try {
+		const parsed = JSON.parse(raw)
+		if (parsed && typeof parsed === 'object' && ENVELOPE_TYPES.includes(parsed.type)) {
+			const keys = Object.keys(parsed)
+			if (keys.length === 2 && 'data' in parsed && typeof parsed.data === parsed.type) return parsed.data
+			if (keys.length === 1) return ''
+		}
+	} catch (error) {
+		// 不是 JSON 包装，按原字符串返回
+	}
+	return raw
+}
+
+export function getStorage(key, fallback = null) {
+	try {
+		const raw = getBackend().getItem(key)
+		const value = typeof raw === 'string' ? decodeStoredValue(raw) : ''
+		return value === '' || value === undefined || value === null ? fallback : value
+	} catch (error) {
+		console.warn('[storage] 读取失败', key, error)
+		return fallback
+	}
+}
+
+export function setStorage(key, value) {
+	try {
+		const type = typeof value
+		getBackend().setItem(key, type === 'string' ? value : JSON.stringify({ type, data: value }))
+		return true
+	} catch (error) {
+		console.warn('[storage] 写入失败', key, error)
+		return false
+	}
+}
+
+export function removeStorage(key) {
+	try {
+		getBackend().removeItem(key)
+		return true
+	} catch (error) {
+		console.warn('[storage] 删除失败', key, error)
+		return false
+	}
+}
+
+/* 清空本游戏的全部存档键（不影响同源下的其他数据）。 */
+export function clearGameStorage() {
+	let ok = true
+	for (const key of [...Object.values(STORAGE_KEYS), ...LEGACY_STORAGE_KEYS]) ok = removeStorage(key) && ok
+	return ok
+}
+
+function mergeDefaultState(currentValue, initialValue) {
+	if (!isPlainObject(currentValue) || !isPlainObject(initialValue)) {
+		return currentValue === null || currentValue === undefined || currentValue === ''
+			? cloneValue(initialValue)
+			: currentValue
+	}
+
+	return {
+		...cloneValue(initialValue),
+		...currentValue
+	}
+}
+
+export function ensureStorageDefaults() {
+	Object.keys(defaultState).forEach((key) => {
+		const cachedValue = getStorage(key)
+		const nextValue =
+			key === STORAGE_KEYS.userProfile
+				? normalizeUserProfile(mergeDefaultState(cachedValue, defaultState[key]))
+				: key === STORAGE_KEYS.userProgress
+					? normalizeUserProgress(mergeDefaultState(cachedValue, defaultState[key]))
+				: mergeDefaultState(cachedValue, defaultState[key])
+
+		if (JSON.stringify(cachedValue) !== JSON.stringify(nextValue)) {
+			setStorage(key, nextValue)
+		}
+	})
+}
+
+export function resetPrototypeStorage() {
+	Object.keys(defaultState).forEach((key) => {
+		setStorage(key, cloneValue(defaultState[key]))
+	})
+}
+
+export function getUserProfile() {
+	return normalizeUserProfile(getStorage(STORAGE_KEYS.userProfile, {}))
+}
+
+export function getUserProgress() {
+	return normalizeUserProgress(getStorage(STORAGE_KEYS.userProgress, {}))
+}
+
+export function patchStorageObject(key, patch = {}) {
+	const current = getStorage(key, {})
+	const base = isPlainObject(current) ? current : cloneValue(defaultState[key] || {})
+	const nextValue = {
+		...base,
+		...(isPlainObject(patch) ? patch : {})
+	}
+	const normalizedValue =
+		key === STORAGE_KEYS.userProfile
+			? normalizeUserProfile(nextValue)
+			: key === STORAGE_KEYS.userProgress
+				? normalizeUserProgress(nextValue)
+				: nextValue
+	// 变更检测：值未变化则跳过写入。markPoiVisited / 步数结算 / npcTalk 等高频探索路径会反复 patch 同样的值，
+	// 每次都全量序列化并同步写入 localStorage 会造成低端机探索时的帧抖动。current 与 normalizedValue
+	// 都经同一 normalize（键序一致），JSON 比较可靠；仅当真有变化才写盘。
+	if (isPlainObject(current) && JSON.stringify(current) === JSON.stringify(normalizedValue)) {
+		return normalizedValue
+	}
+	return setStorage(key, normalizedValue) ? normalizedValue : null
+}
+
+const storage = {
+	keys: STORAGE_KEYS,
+	defaultState,
+	localDateString,
+	get: getStorage,
+	set: setStorage,
+	remove: removeStorage,
+	ensureDefaults: ensureStorageDefaults,
+	resetPrototypeStorage,
+	getUserProfile,
+	getUserProgress,
+	hasSelectedRole,
+	patchObject: patchStorageObject
+}
+
+export default storage

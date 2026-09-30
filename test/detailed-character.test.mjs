@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import vm from 'node:vm'
 import { TextDecoder } from 'node:util'
 
-const base=new URL('../src/平遥古城沉浸式游戏/static/',import.meta.url)
+const base=new URL('../public/static/',import.meta.url)
 const bytes=fs.readFileSync(new URL('models/pingyao-merchant-hero.glb',base))
 const length=bytes.readUInt32LE(12), gltf=JSON.parse(bytes.subarray(20,20+length)), binary=bytes.subarray(28+length)
 function values(index) {

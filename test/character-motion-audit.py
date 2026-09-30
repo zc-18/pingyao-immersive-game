@@ -23,7 +23,7 @@ def main():
         page.add_init_script(audit.depth.PROBE)
         page.on('pageerror',lambda e:errors.append(e.message))
         try:
-            page.goto(BASE+'/#/pages_game/splash/splash')
+            page.goto(BASE+'/#/splash')
             page.locator('.splash-enter-frame').wait_for()
             # Visual fixture with a selected role; does not replace the separate fresh-save journey audit.
             page.evaluate("""() => {
@@ -31,7 +31,7 @@ def main():
                 const raw=JSON.parse(localStorage.getItem(key));Object.assign(raw.data??raw,patch);localStorage.setItem(key,JSON.stringify(raw));
               }
             }""")
-            page.goto(BASE+'/#/pages_game/street/street')
+            page.goto(BASE+'/#/street')
             audit.wait_player(page)
             page.locator('.brush-loader').wait_for(state='hidden',timeout=30000)
             page.locator('.scene-controls__trigger').click()

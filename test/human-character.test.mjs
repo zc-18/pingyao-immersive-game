@@ -4,10 +4,10 @@ import fs from 'node:fs'
 import vm from 'node:vm'
 import { T, loadCharacter } from '../scripts/measure-character-envelope.mjs'
 
-const source = fs.readFileSync(new URL('../src/平遥古城沉浸式游戏/pages_game/street/street.vue', import.meta.url), 'utf8')
+const source = fs.readFileSync(new URL('../src/pages_game/street/street.vue', import.meta.url), 'utf8')
 async function fixture() {
   const context = vm.createContext({ engine:T, console })
-  const script = source.match(/<script module="render" lang="renderjs">([\s\S]*?)<\/script>/)[1]
+  const script = fs.readFileSync(new URL('../src/pages_game/street/street-renderer.js', import.meta.url), 'utf8')
   vm.runInContext(script.replace('export default','const component =')+'\nTHREE=engine;this.api=component.methods;this.gait=HUMAN_GAIT_SPEED;', context)
   const {scene:root, animations} = await loadCharacter('pingyao-hanfu-human.glb')
   const mixer = new T.AnimationMixer(root), actions = {}
@@ -77,4 +77,33 @@ test('human walk/run/stop transitions keep finite poses, planted soles and bound
   assert.ok(maxFrameDrop<.09,`root height snaps: ${maxFrameDrop}`)
   assert.ok(actions.idle.getEffectiveWeight()>.99)
   assert.ok(planted.walk>20 && planted.run>5,`both clips must have working contact windows: ${JSON.stringify(planted)}`)
+})
+
+test('greeting eases in, survives interruption and retires before replay at different frame rates', async()=>{
+  for (const fps of [30, 60, 120]) {
+    const {actions,api,root}=await fixture()
+    actions.wave.stop().setEffectiveWeight(0)
+    api.playPlayerWave()
+    api.updatePlayerMixer(0,false,1/fps)
+    assert.ok(actions.wave.getEffectiveWeight()<.08, 'first frame must not snap into the gesture')
+    for(let i=0;i<fps*.5;i++) api.updatePlayerMixer(0,false,1/fps)
+    assert.ok(actions.wave.getEffectiveWeight()>.95)
+    // Interrupt with real locomotion; an immediate replay must not reset the arm pose.
+    api.updatePlayerMixer(1.6,true,1/fps)
+    const interruptedTime=actions.wave.time
+    api.playPlayerWave()
+    assert.equal(actions.wave.time,interruptedTime)
+    for(let i=0;i<fps;i++) {
+      api.updatePlayerMixer(1.6,true,1/fps)
+      const weight=Object.values(actions).reduce((sum,a)=>sum+a.getEffectiveWeight(),0)
+      assert.ok(Math.abs(weight-1)<1e-6, `normalised pose at ${fps} fps: ${weight}`)
+    }
+    assert.equal(actions.wave.isScheduled(),false)
+    assert.equal(actions.wave.getEffectiveWeight(),0)
+    api.playPlayerWave()
+    assert.ok(root.userData.gestureTime>0)
+    for(let i=0;i<Math.ceil((root.userData.gestureDuration+1)*fps);i++) api.updatePlayerMixer(0,false,1/fps)
+    assert.equal(actions.wave.isScheduled(),false)
+    assert.ok(actions.idle.getEffectiveWeight()>.999)
+  }
 })

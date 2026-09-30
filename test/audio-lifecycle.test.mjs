@@ -1,12 +1,13 @@
+import { installLocalStorage } from './helpers/browser-env.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import * as audio from '../src/平遥古城沉浸式游戏/common/utils/audio.js'
+import * as audio from '../src/common/utils/audio.js'
 
 test('all declared cues have bounded, decodable PCM assets with smooth loop joins', () => {
   for (const [kind, names] of [['bgm', audio.BGM], ['sfx', audio.SFX]]) {
     for (const name of Object.values(names)) {
-      const bytes = fs.readFileSync(new URL(`../src/平遥古城沉浸式游戏/static/audio/${kind}_${name}.wav`, import.meta.url))
+      const bytes = fs.readFileSync(new URL(`../public/static/audio/${kind}_${name}.wav`, import.meta.url))
       assert.equal(bytes.toString('ascii', 0, 4), 'RIFF')
       assert.equal(bytes.toString('ascii', 8, 12), 'WAVE')
       assert.equal(bytes.readUInt16LE(20), 1)
@@ -20,50 +21,52 @@ test('all declared cues have bounded, decodable PCM assets with smooth loop join
   }
 })
 
-test('native audio reuses BGM, limits cues, releases errors and pauses on background', () => {
-  let enabled = true
-  const contexts = []
-  globalThis.uni = {
-    getStorageSync: () => ({ enableMusic: enabled }),
-    createInnerAudioContext() {
-      const ctx = { events: {}, plays: 0, pauses: 0, destroyed: 0,
-        play() { this.plays++ }, pause() { this.pauses++ }, destroy() { this.destroyed++ },
-        onError(fn) { this.events.error = fn }, onEnded(fn) { this.events.ended = fn }, onStop(fn) { this.events.stop = fn }
-      }
-      contexts.push(ctx); return ctx
-    }
-  }
-  globalThis.plus = { io: { convertLocalFileSystemURL: (path) => 'app://' + path } }
-  audio.resumeBGM()
-  audio.playBGM(audio.BGM.STREET_AMBIENT)
-  audio.playBGM(audio.BGM.STREET_AMBIENT)
-  assert.equal(contexts.length, 1)
-  assert.equal(contexts[0].plays, 2)
-  assert.equal(contexts[0].src, 'app://_www/static/audio/bgm_street_ambient.wav')
-  for (let i = 0; i < 20; i++) audio.playSFX(audio.SFX.COIN)
-  assert.equal(contexts.length, 7)
-  contexts[1].events.error()
-  assert.equal(contexts[1].destroyed, 1)
-  audio.playSFX(audio.SFX.COIN)
-  assert.equal(contexts.length, 8)
-  audio.pauseBGM()
-  audio.playSFX(audio.SFX.COIN)
-  assert.equal(contexts.length, 8)
-  assert.equal(contexts.slice(1).every((ctx) => ctx.destroyed === 1), true)
-  enabled = false; audio.syncAudioSettings()
-  assert.equal(contexts[0].destroyed, 1)
-  enabled = true; audio.resumeBGM()
-  assert.equal(contexts.length, 9)
-  audio.stopBGM(); audio.resumeBGM()
-  assert.equal(contexts.length, 9)
-  delete globalThis.uni; delete globalThis.plus
+test('浏览器 Audio 复用 BGM、限制并发、释放出错音效并响应后台暂停', (t) => {
+	const env = installLocalStorage()
+	const previousWindow = globalThis.window, previousDocument = globalThis.document
+	const contexts = []
+	globalThis.document = { baseURI: 'https://example.test/game/', addEventListener() {}, removeEventListener() {} }
+	globalThis.window = { Audio: class {
+		constructor() { this.events = {}; this.plays = 0; this.pauses = 0; this.destroyed = 0; contexts.push(this) }
+		play() { this.plays++; return Promise.resolve() }
+		pause() { this.pauses++ }
+		removeAttribute(name) { if (name === 'src') this.src = '' }
+		load() { this.destroyed++ }
+		addEventListener(name, fn) { this.events[name] = fn }
+	} }
+	t.after(() => { audio.stopBGM(); env.uninstall(); globalThis.window = previousWindow; globalThis.document = previousDocument })
+	audio.resumeBGM()
+	audio.playBGM(audio.BGM.STREET_AMBIENT)
+	audio.playBGM(audio.BGM.STREET_AMBIENT)
+	assert.equal(contexts.length, 1)
+	assert.equal(contexts[0].plays, 2)
+	assert.equal(contexts[0].src, 'https://example.test/game/static/audio/bgm_street_ambient.wav')
+	for (let i = 0; i < 20; i++) audio.playSFX(audio.SFX.COIN)
+	assert.equal(contexts.length, 7)
+	contexts[1].events.error()
+	assert.equal(contexts[1].destroyed, 1)
+	audio.playSFX(audio.SFX.COIN)
+	assert.equal(contexts.length, 8)
+	audio.pauseBGM()
+	audio.playSFX(audio.SFX.COIN)
+	assert.equal(contexts.length, 8)
+	assert.ok(contexts[0].pauses > 0)
+	assert.ok(contexts.slice(1).every(ctx => ctx.destroyed === 1))
+	env.seed('pygc_game_settings', { enableMusic: false }); audio.syncAudioSettings()
+	assert.equal(contexts[0].destroyed, 1)
+	env.seed('pygc_game_settings', { enableMusic: true }); audio.resumeBGM()
+	assert.equal(contexts.length, 9)
+	audio.stopBGM(); audio.resumeBGM()
+	assert.equal(contexts.length, 9)
 })
 
-test('H5 autoplay rejection waits for a gesture and releases listeners on page exit', async () => {
+test('Web autoplay rejection waits for a gesture and releases listeners on page exit', async (t) => {
   const events = new Map()
   const elements = []
   let blocked = true
-  globalThis.uni = { getStorageSync: () => ({ enableMusic: true }) }
+  const env = installLocalStorage()
+  const previousWindow = globalThis.window, previousDocument = globalThis.document
+  t.after(() => { audio.stopBGM(); env.uninstall(); globalThis.window = previousWindow; globalThis.document = previousDocument })
   globalThis.document = { baseURI: 'https://example.test/game/', addEventListener: (event, fn) => events.set(event, fn), removeEventListener: (event) => events.delete(event) }
   globalThis.window = { Audio: class {
     constructor() { elements.push(this); this.plays = 0 }
@@ -83,5 +86,4 @@ test('H5 autoplay rejection waits for a gesture and releases listeners on page e
   assert.equal(elements[0].plays, 2)
   assert.equal(events.size, 0)
   audio.stopBGM()
-  delete globalThis.window; delete globalThis.document; delete globalThis.uni
 })

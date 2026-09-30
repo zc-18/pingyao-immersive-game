@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 
 // Original animation rig is CC0 KayKit. All visible geometry below is authored here.
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const assets = path.join(repo, 'src', '\u5e73\u9065\u53e4\u57ce\u6c89\u6d78\u5f0f\u6e38\u620f', 'static')
+const assets = path.join(repo, 'public', 'static')
 const engine = vm.createContext({ console: { warn() {} } })
 vm.runInContext(fs.readFileSync(path.join(assets, 'libs/three.min.js'), 'utf8'), engine)
 const T = engine.THREE

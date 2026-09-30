@@ -14,7 +14,7 @@ OUT = ROOT / 'artifacts/poi-interaction'
 OUT.mkdir(parents=True, exist_ok=True)
 os.environ.update(TEMP=str(OUT), TMP=str(OUT))
 BASE = 'http://localhost:5219'
-READ = "key=>{const raw=JSON.parse(localStorage.getItem(key));return raw?.data??raw}"
+READ = "key => window.__pygc.readStorage(key)"
 
 
 def progress(page):
@@ -55,7 +55,7 @@ def main():
         page.add_init_script(audit.depth.PROBE)
         page.on('pageerror', lambda error: errors.append(error.message))
         try:
-            page.goto(BASE + '/#/pages_game/splash/splash')
+            page.goto(BASE + '/#/splash')
             page.locator('.splash-enter-frame').wait_for()
             page.locator('.splash-enter-frame').tap(force=True)
             page.locator('.role-confirm-token').wait_for(); page.wait_for_timeout(800)

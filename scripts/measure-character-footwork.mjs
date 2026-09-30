@@ -5,9 +5,8 @@ import { pathToFileURL } from 'node:url'
 import { T, loadCharacter } from './measure-character-envelope.mjs'
 
 export async function footworkFixture({ planting = true, scale = 1, cadence } = {}) {
-  const source = fs.readFileSync(new URL('../src/平遥古城沉浸式游戏/pages_game/street/street.vue', import.meta.url), 'utf8')
   const context = vm.createContext({ engine: T, console })
-  const render = source.match(/<script module="render" lang="renderjs">([\s\S]*?)<\/script>/)[1]
+  const render = fs.readFileSync(new URL('../src/pages_game/street/street-renderer.js', import.meta.url), 'utf8')
   vm.runInContext(render.replace('export default', 'const component =') + '\nTHREE=engine; this.api=component.methods;', context)
   const api = context.api, gltf = await loadCharacter(), root = gltf.scene
   if (cadence) { context.cadence = cadence; vm.runInContext('Object.assign(CHARACTER_GAIT_SPEED, cadence)', context) }

@@ -5,7 +5,7 @@ import random
 import struct
 import wave
 
-OUT = Path(__file__).resolve().parents[1] / 'src/平遥古城沉浸式游戏/static/audio'
+OUT = Path(__file__).resolve().parents[1] / 'public/static/audio'
 RATE = 24000
 OUT.mkdir(parents=True, exist_ok=True)
 

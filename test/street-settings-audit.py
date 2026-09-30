@@ -14,7 +14,7 @@ OUT = ROOT / 'artifacts/street-settings'
 OUT.mkdir(parents=True, exist_ok=True)
 os.environ.update(TEMP=str(OUT), TMP=str(OUT))
 BASE = 'http://localhost:5219'
-READ = "key=>{const raw=JSON.parse(localStorage.getItem(key));return raw?.data??raw}"
+READ = "key => window.__pygc.readStorage(key)"
 PROBE = """(() => {
   window.__settingAudio=[];window.__failSetting=false;window.__settingRejected=0;
   window.Audio=new Proxy(window.Audio,{construct(Target,args){const audio=new Target(...args);__settingAudio.push(audio);return audio}});
@@ -139,7 +139,7 @@ def verify_settings(page,report):
     page.locator('.ledger__settings-ring').tap()
     page.locator('.ledger__settings-toggle').nth(1).tap()
     assert page.evaluate(READ,'pygc_game_settings')['enableEffect'] is False
-    page.locator('.uni-tabbar__item').first.tap()
+    page.locator('.app-tabbar__item').first.tap()
     page.locator('.hub-stage__npc-bar-cta').tap();audit.wait_player(page);page.locator('.brush-loader').wait_for(state='hidden')
     page.get_by_role('button',name='设置',exact=True).tap()
     assert page.get_by_role('switch',name='灯光特效').get_attribute('aria-checked')=='false'
@@ -156,13 +156,13 @@ def main():
         page.add_init_script(PROBE)
         page.on('pageerror',lambda error:errors.append(error.message))
         try:
-            page.goto(BASE+'/#/pages_game/splash/splash');page.locator('.splash-enter-frame').wait_for()
+            page.goto(BASE+'/#/splash');page.locator('.splash-enter-frame').wait_for()
             page.evaluate("""() => {
               for(const [key,patch] of Object.entries({pygc_user_profile:{roleId:'study',roleName:'研学者'},pygc_runtime:{hasCompletedPrologue:true,currentStreetScene:'bank-house'}})) {
                 const raw=JSON.parse(localStorage.getItem(key));Object.assign(raw.data??raw,patch);localStorage.setItem(key,JSON.stringify(raw));
               }
             }""")
-            page.goto(BASE+'/#/pages_game/street/street');audit.wait_player(page)
+            page.goto(BASE+'/#/street');audit.wait_player(page)
             page.locator('.brush-loader').wait_for(state='hidden')
             for w,h in [(844,390),(390,844)]:
                 page.set_viewport_size({'width':w,'height':h});page.wait_for_timeout(700)

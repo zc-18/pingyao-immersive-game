@@ -4,10 +4,10 @@ import fs from 'node:fs'
 import vm from 'node:vm'
 import { T, loadCharacter } from '../scripts/measure-character-envelope.mjs'
 
-const source = fs.readFileSync(new URL('../src/平遥古城沉浸式游戏/pages_game/street/street.vue', import.meta.url), 'utf8')
+const source = fs.readFileSync(new URL('../src/pages_game/street/street.vue', import.meta.url), 'utf8')
 function harness() {
   const context = vm.createContext({ engine: T, console })
-  const render = source.match(/<script module="render" lang="renderjs">([\s\S]*?)<\/script>/)[1]
+  const render = fs.readFileSync(new URL('../src/pages_game/street/street-renderer.js', import.meta.url), 'utf8')
   vm.runInContext(render.replace('export default', 'const component =') + '\nTHREE=engine; this.api=component.methods;', context)
   return { context, api: context.api }
 }

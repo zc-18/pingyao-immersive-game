@@ -15,7 +15,7 @@ OUT = ROOT / 'artifacts/app-gameplay'
 OUT.mkdir(parents=True, exist_ok=True)
 os.environ.update(TEMP=str(OUT), TMP=str(OUT))
 BASE = 'http://localhost:5219'
-READ = "key => { const value=JSON.parse(localStorage.getItem(key));return value?.data??value }"
+READ = "key => window.__pygc.readStorage(key)"
 AUDIO = """(() => {
   window.__audio=[];
   window.Audio=new Proxy(window.Audio,{construct(Target,args){const a=new Target(...args);window.__audio.push(a);return a}});
@@ -29,7 +29,7 @@ def go(page, route, selector):
     page.wait_for_timeout(500)
 
 def confirm(page):
-    page.locator('.uni-modal__btn_primary').click()
+    page.locator('.app-modal__button--confirm').click()
 
 def main():
     report = {}
@@ -42,7 +42,7 @@ def main():
         page.on('pageerror', lambda error: errors.append(error.message))
         page.on('response', lambda response: errors.append(f'HTTP {response.status}: {response.url}') if response.status >= 400 else None)
         try:
-            go(page, 'pages_game/splash/splash', '.splash-enter-frame')
+            go(page, 'splash', '.splash-enter-frame')
             page.locator('.splash-enter-frame').click(force=True)
             page.locator('.role-confirm-token').wait_for()
             page.wait_for_timeout(800)
@@ -56,7 +56,7 @@ def main():
             page.locator('.street-stage__poi-paper').wait_for()
             page.locator('.street-stage__poi-tool').first.click()
             page.locator('.street-stage__poi-tool').nth(1).click()
-            page.locator('.uni-modal input, .uni-modal textarea').first.fill('票号院里听一段汇通天下的故事。')
+            page.locator('.app-modal__input').first.fill('票号院里听一段汇通天下的故事。')
             confirm(page)
             print('Journal saved', flush=True)
             page.locator('.street-stage__poi-action').first.click()
@@ -96,7 +96,7 @@ def main():
                 report['passed'] = True
                 return
 
-            go(page, 'pages/user/user', '.ledger')
+            go(page, 'user', '.ledger')
             page.locator('.check-in-card__btn').click()
             before = page.evaluate(READ, 'pygc_user_progress')
             page.locator('.check-in-card__btn').click()
@@ -116,7 +116,7 @@ def main():
             page.locator('.ledger__settings-ring').click()
             report['signInWardrobeSettings'] = True
 
-            go(page, 'pages/shop/shop', '.shop-stage')
+            go(page, 'shop', '.shop-stage')
             before = page.evaluate(READ, 'pygc_user_progress')['silver']
             page.locator('.shop-stage__category').nth(2).click()
             page.locator('.shop-stage__product').first.click()
@@ -142,7 +142,7 @@ def main():
             print('Sign-in, wardrobe, purchase and voucher persistence passed', flush=True)
 
             for name,selector in [('index','.hub-stage'),('map','.map-stage'),('shop','.shop-stage'),('user','.ledger')]:
-                go(page, f'pages/{name}/{name}', selector)
+                go(page, ('home' if name == 'index' else name), selector)
                 for w,h in audit.depth.VIEWS:
                     page.set_viewport_size({'width':w,'height':h})
                     page.wait_for_timeout(200)
@@ -154,7 +154,7 @@ def main():
             # The preceding purchase/sign-in/main-quest checks used a fresh real save.
             page.evaluate("""() => {const raw=JSON.parse(localStorage.getItem('pygc_user_progress'));const p=raw.data??raw;p.exp=5000;p.silverKey=1000;p.ownedCostumes=['commoner','ledger-clerk','escort-garb','lantern-festival'];localStorage.setItem('pygc_user_progress',JSON.stringify(raw))}""")
             page.set_viewport_size({'width':844,'height':390})
-            go(page,'pages_game/street/street','#street-canvas canvas')
+            go(page,'street','#street-canvas canvas')
             audit.wait_player(page)
             page.locator('.brush-loader').wait_for(state='hidden')
             page.locator('.scene-controls__trigger').click()

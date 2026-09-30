@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { PHASES } from '../src/平遥古城沉浸式游戏/common/utils/phase.js'
+import { PHASES } from '../src/common/utils/phase.js'
 
 test('夜间街景保留足够的环境光与雾效可见度', () => {
 	const night = PHASES.night

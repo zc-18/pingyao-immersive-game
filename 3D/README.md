@@ -5,7 +5,7 @@
 ## 当前 Web 角色
 
 - 源工程：`pingyao-hanfu-human.blend`（Blender 5.2.2 LTS，已打包纹理，默认只显示一套服饰）。
-- 运行时：`../src/平遥古城沉浸式游戏/static/models/pingyao-hanfu-human.glb`，内嵌贴图，无 CDN。
+- 运行时：`../public/static/models/pingyao-hanfu-human.glb`（站点 URL `/static/models/pingyao-hanfu-human.glb`），内嵌贴图，无 CDN。
 - 成人比例人体、3 档袖型、长短下摆、7 种头饰、7 种配饰；所有身份沿用这套男性基础网格，服装按存档切换。
 - 9 段动画：Idle、Walking_A、Walking_B、Running_A、Interact、Talk、Cheer、Sit_Idle、PickUp。游戏当前使用前进步态、待机和致意；其余动作保留在资产中。
 - 生成脚本 `scripts/build_pingyao_human_hero.py`，可用 `blender -b --factory-startup -P 3D/scripts/build_pingyao_human_hero.py` 重建。需将 CC0 上游包解压到项目 `.cache/quaternius/ubc/`、`ual/`，目录结构见脚本开头；服装贴图与提示词保留在 `textures/hanfu/`。
@@ -40,7 +40,7 @@
 
 ## 接入方式
 
-人物 GLB 可放入应用的 `static/models/`，再把服饰数据中的 `modelPath` 或街景页 `PLAYER_MODEL_PATH` 指向新文件。道具 GLB 可由同一 `GLTFLoader` 加载，三个根节点分别为：
+人物 GLB 可放入仓库的 `public/static/models/`，再把服饰数据中的 `modelPath` 或街景渲染模块 `src/pages_game/street/street-renderer.js` 的 `PLAYER_MODEL_PATH` 指向新文件。道具 GLB 可由同一 `GLTFLoader` 加载，三个根节点分别为：
 
 - `Prop_Lantern_Root`
 - `Prop_Piaohao_Sign_Root`
@@ -50,7 +50,7 @@
 
 ## 重建
 
-在 Blender 5.2.2 LTS 中打开 `pingyao-hero-atelier.blend` 可继续编辑。完整重建时，在 Blender 文本编辑器运行 `scripts/build_pingyao_asset_pack.py`；脚本读取项目现有 `pingyao-hanfu-courtyard.glb` 的原创网格和兼容骨架，重新生成本目录内的 GLB、预览、源工程和 manifest。
+在 Blender 5.2.2 LTS 中打开 `pingyao-hero-atelier.blend` 可继续编辑。完整重建时，在 Blender 文本编辑器运行 `scripts/build_pingyao_asset_pack.py`；脚本读取项目现有 `public/static/models/pingyao-hanfu-courtyard.glb` 的原创网格和兼容骨架，重新生成本目录内的 GLB、预览、源工程和 manifest。
 
 概念图与织锦原图使用 `gpt-image-2`、high quality 各生成一次，最终提示词保存在对应图片旁边。
 

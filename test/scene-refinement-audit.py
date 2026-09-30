@@ -1,4 +1,4 @@
-"""Exercise the detailed avatar, user controls and quest through a local H5 browser."""
+"""Exercise the detailed avatar, user controls and quest through a local Web browser."""
 import importlib.util
 import json
 import sys
@@ -88,7 +88,7 @@ def main():
             page.locator('.reward-stage__claim').wait_for(timeout=6000)
             capture(page, 'reward')
             page.locator('.reward-stage__claim').click()
-            progress = page.evaluate("() => uni.getStorageSync('pygc_user_progress')")
+            progress = page.evaluate("() => window.__pygc.readStorage('pygc_user_progress')")
             assert progress['steps'] > 0
             assert 'rishengchang' in progress['visitedPoiIds']
             assert 'main-rishengchang' in progress['questData']['completedQuests']
@@ -96,7 +96,7 @@ def main():
             if page.locator('.street-stage__poi-close').is_visible():
                 page.locator('.street-stage__poi-close').click()
             page.wait_for_timeout(1200)
-            if page.evaluate("() => uni.getStorageSync('pygc_runtime').currentStreetScene") != depth.SCENES[0]:
+            if page.evaluate("() => window.__pygc.readStorage('pygc_runtime').currentStreetScene") != depth.SCENES[0]:
                 page.locator('.street-stage__switch-arrow').first.click()
                 wait_character(page)
             print('Quest and input isolation passed', flush=True)
@@ -140,7 +140,7 @@ def main():
             report['streets'] = {}
             for scene in depth.SCENES[1:]:
                 page.locator('.street-stage__switch-arrow').last.click()
-                page.wait_for_function("s => uni.getStorageSync('pygc_runtime').currentStreetScene===s", arg=scene)
+                page.wait_for_function("s => window.__pygc.readStorage('pygc_runtime').currentStreetScene===s", arg=scene)
                 wait_character(page)
                 initial = page.evaluate(PLAYER)
                 hold(page, 'w', 650)

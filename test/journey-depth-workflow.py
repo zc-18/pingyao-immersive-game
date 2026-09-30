@@ -15,15 +15,11 @@ spec.loader.exec_module(audit)
 OUT = ROOT / "artifacts" / "landscape-depth" / "workflow"
 
 COMMAND = """({action,data}) => {
-  let c=document.querySelector('.street-stage').__vueParentComponent;
-  while(c) {
-    if (c.setupState && 'sceneCmd' in c.setupState) {
-      if (action === 'applyPhase') c.setupState.currentPhase = data.phase;
-      c.setupState.sceneCmd={action,data,ts:Date.now()}; return;
-    }
-    c=c.parent;
-  }
-  throw Error('logical sceneCmd bridge not found');
+  const state=window.__pygc.page.setupState;
+  if (action === 'applyPhase') return state.selectScenePhase(data.phase.key);
+  // street.vue forwards synchronously to streetRenderer.methods.onSceneCmd.
+  if (typeof state.sendToRenderer !== "function") throw Error("Street command API unavailable");
+  return state.sendToRenderer(action,data);
 }"""
 PLAYER = """() => {
   let player;
@@ -78,7 +74,7 @@ def main():
             page.locator('.role-confirm-token').click()
             page.locator('#street-canvas canvas').wait_for(timeout=30000)
             page.wait_for_timeout(4500)
-            report['roleSelected'] = page.evaluate("() => uni.getStorageSync('pygc_user_profile').roleId")
+            report['roleSelected'] = page.evaluate("() => window.__pygc.readStorage('pygc_user_profile').roleId")
             assert report['roleSelected']
             capture(page, '01-role-entry')
             # Actual keyboard movement triggers proximity, quest events and persisted steps.
@@ -94,7 +90,7 @@ def main():
             capture(page, '02-quest-reward')
             page.locator('.reward-stage__claim').click()
             page.wait_for_timeout(1000)
-            progress = page.evaluate("() => uni.getStorageSync('pygc_user_progress')")
+            progress = page.evaluate("() => window.__pygc.readStorage('pygc_user_progress')")
             report['questAndSteps'] = progress
             assert progress['steps'] > 0
             assert 'rishengchang' in progress['visitedPoiIds']
@@ -103,8 +99,8 @@ def main():
             assert progress['silver'] >= 318
             assert not page.locator('.reward-stage__claim').count()
 
-            # Phase changes travel through the same JSON bridge as the game clock.
-            phases = page.evaluate("async () => (await import('/common/utils/phase.js')).PHASES")
+            # Phase changes travel through the same scene command path as the game clock.
+            phases = page.evaluate("async () => (await import('/src/common/utils/phase.js')).PHASES")
             for key, phase in phases.items():
                 page.evaluate(COMMAND, {"action":"applyPhase","data":{"phase":phase}})
                 page.wait_for_timeout(800)
@@ -152,17 +148,17 @@ def main():
             assert cycles[2]['lights'] <= 5
 
             # Cached page navigation must pause the street and resume a single renderer.
-            page.evaluate("() => uni.navigateTo({url:'/pages_game/dialog/dialog'})")
+            page.evaluate("() => window.__pygc.navigation.navigateTo({url:'/dialog'})")
             page.wait_for_timeout(800)
             paused = page.evaluate('() => window.__audit.frames.at(-1).t')
             page.wait_for_timeout(400)
             assert page.evaluate('() => window.__audit.frames.at(-1).t') == paused
-            page.evaluate('() => uni.navigateBack()')
+            page.evaluate('() => window.__pygc.navigation.navigateBack()')
             page.wait_for_timeout(600)
             assert page.locator('#street-canvas canvas').count() == 1
             report['navigateBackResume'] = True
 
-            page.evaluate("() => uni.switchTab({url:'/pages/user/user'})")
+            page.evaluate("() => window.__pygc.navigation.switchTab({url:'/user'})")
             page.locator('.ledger').wait_for()
             for w,h in audit.VIEWS:
                 page.set_viewport_size({'width':w,'height':h})
@@ -180,10 +176,10 @@ def main():
                 page.locator('.achievement-wall__detail-close').click()
             page.set_viewport_size({'width':844,'height':390})
             page.locator('.check-in-card__btn').click()
-            assert page.evaluate("() => uni.getStorageSync('pygc_user_progress').checkIn.totalDays") == 1
-            report['equippedCostume'] = page.evaluate("() => uni.getStorageSync('pygc_user_progress').equippedCostume")
+            assert page.evaluate("() => window.__pygc.readStorage('pygc_user_progress').checkIn.totalDays") == 1
+            report['equippedCostume'] = page.evaluate("() => window.__pygc.readStorage('pygc_user_progress').equippedCostume")
             assert report['equippedCostume'] != 'commoner'
-            page.evaluate("() => uni.switchTab({url:'/pages/shop/shop'})")
+            page.evaluate("() => window.__pygc.navigation.switchTab({url:'/shop'})")
             page.locator('.shop-stage__product').first.click()
             assert_button(page,'.shop-stage__detail-buy')
             page.locator('.shop-stage__detail-buy').click()
@@ -192,7 +188,7 @@ def main():
                 page.set_viewport_size({'width':w,'height':h})
                 capture(page, f'voucher-{w}x{h}')
                 assert page.evaluate('() => document.documentElement.scrollWidth <= innerWidth+2')
-            report['orders'] = page.evaluate("() => uni.getStorageSync('pygc_shop_redeem_orders')")
+            report['orders'] = page.evaluate("() => window.__pygc.readStorage('pygc_shop_redeem_orders')")
             assert len(report['orders']) == 1
             page.locator('.redeem-stage__back').click()
             page.locator('.shop-stage').wait_for()

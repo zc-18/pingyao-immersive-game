@@ -2,7 +2,6 @@
 import json
 import hashlib
 import os
-import re
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
@@ -45,7 +44,7 @@ def main():
     import sys
     prefix='before' if '--before' in sys.argv else 'after'
     errors=[];evidence={}
-    model=ROOT.parent/'src/平遥古城沉浸式游戏/static/models/pingyao-merchant-hero.glb'
+    model=ROOT.parent/'public/static/models/pingyao-merchant-hero.glb'
     with sync_playwright() as pw:
         browser=pw.chromium.launch(headless=True,args=['--use-angle=d3d11','--enable-gpu','--ignore-gpu-blocklist'],env=dict(os.environ))
         page=browser.new_page(viewport={'width':720,'height':720},device_scale_factor=1)
@@ -66,8 +65,9 @@ def main():
             for name,angle,full in [('front',0,False),('three-quarter',.65,False),('profile',1.5708,False),('back',3.14159,False),('body',0,True)]:
                 page.evaluate('args=>captureView(...args)',[angle,full]);page.screenshot(path=OUT/f'{prefix}-{name}.png')
             if prefix=='after':
-                source=(ROOT.parent/'src/平遥古城沉浸式游戏/pages_game/street/street.vue').read_text(encoding='utf-8')
-                render=re.search(r'<script module="render" lang="renderjs">([\s\S]*?)</script>',source)[1]
+                source=(ROOT.parent/'src/pages_game/street/street-renderer.js').read_text(encoding='utf-8')
+                # The renderer is now a plain module with default {mount, unmount, methods}.
+                assert source.count("export default") == 1, "Renderer export contract changed"
                 blink=page.evaluate("""source => {
                   const controller=new Function('engine',source.replace('export default','const component =')+';THREE=engine;return {api:component.methods,setPlayer:p=>player=p}') (THREE);
                   const {root,mixer,gltf}=review,api=controller.api;
@@ -75,7 +75,7 @@ def main():
                   Object.assign(root.userData,{isGltf:true,mixer,actions});api.getTexture=()=>new THREE.Texture();api.prepareCharacterDeformation(root);root.userData.contactShadow.visible=false;
                   controller.setPlayer(root);api.updatePlayerMixer(0,false,4.1-mixer.time);captureView(0);
                   return root.userData.blinkMeshes.map(m=>({name:m.name,weight:m.morphTargetInfluences[0]}));
-                }""",render)
+                }""",source)
                 assert any(m['name'].startswith('Eyelids') for m in blink),blink
                 assert any(m['name'].startswith('Lashes') for m in blink),blink
                 assert all(m['weight']>.99 for m in blink),blink

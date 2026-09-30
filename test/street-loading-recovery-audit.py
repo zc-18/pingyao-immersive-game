@@ -14,11 +14,11 @@ OUT = ROOT / 'artifacts/loading-recovery'
 OUT.mkdir(parents=True, exist_ok=True)
 os.environ.update(TEMP=str(OUT), TMP=str(OUT))
 BASE = 'http://localhost:5219'
-READ = "key=>{const v=JSON.parse(localStorage.getItem(key));return v?.data??v}"
+READ = "key => window.__pygc.readStorage(key)"
 
 
 def seed(page):
-    page.goto(BASE+'/#/pages_game/splash/splash')
+    page.goto(BASE+'/#/splash')
     page.locator('.splash-enter-frame').wait_for()
     page.evaluate("""() => {
       const patches={pygc_user_profile:{roleId:'study',roleName:'研学者'},pygc_runtime:{hasCompletedPrologue:true,hasEnteredStreet:true,currentStreetScene:'bank-house'}};
@@ -38,7 +38,7 @@ def main():
         try:
             seed(page)
             page.route('**/static/libs/three.min.js',lambda route:route.abort())
-            page.goto(BASE+'/#/pages_game/street/street')
+            page.goto(BASE+'/#/street')
             page.wait_for_timeout(16000)
             report['failedLoad']={'loader':page.locator('.brush-loader').is_visible(),'canvases':page.locator('#street-canvas canvas').count()}
             page.screenshot(path=OUT/('before-failure.png' if baseline else 'failure.png'))
@@ -77,8 +77,8 @@ def main():
             }""")
             # Let the actual hub settle achievements earned by the seeded completed
             # quest before measuring the separate arrival/recovery transaction.
-            page.goto(BASE+'/#/pages/index/index');page.locator('.hub-stage').wait_for()
-            page.goto(BASE+'/#/pages_game/street/street')
+            page.goto(BASE+'/#/home');page.locator('.hub-stage').wait_for()
+            page.goto(BASE+'/#/street')
             # This fixture changed storage outside the game. Hash navigation can
             # reuse the earlier street instance and its already tracked quest;
             # reload the document so onLoad reads the seeded second-quest save.

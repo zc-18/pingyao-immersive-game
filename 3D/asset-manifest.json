@@ -45,7 +45,7 @@
   "source": "Existing project-compatible animation rig and original geometry, refined in Blender MCP",
   "texture": "textures/pingyao-brocade-512.png",
   "humanHero": {
-    "file": "../src/平遥古城沉浸式游戏/static/models/pingyao-hanfu-human.glb",
+    "file": "../public/static/models/pingyao-hanfu-human.glb",
     "source": "pingyao-hanfu-human.blend",
     "bytes": 3305692,
     "trianglesIncludingHiddenVariants": 33686,

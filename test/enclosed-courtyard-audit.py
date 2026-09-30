@@ -139,7 +139,7 @@ def main():
         page=browser.new_page(viewport={'width':1440,'height':900},device_scale_factor=1)
         page.set_default_navigation_timeout(120000)
         page.add_init_script(depth.PROBE)
-        page.add_init_script("window.__readGameStorage = key => { if(typeof uni?.getStorageSync === 'function') return uni.getStorageSync(key); const raw=JSON.parse(localStorage.getItem(key)); return raw?.data ?? raw; }")
+        page.add_init_script("window.__readGameStorage = key => window.__pygc.readStorage(key)")
         errors=[]; page.on('pageerror',lambda e:(errors.append(e.message),print(e.message,flush=True)))
         page.on('requestfailed',lambda r: print('REQUEST FAILED',r.url,r.failure,flush=True))
         if '--full' in sys.argv or '--release' in sys.argv:
@@ -149,7 +149,7 @@ def main():
             page.locator('.role-confirm-token').click(force=True);wait_player(page);page.wait_for_timeout(4000)
         else:
             depth.mobile.seed_street_state(page)
-            page.goto(depth.mobile.BASE_URL+'/#/pages_game/street/street');wait_player(page)
+            page.goto(depth.mobile.BASE_URL+'/#/street');wait_player(page)
         page.locator('.scene-controls__trigger').click()
         page.locator('.scene-controls__phases > *').nth(1).click()
         page.wait_for_timeout(2400)

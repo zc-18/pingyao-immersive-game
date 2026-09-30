@@ -3,19 +3,19 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
 
-const source=fs.readFileSync(new URL('../src/平遥古城沉浸式游戏/pages_game/street/street.vue',import.meta.url),'utf8')
+const source=fs.readFileSync(new URL('../src/pages_game/street/street.vue',import.meta.url),'utf8')
 
 function fixture() {
   let clock=0,id=0
   const timers=new Map(),commands=[],events=[]
   const state=Object.fromEntries(['isLoading','loadFailed','showEscape','loadProgress','loadStage','loadHint','activePoiId','nearActivePoiId','scenePulseText','npcVisible','npcAutoHide','npcMessage'].map(k=>[k,{value:k==='isLoading'}]))
-  const context=vm.createContext({...state,console:{warn(){}},
+  const context=vm.createContext({...state,console:{warn(){}},watch(){},
     currentStreet:{value:{id:'bank-house'}},currentPhase:{value:{key:'noon'}},userProfile:{value:{roleId:'study'}},trackedQuest:{value:{id:'main-rishengchang'}},
     setTimeout(fn,ms){const key=++id;timers.set(key,{at:clock+ms,fn});return key},clearTimeout(key){timers.delete(key)},
-    sendToRenderjs(action,data){commands.push({action,data})},buildScenePayload(){return {streetData:{id:context.currentStreet.value.id}}},
+    sendToRenderer(action,data){commands.push({action,data})},buildScenePayload(){return {streetData:{id:context.currentStreet.value.id}}},
     EVENT_TYPES:{sceneLoaded:'scene_loaded'},advanceQuestByEvent(type,data){events.push({type,data});return {updated:false}},
     refreshRuntimeState(){},markStreetSceneVisited(){},announceMicroReward(){},handleQuestComplete(){},getContextualNpcCue(){return '院落已开'},
-    uni:{switchTab(data){commands.push({action:'return',data})}}
+    switchTab(data){commands.push({action:'return',data})}
   })
   vm.runInContext(`let renderCommandDisposed=false,renderViewReady=false,lastSceneCmdPayload=null,lastSceneCmdAction='init',
     loadWatchdog=null,entryEscapeTimer=null,entryFailsafeTimer=null,initAttempts=0,sceneRequestId=0,completedSceneRequestId=0;
@@ -85,7 +85,7 @@ test('the independent failsafe provides an exit when no init command was issued'
   const f=fixture();f.api.armEntryFailsafe();f.advance(26000)
   assert.equal(f.state.loadFailed.value,true)
   f.api.returnToCity()
-  assert.equal(f.commands.at(-1).data.url,'/pages/index/index')
+  assert.equal(f.commands.at(-1).data.url,'/home')
   assert.equal(f.timers.size,0)
   assert.equal(f.events.length,0)
 })
@@ -93,10 +93,10 @@ test('the independent failsafe provides an exit when no init command was issued'
 test('an obsolete asynchronous boot failure cannot interrupt a newer scene',async()=>{
   const sent=[],pending=[]
   const context=vm.createContext({window:{},console,Promise})
-  const render=source.match(/<script module="render" lang="renderjs">([\s\S]*?)<\/script>/)[1]
+  const render=fs.readFileSync(new URL('../src/pages_game/street/street-renderer.js', import.meta.url), 'utf8')
   vm.runInContext(render.replace('export default','const component =')+';this.api=component.methods;',context)
-  context.owner={callMethod(name,msg){sent.push(msg.detail)}}
-  vm.runInContext('ownerInstanceRef=owner',context)
+  context.callback=msg=>sent.push(msg.detail)
+  vm.runInContext('messageCallback=callback',context)
   context.api.loadScript=()=>new Promise((resolve,reject)=>pending.push({resolve,reject}))
   const first=context.api.bootScene({requestId:1,streetData:{id:'bank-house'}})
   const second=context.api.bootScene({requestId:2,streetData:{id:'south-avenue'}})
@@ -106,4 +106,41 @@ test('an obsolete asynchronous boot failure cannot interrupt a newer scene',asyn
   const error=sent.find(e=>e.type==='render-error')
   assert.equal(error.data.requestId,2)
   assert.equal(error.data.sceneId,'south-avenue')
+})
+
+test('a registered loader wins over a delayed onload timeout; a missing loader still fails and can retry', async () => {
+  const scripts=[],timers=[],registered={}
+  let removed=0
+  const context=vm.createContext({window:{THREE:registered},console,Promise,URL,
+    document:{baseURI:'http://localhost:5219/',createElement:()=>({remove(){removed++}}),head:{appendChild(script){scripts.push(script)}}},
+    setTimeout(fn){timers.push(fn);return timers.length},clearTimeout(){}})
+  const render=fs.readFileSync(new URL('../src/pages_game/street/street-renderer.js',import.meta.url),'utf8')
+  vm.runInContext(render.replace('export default','const component =')+';this.api=component.methods;',context)
+  const pending=context.api.loadScript('static/libs/GLTFLoader.js')
+  registered.GLTFLoader=class {}
+  timers.at(-1)();await pending
+  assert.equal(removed,0)
+  scripts[0].onload()
+  await context.api.loadScript('static/libs/GLTFLoader.js')
+  assert.equal(scripts.length,1,'registered plugins are not injected again')
+  const missing=context.api.loadScript('static/libs/SkeletonUtils.js')
+  const rejected=assert.rejects(missing,/加载超时/)
+  timers.at(-1)();await rejected
+  assert.equal(removed,1)
+  const retry=context.api.loadScript('static/libs/SkeletonUtils.js')
+  registered.SkeletonUtils={clone(){}}
+  scripts.at(-1).onload();await retry
+  assert.equal(scripts.length,3,'a failed loader does not poison the pending-load cache')
+})
+
+test('the warm boot loads model plugins before expensive scene construction and keeps fallback available',async()=>{
+  const events=[],engine={EffectComposer(){},RenderPass(){},UnrealBloomPass(){}}
+  const context=vm.createContext({window:{THREE:engine},console,Promise})
+  const render=fs.readFileSync(new URL('../src/pages_game/street/street-renderer.js',import.meta.url),'utf8')
+  vm.runInContext(render.replace('export default','const component =')+';this.api=component.methods;',context)
+  context.api.loadScript=async src=>{events.push(src);if(src.includes('GLTFLoader'))throw Error('offline')}
+  context.api.loadCalligraphyFont=async()=>events.push('font')
+  context.api.initScene=()=>events.push('scene')
+  await context.api.bootScene({requestId:1,streetData:{id:'bank-house'}})
+  assert.deepEqual(events,['static/libs/GLTFLoader.js','static/libs/SkeletonUtils.js','font','scene'])
 })

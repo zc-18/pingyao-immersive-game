@@ -1,3 +1,4 @@
+import { installNavigator, installLocalStorage } from './helpers/browser-env.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
@@ -11,7 +12,7 @@ import {
 	saveLocationSnapshot,
 	validateLocation,
 	wgs84ToGcj02
-} from '../src/平遥古城沉浸式游戏/common/utils/location.js'
+} from '../src/common/utils/location.js'
 
 test('rejects invalid coordinates and normalizes valid location', () => {
 	assert.equal(validateLocation({ latitude: 0, longitude: 112 }), null)
@@ -81,111 +82,49 @@ test('converts WGS84 to GCJ02 inside China and leaves foreign coordinates unchan
 	assert.deepEqual(wgs84ToGcj02({ latitude: 35.68, longitude: 139.76 }), { latitude: 35.68, longitude: 139.76 })
 })
 
-test('requests WGS84 from the device and returns locally converted GCJ02', async () => {
-	const previousUni = globalThis.uni
-	globalThis.uni = {
-		getLocation(options) {
-			assert.equal(options.type, 'wgs84')
-			assert.equal(options.isHighAccuracy, true)
-			assert.equal(options.highAccuracyExpireTime, 5000)
-			return Promise.resolve({ latitude: 37.2, longitude: 112.18, accuracy: 8 })
-		}
-	}
-
-	try {
-		const before = Date.now()
-		const result = await getCurrentLocation()
-		const expected = wgs84ToGcj02({ latitude: 37.2, longitude: 112.18 })
-		assert.deepEqual(result, {
-			latitude: expected.latitude,
-			longitude: expected.longitude,
-			accuracy: 8,
-			speed: 0,
-			heading: 0,
-			timestamp: result.timestamp,
-			source: 'device'
-		})
-		assert.ok(result.timestamp >= before && result.timestamp <= Date.now())
-	} finally {
-		globalThis.uni = previousUni
-	}
+test('浏览器定位返回本地转换的 GCJ02，并设置高精度选项', async (t) => {
+	const restore = installNavigator({ geolocation: { getCurrentPosition(success, fail, options) {
+		assert.equal(options.enableHighAccuracy, true)
+		assert.equal(options.maximumAge, 5000)
+		queueMicrotask(() => success({ coords: { latitude: 37.2, longitude: 112.18, accuracy: 8 } }))
+	} } })
+	t.after(restore)
+	const result = await getCurrentLocation()
+	assert.deepEqual({ latitude: result.latitude, longitude: result.longitude }, wgs84ToGcj02({ latitude: 37.2, longitude: 112.18 }))
+	assert.equal(result.accuracy, 8)
+	assert.ok(result.timestamp > 0)
 })
 
-test('supports the callback style of uni.getLocation', async () => {
-	const previousUni = globalThis.uni
-	globalThis.uni = {
-		getLocation({ success }) {
-			setTimeout(() => success({ latitude: 37.2, longitude: 112.18, accuracy: 8 }), 0)
-		}
+test('定位错误码映射中文，缺失接口和畸形结果拒绝', async () => {
+	for (const [code, message] of [[1, '定位权限被拒绝'], [2, '暂时无法获取位置'], [3, '定位超时']]) {
+		const restore = installNavigator({ geolocation: { getCurrentPosition(success, fail) { fail({ code }) } } })
+		try { await assert.rejects(getCurrentLocation(), { message }) } finally { restore() }
 	}
-	try {
-		const result = await getCurrentLocation()
-		assert.deepEqual(
-			{ latitude: result.latitude, longitude: result.longitude },
-			wgs84ToGcj02({ latitude: 37.2, longitude: 112.18 })
-		)
-	} finally {
-		globalThis.uni = previousUni
-	}
+	let restore = installNavigator()
+	try { await assert.rejects(getCurrentLocation(), /不支持定位/) } finally { restore() }
+	restore = installNavigator({ geolocation: { getCurrentPosition(success) { success({ coords: {} }) } } })
+	try { await assert.rejects(getCurrentLocation(), /定位结果无效/) } finally { restore() }
 })
 
-test('rejects with the platform error message when location fails', async () => {
-	const previousUni = globalThis.uni
-	globalThis.uni = {
-		getLocation({ fail }) {
-			fail({ errMsg: 'getLocation:fail auth deny' })
-		}
-	}
-	try {
-		await assert.rejects(getCurrentLocation(), /auth deny/)
-	} finally {
-		globalThis.uni = previousUni
-	}
+test('永不回调时超时拒绝，迟到成功不会改变结果', async (t) => {
+	let late
+	const restore = installNavigator({ geolocation: { getCurrentPosition(success) { late = success } } })
+	t.after(restore)
+	await assert.rejects(getCurrentLocation({ timeoutMs: 10 }), /定位超时/)
+	assert.doesNotThrow(() => late({ coords: { latitude: 37.2, longitude: 112.18 } }))
 })
 
-test('rejects instead of hanging when the platform never answers', async () => {
-	const previousUni = globalThis.uni
-	globalThis.uni = { getLocation() {} }
-	try {
-		await assert.rejects(getCurrentLocation({ timeoutMs: 20 }), /定位超时/)
-	} finally {
-		globalThis.uni = previousUni
-	}
-})
-
-test('saves and reads a validated location snapshot without throwing', () => {
-	const previousUni = globalThis.uni
-	const storage = new Map()
-	globalThis.uni = {
-		getStorageSync(key) {
-			return storage.get(key)
-		},
-		setStorageSync(key, value) {
-			storage.set(key, value)
-		}
-	}
+test('保存读取定位快照，写失败和不可用存储不抛错', (t) => {
+	const env = installLocalStorage()
+	t.after(() => env.uninstall())
 	const location = { latitude: 37.2, longitude: 112.18, accuracy: 8 }
-
-	try {
-		assert.deepEqual(saveLocationSnapshot(location), {
-			latitude: 37.2,
-			longitude: 112.18,
-			accuracy: 8,
-			speed: 0,
-			heading: 0,
-			timestamp: 0,
-			source: 'device'
-		})
-		assert.deepEqual(getLocationSnapshot(), {
-			latitude: 37.2,
-			longitude: 112.18,
-			accuracy: 8,
-			speed: 0,
-			heading: 0,
-			timestamp: 0,
-			source: 'device'
-		})
-	} finally {
-		globalThis.uni = previousUni
-	}
+	assert.deepEqual(saveLocationSnapshot(location), validateLocation(location))
+	assert.deepEqual(getLocationSnapshot(), validateLocation(location))
+	env.state.failWrites = true
+	assert.equal(saveLocationSnapshot({ ...location, accuracy: 9 }), null)
+	assert.deepEqual(getLocationSnapshot(), validateLocation(location))
+	assert.equal(saveLocationSnapshot({}), null)
+	Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw Error('blocked') } })
+	assert.equal(getLocationSnapshot(), null)
+	assert.equal(saveLocationSnapshot(location), null)
 })

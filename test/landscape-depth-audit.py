@@ -1,4 +1,4 @@
-"""Repeatable H5 evidence capture; all instrumentation stays in the test browser."""
+"""Repeatable Web evidence capture; all instrumentation stays in the test browser."""
 import argparse
 import base64
 import importlib.util
@@ -77,7 +77,7 @@ def measure(page):
       const selectors = ['.hub-stage', '.hub-stage__main', '.hub-stage__role-img',
         '.hub-stage__npc-bar-cta', '.ledger', '.ledger__book', '.shop-stage',
         '.shop-stage__shelves-scroll', '.map-stage', '.map-stage__map',
-        '.shop-stage__detail', '.map-stage__detail', 'uni-tabbar'];
+        '.shop-stage__detail', '.map-stage__detail', '.app-tabbar'];
       const boxes = {};
       for (const selector of selectors) {
         const el = document.querySelector(selector);
@@ -88,7 +88,7 @@ def measure(page):
           scrollHeight:el.scrollHeight, display:s.display };
       }
       return { viewport:[innerWidth,innerHeight], width:document.documentElement.scrollWidth,
-        height:document.documentElement.scrollHeight, rpx100:uni.upx2px(100), boxes };
+        height:document.documentElement.scrollHeight, rpx100:100 / 32 * parseFloat(getComputedStyle(document.documentElement).fontSize), boxes };
     }""")
 
 
@@ -112,32 +112,25 @@ def performance_sample(page):
 
 def apply_phase(page, phase):
     page.evaluate("""phase => {
-      let c=document.querySelector('.street-stage').__vueParentComponent;
-      while(c) {
-        if ('sceneCmd' in (c.setupState||{})) {
-          c.setupState.currentPhase=phase;
-          c.setupState.sceneCmd={action:'applyPhase',data:{phase},ts:Date.now()}; return;
-        }
-        c=c.parent;
-      }
-      throw Error('missing phase bridge');
+      const state=window.__pygc.page.setupState;
+      state.selectScenePhase(phase.key);
     }""", phase)
 
 
 def phase_matrix(page, out, report):
     mobile.seed_street_state(page)
     page.set_viewport_size({"width": 844, "height": 390})
-    page.goto(f"{mobile.BASE_URL}/#/pages_game/street/street")
+    page.goto(f"{mobile.BASE_URL}/#/street")
     page.wait_for_load_state("domcontentloaded")
     page.locator("#street-canvas canvas").wait_for(state="visible", timeout=25000)
-    phases = page.evaluate("async () => (await import('/common/utils/phase.js')).PHASES")
+    phases = page.evaluate("async () => (await import('/src/common/utils/phase.js')).PHASES")
     report["phaseMatrix"] = {}
     for index, scene in enumerate(SCENES):
         if index:
             page.locator('.street-stage__switch-arrow').last.click()
         page.locator("#street-canvas canvas").wait_for(state="visible", timeout=25000)
         page.wait_for_function(
-            "scene => uni.getStorageSync('pygc_runtime').currentStreetScene === scene",
+            "scene => window.__pygc.readStorage('pygc_runtime').currentStreetScene === scene",
             arg=scene,
             timeout=25000,
         )
@@ -155,7 +148,7 @@ def tabs(page, out, report):
     for w, h in VIEWS:
         page.set_viewport_size({"width": w, "height": h})
         for name in ["index", "user", "shop", "map"]:
-            page.evaluate("path => uni.switchTab({url:path})", f"/pages/{name}/{name}")
+            page.evaluate("path => window.__pygc.navigation.switchTab({url:path})", ('/home' if name == 'index' else f'/{name}'))
             selector = {"index": ".hub-stage", "user": ".ledger", "shop": ".shop-stage", "map": ".map-stage"}[name]
             page.locator(selector).wait_for(state="visible")
             page.wait_for_timeout(900)
@@ -188,7 +181,7 @@ def tabs(page, out, report):
 def streets(page, out, report):
     mobile.seed_street_state(page)
     page.set_viewport_size({"width": 844, "height": 390})
-    page.evaluate("() => uni.reLaunch({url:'/pages_game/street/street'})")
+    page.evaluate("() => window.__pygc.navigation.reLaunch({url:'/street'})")
     for index, scene in enumerate(SCENES):
         if index:
             page.locator('.street-stage__switch-arrow').last.click()
@@ -196,7 +189,7 @@ def streets(page, out, report):
         canvas.wait_for(state="visible", timeout=25000)
         page.wait_for_timeout(5000)
         report[scene] = performance_sample(page)
-        report[scene]["actualScene"] = page.evaluate("() => uni.getStorageSync('pygc_runtime').currentStreetScene")
+        report[scene]["actualScene"] = page.evaluate("() => window.__pygc.readStorage('pygc_runtime').currentStreetScene")
         assert report[scene]["actualScene"] == scene
         page.screenshot(path=out / f"street-{scene}.png")
         before, after = out / f"canvas-{scene}.png", out / f"canvas-{scene}-moving.png"
@@ -235,7 +228,7 @@ def main():
                 if args.phase_matrix:
                     phase_matrix(page, out, report)
                 if args.phases:
-                    phases = page.evaluate("async () => (await import('/common/utils/phase.js')).PHASES")
+                    phases = page.evaluate("async () => (await import('/src/common/utils/phase.js')).PHASES")
                     report['phases'] = {}
                     for key, phase in phases.items():
                         apply_phase(page, phase)

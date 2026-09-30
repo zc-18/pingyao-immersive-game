@@ -4,21 +4,32 @@ import base64
 import io
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 from PIL import Image
 
+sys.stdout.reconfigure(encoding='utf-8')
+
 ROOT = Path(__file__).resolve().parent
-OUT = ROOT / 'artifacts' / 'web-game'
+OUT = ROOT / 'artifacts' / 'resume-web-game'
 OUT.mkdir(parents=True, exist_ok=True)
 os.environ.update(TEMP=str(OUT), TMP=str(OUT))
 sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location('depth', ROOT / 'landscape-depth-audit.py')
 depth = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(depth)
-BASE = 'http://localhost:5219/#/'
+BASE = 'http://127.0.0.1:5219/#/'
 PLAYER = "() => {const p=__audit.scene.children.find(o=>o.userData.isGltf);return {x:p.position.x,z:p.position.z,idle:p.userData.actions.idle.getEffectiveWeight(),run:p.userData.actions.run.getEffectiveWeight()}}"
+
+def instrument_model_failure(route):
+    response = route.fetch()
+    source = response.text()
+    marker = '} catch (_) { /* 程序化角色已经可玩，模型失败无需打断加载。 */ }'
+    assert marker in source
+    source = source.replace(marker, "} catch (error) { window.__audit.modelFailure = error.stack || String(error); console.warn('[audit character loading]', window.__audit.modelFailure); }")
+    route.fulfill(response=response, body=source)
 
 def hold(page, key, ms):
     page.keyboard.down(key)
@@ -56,7 +67,7 @@ def acceptance(page, report):
     page.keyboard.press('i');page.locator('.wardrobe').wait_for()
     card=page.locator('.wardrobe__card').filter(has_text='账房青衫')
     card.click();page.wait_for_timeout(350)
-    assert page.evaluate("() => uni.getStorageSync('pygc_user_progress').equippedCostume")=='ledger-clerk'
+    assert page.evaluate("() => window.__pygc.readStorage('pygc_user_progress').equippedCostume")=='ledger-clerk'
     page.screenshot(path=OUT/'wardrobe.png')
     page.keyboard.press('Escape');page.locator('.wardrobe').wait_for(state='hidden')
     page.keyboard.press('c');page.wait_for_timeout(1600)
@@ -77,7 +88,7 @@ def acceptance(page, report):
     page.locator('.reward-stage__claim').wait_for(timeout=10000)
     page.screenshot(path=OUT/'quest-reward.png')
     page.locator('.reward-stage__claim').click();page.wait_for_timeout(1800)
-    progress=page.evaluate("() => uni.getStorageSync('pygc_user_progress')")
+    progress=page.evaluate("() => window.__pygc.readStorage('pygc_user_progress')")
     assert 'main-rishengchang' in progress['questData']['completedQuests']
     assert progress['steps']>0
     report['quest']={'completed':progress['questData']['completedQuests'],'steps':progress['steps']}
@@ -89,7 +100,7 @@ def acceptance(page, report):
         page.locator('.brush-loader').wait_for(state='hidden',timeout=30000)
         page.wait_for_function("__audit.scene?.children.some(o=>o.userData.rigType==='human' && o.userData.isGltf)",timeout=30000)
         page.wait_for_timeout(900)
-        scene=page.evaluate("() => uni.getStorageSync('pygc_runtime').currentStreetScene")
+        scene=page.evaluate("() => window.__pygc.readStorage('pygc_runtime').currentStreetScene")
         report['scenes'].append(scene)
         assert page.locator('#street-canvas canvas').count()==1
         depth.capture_canvas(page,OUT/f'scene-{scene}.png')
@@ -104,13 +115,13 @@ def acceptance(page, report):
     report['performance']=depth.performance_sample(page)
     page.reload()
     page.wait_for_function("__audit.scene?.children.some(o=>o.userData.isGltf)",timeout=60000)
-    progress=page.evaluate("() => uni.getStorageSync('pygc_user_progress')")
+    progress=page.evaluate("() => window.__pygc.readStorage('pygc_user_progress')")
     assert 'main-rishengchang' in progress['questData']['completedQuests']
     assert progress['equippedCostume']=='ledger-clerk'
     # Normal tab navigation uses the same persistent save.
     report['tabs']={}
     for name,selector in [('index','.hub-stage'),('map','.map-stage'),('shop','.shop-stage'),('user','.ledger')]:
-        page.evaluate("url=>uni.switchTab({url})",f'/pages/{name}/{name}')
+        page.evaluate("url=>window.__pygc.navigation.switchTab({url})",('/home' if name == 'index' else f'/{name}'))
         page.locator(selector).wait_for();page.wait_for_timeout(1000)
         report['tabs'][name]=depth.measure(page)
         assert report['tabs'][name]['width']<=1442
@@ -143,13 +154,16 @@ def motion_previews(page):
 
 def main():
     errors = []
+    warnings = []
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist'], env=dict(os.environ))
         page = browser.new_page(viewport={'width':1440,'height':900}, device_scale_factor=1)
         page.add_init_script(depth.PROBE)
-        page.add_init_script("window.__readGameStorage = key => uni.getStorageSync(key)")
+        page.route(re.compile(r'/src/pages_game/street/street-renderer\.js(?:\?.*)?$'), instrument_model_failure)
+        page.add_init_script("window.__readGameStorage = key => window.__pygc.readStorage(key)")
         page.on('pageerror', lambda error: errors.append(error.message))
-        page.goto(BASE + 'pages_game/splash/splash')
+        page.on('console', lambda message: warnings.append(message.text) if message.type in ('warning','error') else None)
+        page.goto(BASE + 'splash')
         page.locator('.splash-enter-frame').wait_for()
         page.wait_for_timeout(2600)
         page.screenshot(path=OUT/'splash.png')
@@ -158,7 +172,14 @@ def main():
         page.wait_for_timeout(900)
         page.screenshot(path=OUT/'roles.png')
         page.locator('.role-confirm-token').click()
-        page.wait_for_function('window.__audit.scene?.children.some(o=>o.userData.isGltf)', timeout=120000)
+        try:
+            page.wait_for_function('window.__audit.scene?.children.some(o=>o.userData.isGltf) || window.__audit.modelFailure', timeout=60000)
+            assert not page.evaluate('() => __audit.modelFailure'), page.evaluate('() => __audit.modelFailure')
+        except Exception:
+            page.screenshot(path=OUT/'initial-failure.png')
+            print(json.dumps({'errors':errors,'warnings':warnings[-10:],'initial':page.evaluate("() => ({url:location.href,text:document.body.innerText,renderer:!!__audit.renderer,loader:!!THREE.GLTFLoader,scene:__audit.scene?.children.map(o=>({name:o.name,type:o.type,userData:o.userData?.isGltf})),loading:__pygc.page?.setupState?.isLoading})")},ensure_ascii=False),flush=True)
+            browser.close()
+            raise
         page.locator('.brush-loader').wait_for(state='hidden',timeout=30000)
         page.wait_for_timeout(2500)
         page.screenshot(path=OUT/'street.png')
@@ -169,7 +190,7 @@ def main():
         depth.capture_canvas(page, OUT/'portrait.png')
         state = page.evaluate('''() => {
           const p=__audit.scene.children.find(o=>o.userData.isGltf), d=p.userData;
-          return {rig:d.rigType,groundSamples:d.groundSamples.length,feet:d.footPlant?.feet.length,
+          return {rig:d.rigType,groundSamples:d.groundSamples?.length||0,feet:d.footPlant?.feet.length||0,
             scale:p.scale.x,actions:Object.fromEntries(Object.entries(d.actions).map(([k,a])=>[k,a.getClip().name])),
             frames:__audit.frames.slice(-60)};
         }''')

@@ -3,7 +3,7 @@ from PIL import Image, ImageFilter, ImageOps
 
 root = Path(__file__).resolve().parents[1]
 source = root / 'output/imagegen/pingyao-stone.png'
-target = root / 'src' / '\u5e73\u9065\u53e4\u57ce\u6c89\u6d78\u5f0f\u6e38\u620f' / 'static/textures'
+target = root / 'public/static/textures'
 image = Image.open(source).convert('RGB')
 assert image.width == image.height and image.width >= 1024, image.size
 image = image.resize((1024, 1024), Image.Resampling.LANCZOS)

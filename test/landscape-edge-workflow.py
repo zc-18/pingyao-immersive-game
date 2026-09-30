@@ -15,8 +15,8 @@ audit = journey.audit
 OUT = ROOT / 'artifacts' / 'landscape-depth' / 'edges'
 
 STATE = """({selector,key}) => {
-  let c=document.querySelector(selector).__vueParentComponent;
-  while(c) { if (key in (c.setupState||{})) return c.setupState[key]; c=c.parent }
+  const state=window.__pygc.page?.setupState;
+  if (state && key in state) return state[key];
   throw Error('missing state '+key);
 }"""
 
@@ -40,7 +40,7 @@ def main():
             for name, selector in [('index','.hub-stage'),('user','.ledger'),('shop','.shop-stage'),('map','.map-stage')]:
                 if '--from-map' in sys.argv and name != 'map':
                     continue
-                page.evaluate('name => uni.switchTab({url:`/pages/${name}/${name}`})', name)
+                page.evaluate('name => window.__pygc.navigation.switchTab({url:name==="index"?"/home":`/${name}`})', name)
                 page.locator(selector).wait_for()
                 rotations = []
                 for w,h in [*audit.VIEWS, (390,844)]:
@@ -97,7 +97,7 @@ def main():
             page.set_viewport_size({'width':844,'height':390})
             entries = []
             for entry in range(3):
-                page.evaluate("() => uni.navigateTo({url:'/pages_game/street/street'})")
+                page.evaluate("() => window.__pygc.navigation.navigateTo({url:'/street'})")
                 page.locator('#street-canvas canvas').wait_for(timeout=30000)
                 page.wait_for_timeout(4000)
                 assert page.evaluate('() => __audit.renderer.getPixelRatio()') <= 1.25
@@ -130,7 +130,7 @@ def main():
                     audit.capture_canvas(page,OUT/'restored-webgl.png')
                 entries.append(page.evaluate('() => ({ratio:__audit.renderer.getPixelRatio(),...__audit.renderer.info.memory,canvases:document.querySelectorAll("#street-canvas canvas").length})'))
                 assert entries[-1]['canvases'] == 1
-                page.evaluate('() => uni.navigateBack()')
+                page.evaluate('() => window.__pygc.navigation.navigateBack()')
                 page.wait_for_timeout(900)
                 assert page.locator('#street-canvas canvas').count() == 0
                 assert page.evaluate('() => __audit.renderers.every(r=>!r.domElement.isConnected && r.getContext().isContextLost())')
